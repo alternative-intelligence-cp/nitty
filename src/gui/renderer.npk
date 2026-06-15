@@ -1,4 +1,4 @@
-// src/gui/renderer.npk — Terminal cell grid renderer (v0.3.0)
+// src/gui/renderer.npk — Terminal cell grid renderer (v0.3.1)
 //
 // The sync layer between the Nitpick-side terminal state (terminal_state.npk,
 // grid.npk) and the C-side Cairo/Pango paint engine (nitty_render.c).
@@ -10,6 +10,7 @@
 //   - This module reads the authoritative TerminalState (via ts_get_* getters
 //     and grid_get_cp) and pushes each non-space cell to nitty_render_set_cell_cp()
 //     before each frame.
+//   - v0.3.1: also pushes per-cell fg/bg colors via nitty_render_set_cell_fg/bg().
 //   - renderer_sync_frame() is called from the idle/draw callback.
 //
 // Coordinate system:
@@ -21,13 +22,16 @@
 // Fixed-point convention: colors are [0..1000] → [0.0..1.0].
 //
 // Usage:
-//   1. renderer_init("Monospace 12")   — set font
+//   1. renderer_init("Monospace 12")   — set font, init color scheme
 //   2. renderer_resize(w_px, h_px)     — compute (rows, cols)
 //   3. Each frame: renderer_sync_frame() → GTK draw callback paints
 
 use "gtk4_ffi.npk".*;
 use "../terminal/terminal_state.npk".*;
 use "../terminal/grid.npk".*;
+use "../terminal/cell.npk".*;
+use "color_scheme.npk".*;
+use "color_resolve.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Module state
@@ -44,9 +48,19 @@ int64:g_rend_cols = 80i64;
 /// font_desc: Pango font description e.g. "Monospace 12"
 pub func:renderer_init = NIL(string:font_desc) {
     nitty_render_set_font(font_desc);
-    // Default: white text on black background
-    nitty_render_set_bg(0i64, 0i64, 0i64);
-    nitty_render_set_fg(1000i64, 1000i64, 1000i64);
+    // Initialize the color scheme (populates ANSI table)
+    drop(init_scheme());
+    // Set C renderer default colors from scheme
+    nitty_render_set_bg(
+        raw scheme_to_fp(raw scheme_default_bg_r()),
+        raw scheme_to_fp(raw scheme_default_bg_g()),
+        raw scheme_to_fp(raw scheme_default_bg_b())
+    );
+    nitty_render_set_fg(
+        raw scheme_to_fp(raw scheme_default_fg_r()),
+        raw scheme_to_fp(raw scheme_default_fg_g()),
+        raw scheme_to_fp(raw scheme_default_fg_b())
+    );
     pass(NIL);
 };
 
@@ -107,13 +121,23 @@ pub func:renderer_get_rows = int64() { pass(g_rend_rows); };
 /// Steps:
 ///   1. Clear all C-side grid cells (blank slate).
 ///   2. Query TerminalState for rows and cols.
-///   3. For each cell: read codepoint from grid.npk, push to C renderer.
+///   3. For each cell: read codepoint, attrs (fg/bg), flags (bold/inverse/etc.)
+///      and push to C renderer with per-cell color overrides.
+///
+/// v0.3.1 color integration:
+///   - Reads grid_get_attrs(r,c) and grid_get_flags(r,c) per cell.
+///   - Resolves fg/bg colors via color_resolve.npk (bold-bright, dim, inverse, etc.)
+///   - Skips bg call for cells with default background (optimization).
+///   - Screen-wide reverse video (DECSCNM) queried each frame.
 ///
 /// Called from the GTK idle/draw callback before nitty_render_frame()
 /// is invoked internally by the C draw callback.
 pub func:renderer_sync_frame = NIL() {
     // Blank the C grid — prevents stale chars from prior frames
     nitty_render_clear_grid();
+
+    // Sync screen-wide reverse video mode
+    drop(set_screen_reverse(raw ts_get_mode_reverse_video()));
 
     // Query live terminal dimensions
     int64:rows = raw ts_get_rows();
@@ -123,10 +147,37 @@ pub func:renderer_sync_frame = NIL() {
     while (r < rows) {
         int64:c = 0i64;
         while (c < cols) {
-            int64:cp = raw grid_get_cp(r, c);
-            // Skip space (0x20) and NUL — C renderer already shows background
+            int64:cp    = raw grid_get_cp(r, c);
+            int64:attrs = raw grid_get_attrs(r, c);
+            int64:flags = raw grid_get_flags(r, c);
+
+            // Background: paint if non-default (skip default = C renderer's bg fill)
+            if (raw bg_is_default(attrs, flags) == 0i64) {
+                int64:bg_r = raw resolve_bg_r(attrs, flags);
+                int64:bg_g = raw resolve_bg_g(attrs, flags);
+                int64:bg_b = raw resolve_bg_b(attrs, flags);
+                nitty_render_set_cell_bg(c, r, bg_r, bg_g, bg_b);
+            }
+
+            // Codepoint + fg color: only for non-space, non-NUL cells
             if (cp != 0x20i64) {
                 if (cp != 0i64) {
+                    // Set per-cell fg color if non-default attrs
+                    if (attrs != 0i64) {
+                        int64:fg_r = raw resolve_fg_r(attrs, flags);
+                        int64:fg_g = raw resolve_fg_g(attrs, flags);
+                        int64:fg_b = raw resolve_fg_b(attrs, flags);
+                        nitty_render_set_cell_fg(c, r, fg_r, fg_g, fg_b);
+                    }
+                    // Also check flags (inverse/dim/hidden with default attrs)
+                    if (attrs == 0i64) {
+                        if (flags != 0i64) {
+                            int64:fg_r = raw resolve_fg_r(attrs, flags);
+                            int64:fg_g = raw resolve_fg_g(attrs, flags);
+                            int64:fg_b = raw resolve_fg_b(attrs, flags);
+                            nitty_render_set_cell_fg(c, r, fg_r, fg_g, fg_b);
+                        }
+                    }
                     nitty_render_set_cell_cp(c, r, cp);
                 }
             }
