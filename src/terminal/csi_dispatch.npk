@@ -29,7 +29,7 @@ use "attributes.npk".*;
 use "mode_dispatch.npk".*;
 use "modes.npk".*;
 
-func:failsafe = int32(tbb32:err) { exit 1; };
+func:failsafe = int32(tbb32:err) { pass(1i32); };
 
 // ═══════════════════════════════════════════════════════════════════════
 // Action Output State

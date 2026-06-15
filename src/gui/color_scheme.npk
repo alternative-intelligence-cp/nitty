@@ -1,13 +1,13 @@
 // src/gui/color_scheme.npk — Default terminal color scheme for Nitty v0.3.1
 //
 // Provides the xterm default 16-color ANSI palette and terminal default
-// foreground / background colors. Colors are stored as module-level arrays
-// indexed 0-15 for the ANSI colors.
+// foreground / background colors as pure accessor functions (no mutable state).
 //
-// Color values are stored as 8-bit components (0-255).
-// Use scheme_ansi_fp_r/g/b() for fixed-point ×1000 (for Cairo / C renderer).
+// Using if-chains instead of arrays to avoid the Nitpick compiler's
+// module-variable-reassignment-in-pub-NIL-func limitation.
 //
-// Call init_scheme() once at startup (from renderer_init).
+// All RGB values are 8-bit (0-255).
+// Use scheme_to_fp(v) to convert to fixed-point ×1000 for Cairo/C renderer.
 //
 // xterm ANSI color defaults:
 //   0  Black         (0,   0,   0  )   8  Bright Black    (127, 127, 127)
@@ -20,89 +20,91 @@
 //   7  White         (229, 229, 229)   15 Bright White    (255, 255, 255)
 
 // ═══════════════════════════════════════════════════════════════════════
-// Module state — ANSI color table (8-bit components)
+// ANSI R component (8-bit), index 0-15
 // ═══════════════════════════════════════════════════════════════════════
 
-int64[16]:g_ansi_r;
-int64[16]:g_ansi_g;
-int64[16]:g_ansi_b;
-
-// Default fg and bg
-int64:g_default_fg_r = 229i64;
-int64:g_default_fg_g = 229i64;
-int64:g_default_fg_b = 229i64;
-
-int64:g_default_bg_r = 0i64;
-int64:g_default_bg_g = 0i64;
-int64:g_default_bg_b = 0i64;
-
-// ═══════════════════════════════════════════════════════════════════════
-// Initialization
-// ═══════════════════════════════════════════════════════════════════════
-
-/// Populate the ANSI color table with xterm defaults.
-/// Must be called once before any scheme_ansi_* accessors are used.
-pub func:init_scheme = NIL() {
-    // Normal colors (0-7)
-    g_ansi_r[0] = 0i64;   g_ansi_g[0] = 0i64;   g_ansi_b[0] = 0i64;   // Black
-    g_ansi_r[1] = 205i64; g_ansi_g[1] = 0i64;   g_ansi_b[1] = 0i64;   // Red
-    g_ansi_r[2] = 0i64;   g_ansi_g[2] = 205i64; g_ansi_b[2] = 0i64;   // Green
-    g_ansi_r[3] = 205i64; g_ansi_g[3] = 205i64; g_ansi_b[3] = 0i64;   // Yellow
-    g_ansi_r[4] = 0i64;   g_ansi_g[4] = 0i64;   g_ansi_b[4] = 238i64; // Blue
-    g_ansi_r[5] = 205i64; g_ansi_g[5] = 0i64;   g_ansi_b[5] = 205i64; // Magenta
-    g_ansi_r[6] = 0i64;   g_ansi_g[6] = 205i64; g_ansi_b[6] = 205i64; // Cyan
-    g_ansi_r[7] = 229i64; g_ansi_g[7] = 229i64; g_ansi_b[7] = 229i64; // White
-    // Bright colors (8-15)
-    g_ansi_r[8]  = 127i64; g_ansi_g[8]  = 127i64; g_ansi_b[8]  = 127i64; // Bright Black
-    g_ansi_r[9]  = 255i64; g_ansi_g[9]  = 0i64;   g_ansi_b[9]  = 0i64;   // Bright Red
-    g_ansi_r[10] = 0i64;   g_ansi_g[10] = 255i64; g_ansi_b[10] = 0i64;   // Bright Green
-    g_ansi_r[11] = 255i64; g_ansi_g[11] = 255i64; g_ansi_b[11] = 0i64;   // Bright Yellow
-    g_ansi_r[12] = 92i64;  g_ansi_g[12] = 92i64;  g_ansi_b[12] = 255i64; // Bright Blue
-    g_ansi_r[13] = 255i64; g_ansi_g[13] = 0i64;   g_ansi_b[13] = 255i64; // Bright Magenta
-    g_ansi_r[14] = 0i64;   g_ansi_g[14] = 255i64; g_ansi_b[14] = 255i64; // Bright Cyan
-    g_ansi_r[15] = 255i64; g_ansi_g[15] = 255i64; g_ansi_b[15] = 255i64; // Bright White
-    pass(NIL);
-};
-
-// ═══════════════════════════════════════════════════════════════════════
-// ANSI color accessors (8-bit)
-// ═══════════════════════════════════════════════════════════════════════
-
-/// 8-bit R component of ANSI color index n (0-15).
 pub func:scheme_ansi_r = int64(int64:n) {
-    if (n < 0i64)   { pass(0i64); }
-    if (n >= 16i64) { pass(0i64); }
-    pass(g_ansi_r[n]);
+    if (n == 0i64)  { pass(0i64);   }
+    if (n == 1i64)  { pass(205i64); }
+    if (n == 2i64)  { pass(0i64);   }
+    if (n == 3i64)  { pass(205i64); }
+    if (n == 4i64)  { pass(0i64);   }
+    if (n == 5i64)  { pass(205i64); }
+    if (n == 6i64)  { pass(0i64);   }
+    if (n == 7i64)  { pass(229i64); }
+    if (n == 8i64)  { pass(127i64); }
+    if (n == 9i64)  { pass(255i64); }
+    if (n == 10i64) { pass(0i64);   }
+    if (n == 11i64) { pass(255i64); }
+    if (n == 12i64) { pass(92i64);  }
+    if (n == 13i64) { pass(255i64); }
+    if (n == 14i64) { pass(0i64);   }
+    if (n == 15i64) { pass(255i64); }
+    pass(0i64);
 };
 
-/// 8-bit G component of ANSI color index n (0-15).
+// ═══════════════════════════════════════════════════════════════════════
+// ANSI G component (8-bit), index 0-15
+// ═══════════════════════════════════════════════════════════════════════
+
 pub func:scheme_ansi_g = int64(int64:n) {
-    if (n < 0i64)   { pass(0i64); }
-    if (n >= 16i64) { pass(0i64); }
-    pass(g_ansi_g[n]);
+    if (n == 0i64)  { pass(0i64);   }
+    if (n == 1i64)  { pass(0i64);   }
+    if (n == 2i64)  { pass(205i64); }
+    if (n == 3i64)  { pass(205i64); }
+    if (n == 4i64)  { pass(0i64);   }
+    if (n == 5i64)  { pass(0i64);   }
+    if (n == 6i64)  { pass(205i64); }
+    if (n == 7i64)  { pass(229i64); }
+    if (n == 8i64)  { pass(127i64); }
+    if (n == 9i64)  { pass(0i64);   }
+    if (n == 10i64) { pass(255i64); }
+    if (n == 11i64) { pass(255i64); }
+    if (n == 12i64) { pass(92i64);  }
+    if (n == 13i64) { pass(0i64);   }
+    if (n == 14i64) { pass(255i64); }
+    if (n == 15i64) { pass(255i64); }
+    pass(0i64);
 };
 
-/// 8-bit B component of ANSI color index n (0-15).
+// ═══════════════════════════════════════════════════════════════════════
+// ANSI B component (8-bit), index 0-15
+// ═══════════════════════════════════════════════════════════════════════
+
 pub func:scheme_ansi_b = int64(int64:n) {
-    if (n < 0i64)   { pass(0i64); }
-    if (n >= 16i64) { pass(0i64); }
-    pass(g_ansi_b[n]);
+    if (n == 0i64)  { pass(0i64);   }
+    if (n == 1i64)  { pass(0i64);   }
+    if (n == 2i64)  { pass(0i64);   }
+    if (n == 3i64)  { pass(0i64);   }
+    if (n == 4i64)  { pass(238i64); }
+    if (n == 5i64)  { pass(205i64); }
+    if (n == 6i64)  { pass(205i64); }
+    if (n == 7i64)  { pass(229i64); }
+    if (n == 8i64)  { pass(127i64); }
+    if (n == 9i64)  { pass(0i64);   }
+    if (n == 10i64) { pass(0i64);   }
+    if (n == 11i64) { pass(0i64);   }
+    if (n == 12i64) { pass(255i64); }
+    if (n == 13i64) { pass(255i64); }
+    if (n == 14i64) { pass(255i64); }
+    if (n == 15i64) { pass(255i64); }
+    pass(0i64);
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// Default fg/bg accessors (8-bit)
+// Default fg/bg colors (8-bit constants)
 // ═══════════════════════════════════════════════════════════════════════
 
-pub func:scheme_default_fg_r = int64() { pass(g_default_fg_r); };
-pub func:scheme_default_fg_g = int64() { pass(g_default_fg_g); };
-pub func:scheme_default_fg_b = int64() { pass(g_default_fg_b); };
+pub func:scheme_default_fg_r = int64() { pass(229i64); };
+pub func:scheme_default_fg_g = int64() { pass(229i64); };
+pub func:scheme_default_fg_b = int64() { pass(229i64); };
 
-pub func:scheme_default_bg_r = int64() { pass(g_default_bg_r); };
-pub func:scheme_default_bg_g = int64() { pass(g_default_bg_g); };
-pub func:scheme_default_bg_b = int64() { pass(g_default_bg_b); };
+pub func:scheme_default_bg_r = int64() { pass(0i64); };
+pub func:scheme_default_bg_g = int64() { pass(0i64); };
+pub func:scheme_default_bg_b = int64() { pass(0i64); };
 
 // ═══════════════════════════════════════════════════════════════════════
-// Fixed-point ×1000 helpers (for C renderer)
+// Fixed-point ×1000 helper (for C renderer)
 // ═══════════════════════════════════════════════════════════════════════
 
 /// Convert 8-bit component (0-255) to fixed-point ×1000 (0-1000).

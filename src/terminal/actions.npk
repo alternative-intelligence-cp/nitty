@@ -14,7 +14,7 @@
 // The dispatch module stores the last action in module-level state.
 // Callers query it via dispatch_get_action_*() functions.
 
-func:failsafe = int32(tbb32:err) { exit 1; };
+func:failsafe = int32(tbb32:err) { pass(1i32); };
 
 // ═══════════════════════════════════════════════════════════════════════
 // Action Type Tags

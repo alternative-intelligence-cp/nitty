@@ -18,6 +18,7 @@
 //   g_screen_reverse — set to 1 when DECSCNM reverse video is active
 
 use "../terminal/attributes.npk".*;
+use "../terminal/cell.npk".*;
 use "color_scheme.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -37,6 +38,20 @@ pub func:get_screen_reverse = int64() {
 };
 
 // ═══════════════════════════════════════════════════════════════════════
+// Re-exported color encoding helpers (from attributes.npk / cell.npk)
+// These allow tests to use color_resolve.npk as their only import.
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:cr_COLOR_DEFAULT  = int64()                              { pass(raw COLOR_DEFAULT()); };
+pub func:cr_color_indexed  = int64(int64:n)                       { pass(raw color_indexed(n)); };
+pub func:cr_color_rgb      = int64(int64:r, int64:g, int64:b)     { pass(raw color_rgb(r, g, b)); };
+pub func:cr_CELL_INVERSE   = int64()                              { pass(raw CELL_INVERSE()); };
+pub func:cr_CELL_BOLD      = int64()                              { pass(raw CELL_BOLD()); };
+pub func:cr_CELL_DIM       = int64()                              { pass(raw CELL_DIM()); };
+pub func:cr_CELL_HIDDEN    = int64()                              { pass(raw CELL_HIDDEN()); };
+pub func:cr_cell_pack_attrs = int64(int64:fg, int64:bg)           { pass(raw cell_pack_attrs(fg, bg)); };
+
+// ═══════════════════════════════════════════════════════════════════════
 // Core color resolution — Color value → fixed-point ×1000 RGB
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -44,15 +59,15 @@ pub func:get_screen_reverse = int64() {
 /// Does NOT apply attribute effects (bold/dim/etc.) — use resolve_fg_r for that.
 pub func:resolve_color_r = int64(int64:c) {
     // COLOR_DEFAULT
-    if (raw color_is_default(c)) { pass(scheme_to_fp(raw scheme_default_fg_r())); }
+    if (raw color_is_default(c) != 0i64) { pass(raw scheme_to_fp(raw scheme_default_fg_r())); }
     // True color (RGB flag)
-    if (raw color_is_rgb(c)) {
+    if (raw color_is_rgb(c) != 0i64) {
         pass(raw color_get_r(c) * 1000i64 / 255i64);
     }
     // Indexed: encoded as n = index+1 (1..256)
     int64:idx = raw color_get_index(c);    // 0-based index into 256-color table
     if (idx < 16i64) {
-        pass(scheme_to_fp(raw scheme_ansi_r(idx)));
+        pass(raw scheme_to_fp(raw scheme_ansi_r(idx)));
     }
     // 256-color palette (idx 16-255)
     pass(raw palette_r(idx) * 1000i64 / 255i64);
@@ -60,26 +75,26 @@ pub func:resolve_color_r = int64(int64:c) {
 
 /// Resolve a fg Color value to fixed-point ×1000 G.
 pub func:resolve_color_g = int64(int64:c) {
-    if (raw color_is_default(c)) { pass(scheme_to_fp(raw scheme_default_fg_g())); }
-    if (raw color_is_rgb(c)) {
+    if (raw color_is_default(c) != 0i64) { pass(raw scheme_to_fp(raw scheme_default_fg_g())); }
+    if (raw color_is_rgb(c) != 0i64) {
         pass(raw color_get_g(c) * 1000i64 / 255i64);
     }
     int64:idx = raw color_get_index(c);
     if (idx < 16i64) {
-        pass(scheme_to_fp(raw scheme_ansi_g(idx)));
+        pass(raw scheme_to_fp(raw scheme_ansi_g(idx)));
     }
     pass(raw palette_g(idx) * 1000i64 / 255i64);
 };
 
 /// Resolve a fg Color value to fixed-point ×1000 B.
 pub func:resolve_color_b = int64(int64:c) {
-    if (raw color_is_default(c)) { pass(scheme_to_fp(raw scheme_default_fg_b())); }
-    if (raw color_is_rgb(c)) {
+    if (raw color_is_default(c) != 0i64) { pass(raw scheme_to_fp(raw scheme_default_fg_b())); }
+    if (raw color_is_rgb(c) != 0i64) {
         pass(raw color_get_b(c) * 1000i64 / 255i64);
     }
     int64:idx = raw color_get_index(c);
     if (idx < 16i64) {
-        pass(scheme_to_fp(raw scheme_ansi_b(idx)));
+        pass(raw scheme_to_fp(raw scheme_ansi_b(idx)));
     }
     pass(raw palette_b(idx) * 1000i64 / 255i64);
 };
@@ -91,17 +106,17 @@ pub func:resolve_color_b = int64(int64:c) {
 /// Resolve a bg Color value to fixed-point ×1000 R.
 /// COLOR_DEFAULT → scheme_default_bg_r (not fg).
 func:resolve_bg_color_r = int64(int64:c) {
-    if (raw color_is_default(c)) { pass(scheme_to_fp(raw scheme_default_bg_r())); }
+    if (raw color_is_default(c) != 0i64) { pass(raw scheme_to_fp(raw scheme_default_bg_r())); }
     pass(raw resolve_color_r(c));
 };
 
 func:resolve_bg_color_g = int64(int64:c) {
-    if (raw color_is_default(c)) { pass(scheme_to_fp(raw scheme_default_bg_g())); }
+    if (raw color_is_default(c) != 0i64) { pass(raw scheme_to_fp(raw scheme_default_bg_g())); }
     pass(raw resolve_color_g(c));
 };
 
 func:resolve_bg_color_b = int64(int64:c) {
-    if (raw color_is_default(c)) { pass(scheme_to_fp(raw scheme_default_bg_b())); }
+    if (raw color_is_default(c) != 0i64) { pass(raw scheme_to_fp(raw scheme_default_bg_b())); }
     pass(raw resolve_color_b(c));
 };
 
@@ -129,13 +144,9 @@ pub func:resolve_fg_r = int64(int64:attrs_packed, int64:flags) {
     int64:is_inverse = raw cell_flag_inverse(flags);
     int64:is_hidden  = raw cell_flag_hidden(flags);
 
-    // Screen-wide reverse: swap default fg/bg for pure-default colors
-    // (handled implicitly: screen_reverse flips what "default" means)
-    // We pass the effective fg/bg colors through to sub-resolvers below.
-
     // Bold + indexed < 16: use bright variant
     if (is_bold > 0i64) {
-        if (raw color_is_indexed(fg)) {
+        if (raw color_is_indexed(fg) != 0i64) {
             int64:idx = raw color_get_index(fg);
             if (idx < 8i64) {
                 fg = raw color_indexed(idx + 8i64);
@@ -146,16 +157,16 @@ pub func:resolve_fg_r = int64(int64:attrs_packed, int64:flags) {
     // Hidden: fg = bg color (text invisible)
     if (is_hidden > 0i64) {
         int64:bgr = raw resolve_bg_color_r(bg);
-        if (g_screen_reverse > 0i64) { bgr = scheme_to_fp(raw scheme_default_fg_r()); }
+        if (g_screen_reverse > 0i64) { bgr = raw scheme_to_fp(raw scheme_default_fg_r()); }
         pass(bgr);
     }
 
     // Inverse: draw using bg color as fg
     if (is_inverse > 0i64) {
         int64:bgr = raw resolve_bg_color_r(bg);
-        if (raw color_is_default(bg)) {
+        if (raw color_is_default(bg) != 0i64) {
             if (g_screen_reverse > 0i64) {
-                bgr = scheme_to_fp(raw scheme_default_fg_r());
+                bgr = raw scheme_to_fp(raw scheme_default_fg_r());
             }
         }
         if (is_dim > 0i64) { bgr = bgr * 670i64 / 1000i64; }
@@ -164,9 +175,9 @@ pub func:resolve_fg_r = int64(int64:attrs_packed, int64:flags) {
 
     // Normal: resolve fg
     int64:r = raw resolve_color_r(fg);
-    if (raw color_is_default(fg)) {
+    if (raw color_is_default(fg) != 0i64) {
         if (g_screen_reverse > 0i64) {
-            r = scheme_to_fp(raw scheme_default_bg_r());
+            r = raw scheme_to_fp(raw scheme_default_bg_r());
         }
     }
     if (is_dim > 0i64) { r = r * 670i64 / 1000i64; }
@@ -183,27 +194,27 @@ pub func:resolve_fg_g = int64(int64:attrs_packed, int64:flags) {
     int64:is_hidden  = raw cell_flag_hidden(flags);
 
     if (is_bold > 0i64) {
-        if (raw color_is_indexed(fg)) {
+        if (raw color_is_indexed(fg) != 0i64) {
             int64:idx = raw color_get_index(fg);
             if (idx < 8i64) { fg = raw color_indexed(idx + 8i64); }
         }
     }
     if (is_hidden > 0i64) {
         int64:bgg = raw resolve_bg_color_g(bg);
-        if (g_screen_reverse > 0i64) { bgg = scheme_to_fp(raw scheme_default_fg_g()); }
+        if (g_screen_reverse > 0i64) { bgg = raw scheme_to_fp(raw scheme_default_fg_g()); }
         pass(bgg);
     }
     if (is_inverse > 0i64) {
         int64:bgg = raw resolve_bg_color_g(bg);
-        if (raw color_is_default(bg)) {
-            if (g_screen_reverse > 0i64) { bgg = scheme_to_fp(raw scheme_default_fg_g()); }
+        if (raw color_is_default(bg) != 0i64) {
+            if (g_screen_reverse > 0i64) { bgg = raw scheme_to_fp(raw scheme_default_fg_g()); }
         }
         if (is_dim > 0i64) { bgg = bgg * 670i64 / 1000i64; }
         pass(bgg);
     }
     int64:g = raw resolve_color_g(fg);
-    if (raw color_is_default(fg)) {
-        if (g_screen_reverse > 0i64) { g = scheme_to_fp(raw scheme_default_bg_g()); }
+    if (raw color_is_default(fg) != 0i64) {
+        if (g_screen_reverse > 0i64) { g = raw scheme_to_fp(raw scheme_default_bg_g()); }
     }
     if (is_dim > 0i64) { g = g * 670i64 / 1000i64; }
     pass(g);
@@ -219,27 +230,27 @@ pub func:resolve_fg_b = int64(int64:attrs_packed, int64:flags) {
     int64:is_hidden  = raw cell_flag_hidden(flags);
 
     if (is_bold > 0i64) {
-        if (raw color_is_indexed(fg)) {
+        if (raw color_is_indexed(fg) != 0i64) {
             int64:idx = raw color_get_index(fg);
             if (idx < 8i64) { fg = raw color_indexed(idx + 8i64); }
         }
     }
     if (is_hidden > 0i64) {
         int64:bgb = raw resolve_bg_color_b(bg);
-        if (g_screen_reverse > 0i64) { bgb = scheme_to_fp(raw scheme_default_fg_b()); }
+        if (g_screen_reverse > 0i64) { bgb = raw scheme_to_fp(raw scheme_default_fg_b()); }
         pass(bgb);
     }
     if (is_inverse > 0i64) {
         int64:bgb = raw resolve_bg_color_b(bg);
-        if (raw color_is_default(bg)) {
-            if (g_screen_reverse > 0i64) { bgb = scheme_to_fp(raw scheme_default_fg_b()); }
+        if (raw color_is_default(bg) != 0i64) {
+            if (g_screen_reverse > 0i64) { bgb = raw scheme_to_fp(raw scheme_default_fg_b()); }
         }
         if (is_dim > 0i64) { bgb = bgb * 670i64 / 1000i64; }
         pass(bgb);
     }
     int64:b = raw resolve_color_b(fg);
-    if (raw color_is_default(fg)) {
-        if (g_screen_reverse > 0i64) { b = scheme_to_fp(raw scheme_default_bg_b()); }
+    if (raw color_is_default(fg) != 0i64) {
+        if (g_screen_reverse > 0i64) { b = raw scheme_to_fp(raw scheme_default_bg_b()); }
     }
     if (is_dim > 0i64) { b = b * 670i64 / 1000i64; }
     pass(b);
@@ -258,16 +269,16 @@ pub func:resolve_bg_r = int64(int64:attrs_packed, int64:flags) {
     // Inverse: use fg as bg
     if (is_inverse > 0i64) {
         int64:fgr = raw resolve_color_r(fg);
-        if (raw color_is_default(fg)) {
-            if (g_screen_reverse > 0i64) { fgr = scheme_to_fp(raw scheme_default_bg_r()); }
+        if (raw color_is_default(fg) != 0i64) {
+            if (g_screen_reverse > 0i64) { fgr = raw scheme_to_fp(raw scheme_default_bg_r()); }
         }
         pass(fgr);
     }
 
     // Normal bg
     int64:r = raw resolve_bg_color_r(bg);
-    if (raw color_is_default(bg)) {
-        if (g_screen_reverse > 0i64) { r = scheme_to_fp(raw scheme_default_fg_r()); }
+    if (raw color_is_default(bg) != 0i64) {
+        if (g_screen_reverse > 0i64) { r = raw scheme_to_fp(raw scheme_default_fg_r()); }
     }
     pass(r);
 };
@@ -280,14 +291,14 @@ pub func:resolve_bg_g = int64(int64:attrs_packed, int64:flags) {
 
     if (is_inverse > 0i64) {
         int64:fgg = raw resolve_color_g(fg);
-        if (raw color_is_default(fg)) {
-            if (g_screen_reverse > 0i64) { fgg = scheme_to_fp(raw scheme_default_bg_g()); }
+        if (raw color_is_default(fg) != 0i64) {
+            if (g_screen_reverse > 0i64) { fgg = raw scheme_to_fp(raw scheme_default_bg_g()); }
         }
         pass(fgg);
     }
     int64:g = raw resolve_bg_color_g(bg);
-    if (raw color_is_default(bg)) {
-        if (g_screen_reverse > 0i64) { g = scheme_to_fp(raw scheme_default_fg_g()); }
+    if (raw color_is_default(bg) != 0i64) {
+        if (g_screen_reverse > 0i64) { g = raw scheme_to_fp(raw scheme_default_fg_g()); }
     }
     pass(g);
 };
@@ -300,14 +311,14 @@ pub func:resolve_bg_b = int64(int64:attrs_packed, int64:flags) {
 
     if (is_inverse > 0i64) {
         int64:fgb = raw resolve_color_b(fg);
-        if (raw color_is_default(fg)) {
-            if (g_screen_reverse > 0i64) { fgb = scheme_to_fp(raw scheme_default_bg_b()); }
+        if (raw color_is_default(fg) != 0i64) {
+            if (g_screen_reverse > 0i64) { fgb = raw scheme_to_fp(raw scheme_default_bg_b()); }
         }
         pass(fgb);
     }
     int64:b = raw resolve_bg_color_b(bg);
-    if (raw color_is_default(bg)) {
-        if (g_screen_reverse > 0i64) { b = scheme_to_fp(raw scheme_default_fg_b()); }
+    if (raw color_is_default(bg) != 0i64) {
+        if (g_screen_reverse > 0i64) { b = raw scheme_to_fp(raw scheme_default_fg_b()); }
     }
     pass(b);
 };
@@ -322,7 +333,7 @@ pub func:bg_is_default = int64(int64:attrs_packed, int64:flags) {
     int64:is_inverse = raw cell_flag_inverse(flags);
     if (is_inverse > 0i64) { pass(0i64); } // inverse always non-default
     int64:bg = raw cell_attrs_bg(attrs_packed);
-    if (raw color_is_default(bg)) {
+    if (raw color_is_default(bg) != 0i64) {
         if (g_screen_reverse > 0i64) { pass(0i64); }
         pass(1i64);
     }

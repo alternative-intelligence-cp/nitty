@@ -24,7 +24,7 @@ use "escape_types.npk".*;
 use "actions.npk".*;
 use "vt_parser.npk".*;
 
-func:failsafe = int32(tbb32:err) { exit 1; };
+func:failsafe = int32(tbb32:err) { pass(1i32); };
 
 // ═══════════════════════════════════════════════════════════════════════
 // Dispatch Output State

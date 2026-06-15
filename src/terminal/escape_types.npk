@@ -10,7 +10,7 @@
 // Reference: Paul Flo Williams' vt100.net DEC ANSI parser state diagram
 //            ECMA-48 (control functions for coded character sets)
 
-func:failsafe = int32(tbb32:err) { exit 1; };
+func:failsafe = int32(tbb32:err) { pass(1i32); };
 
 // ═══════════════════════════════════════════════════════════════════════
 // C0 Control Codes (0x00–0x1F)

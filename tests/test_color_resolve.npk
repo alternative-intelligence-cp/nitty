@@ -1,0 +1,190 @@
+// tests/test_color_resolve.npk — Color resolution + color scheme unit tests for Nitty v0.3.1
+//
+// Tests the full color resolution pipeline and ANSI color scheme:
+//   - ANSI palette values (xterm defaults, all 16 colors)
+//   - COLOR_DEFAULT → terminal default fg/bg
+//   - Indexed(n) → ANSI or 256-color palette
+//   - RGB passthrough
+//   - Attribute effects: inverse, dim, hidden, bold-bright
+//   - Screen-wide reverse video (DECSCNM)
+//   - bg_is_default optimization
+//
+// All pass → exit 0.
+
+use "../src/gui/color_scheme.npk".*;
+use "../src/gui/color_resolve.npk".*;
+
+int64:STDOUT = 1i64;
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:_e) {
+    drop(write_stdout("[FATAL] Unexpected runtime error\n"));
+    exit 1i32;
+};
+
+// Silently count; print tag only on failure
+func:check = NIL(string:tag, int64:got, int64:expected) {
+    if (got == expected) { g_pass = g_pass + 1i64; pass(NIL); }
+    drop(write_stdout("[FAIL] "));
+    drop(write_stdout(tag));
+    drop(write_stdout("\n"));
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+func:check_near = NIL(string:tag, int64:got, int64:expected, int64:delta) {
+    int64:diff = got - expected;
+    if (diff < 0i64) { diff = 0i64 - diff; }
+    if (diff <= delta) { g_pass = g_pass + 1i64; pass(NIL); }
+    drop(write_stdout("[FAIL] "));
+    drop(write_stdout(tag));
+    drop(write_stdout("\n"));
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T01-T33: Color scheme tests
+// ═══════════════════════════════════════════════════════════════════════
+func:run_scheme_tests = NIL() {
+    // T01-T03: ANSI 0 = Black (0,0,0)
+    drop(check("T01 ansi[0].r == 0",   raw scheme_ansi_r(0i64), 0i64));
+    drop(check("T02 ansi[0].g == 0",   raw scheme_ansi_g(0i64), 0i64));
+    drop(check("T03 ansi[0].b == 0",   raw scheme_ansi_b(0i64), 0i64));
+    // T04-T06: ANSI 1 = Red (205,0,0)
+    drop(check("T04 ansi[1].r == 205", raw scheme_ansi_r(1i64), 205i64));
+    drop(check("T05 ansi[1].g == 0",   raw scheme_ansi_g(1i64), 0i64));
+    drop(check("T06 ansi[1].b == 0",   raw scheme_ansi_b(1i64), 0i64));
+    // T07-T09: ANSI 4 = Blue (0,0,238)
+    drop(check("T07 ansi[4].r == 0",   raw scheme_ansi_r(4i64), 0i64));
+    drop(check("T08 ansi[4].g == 0",   raw scheme_ansi_g(4i64), 0i64));
+    drop(check("T09 ansi[4].b == 238", raw scheme_ansi_b(4i64), 238i64));
+    // T10-T12: ANSI 7 = White (229,229,229)
+    drop(check("T10 ansi[7].r == 229", raw scheme_ansi_r(7i64), 229i64));
+    drop(check("T11 ansi[7].g == 229", raw scheme_ansi_g(7i64), 229i64));
+    drop(check("T12 ansi[7].b == 229", raw scheme_ansi_b(7i64), 229i64));
+    // T13-T15: ANSI 8 = Bright Black (127,127,127)
+    drop(check("T13 ansi[8].r == 127", raw scheme_ansi_r(8i64), 127i64));
+    drop(check("T14 ansi[8].g == 127", raw scheme_ansi_g(8i64), 127i64));
+    drop(check("T15 ansi[8].b == 127", raw scheme_ansi_b(8i64), 127i64));
+    // T16-T18: ANSI 9 = Bright Red (255,0,0)
+    drop(check("T16 ansi[9].r == 255", raw scheme_ansi_r(9i64), 255i64));
+    drop(check("T17 ansi[9].g == 0",   raw scheme_ansi_g(9i64), 0i64));
+    drop(check("T18 ansi[9].b == 0",   raw scheme_ansi_b(9i64), 0i64));
+    // T19-T21: ANSI 12 = Bright Blue (92,92,255)
+    drop(check("T19 ansi[12].r == 92",  raw scheme_ansi_r(12i64), 92i64));
+    drop(check("T20 ansi[12].g == 92",  raw scheme_ansi_g(12i64), 92i64));
+    drop(check("T21 ansi[12].b == 255", raw scheme_ansi_b(12i64), 255i64));
+    // T22-T24: ANSI 15 = Bright White (255,255,255)
+    drop(check("T22 ansi[15].r == 255", raw scheme_ansi_r(15i64), 255i64));
+    drop(check("T23 ansi[15].g == 255", raw scheme_ansi_g(15i64), 255i64));
+    drop(check("T24 ansi[15].b == 255", raw scheme_ansi_b(15i64), 255i64));
+    // T25-T27: Default fg (229,229,229)
+    drop(check("T25 default_fg.r == 229", raw scheme_default_fg_r(), 229i64));
+    drop(check("T26 default_fg.g == 229", raw scheme_default_fg_g(), 229i64));
+    drop(check("T27 default_fg.b == 229", raw scheme_default_fg_b(), 229i64));
+    // T28-T30: Default bg (0,0,0)
+    drop(check("T28 default_bg.r == 0", raw scheme_default_bg_r(), 0i64));
+    drop(check("T29 default_bg.g == 0", raw scheme_default_bg_g(), 0i64));
+    drop(check("T30 default_bg.b == 0", raw scheme_default_bg_b(), 0i64));
+    // T31-T33: scheme_to_fp
+    drop(check("T31 to_fp(0)=0",      raw scheme_to_fp(0i64),   0i64));
+    drop(check("T32 to_fp(255)=1000", raw scheme_to_fp(255i64), 1000i64));
+    drop(check("T33 to_fp(128)=501",  raw scheme_to_fp(128i64), 501i64));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T40-T75: Color resolution tests
+// ═══════════════════════════════════════════════════════════════════════
+func:run_resolve_tests = NIL() {
+    // T40-T42: COLOR_DEFAULT → default fg (229*1000/255 = 898)
+    int64:def_fg_fp = 229i64 * 1000i64 / 255i64;
+    int64:default_c = raw cr_COLOR_DEFAULT();
+    drop(check("T40 DEFAULT fg.r", raw resolve_color_r(default_c), def_fg_fp));
+    drop(check("T41 DEFAULT fg.g", raw resolve_color_g(default_c), def_fg_fp));
+    drop(check("T42 DEFAULT fg.b", raw resolve_color_b(default_c), def_fg_fp));
+    // T43-T45: Indexed(0) = ANSI 0 = black (0,0,0)
+    int64:c_idx0 = raw cr_color_indexed(0i64);
+    drop(check("T43 Indexed(0).r == 0", raw resolve_color_r(c_idx0), 0i64));
+    drop(check("T44 Indexed(0).g == 0", raw resolve_color_g(c_idx0), 0i64));
+    drop(check("T45 Indexed(0).b == 0", raw resolve_color_b(c_idx0), 0i64));
+    // T46-T48: Indexed(1) = ANSI 1 = Red (205*1000/255 = 803)
+    int64:red_fp = 205i64 * 1000i64 / 255i64;
+    int64:c_idx1 = raw cr_color_indexed(1i64);
+    drop(check("T46 Indexed(1).r == 803", raw resolve_color_r(c_idx1), red_fp));
+    drop(check("T47 Indexed(1).g == 0",   raw resolve_color_g(c_idx1), 0i64));
+    drop(check("T48 Indexed(1).b == 0",   raw resolve_color_b(c_idx1), 0i64));
+    // T49-T51: Indexed(196) = 256-color bright red (255,0,0 → 1000,0,0)
+    int64:c_idx196 = raw cr_color_indexed(196i64);
+    drop(check("T49 Indexed(196).r == 1000", raw resolve_color_r(c_idx196), 1000i64));
+    drop(check("T50 Indexed(196).g == 0",    raw resolve_color_g(c_idx196), 0i64));
+    drop(check("T51 Indexed(196).b == 0",    raw resolve_color_b(c_idx196), 0i64));
+    // T52-T54: RGB true color (100,200,50 → 392,784,196)
+    int64:c_rgb = raw cr_color_rgb(100i64, 200i64, 50i64);
+    drop(check_near("T52 RGB.r ~392", raw resolve_color_r(c_rgb), 392i64, 1i64));
+    drop(check_near("T53 RGB.g ~784", raw resolve_color_g(c_rgb), 784i64, 1i64));
+    drop(check_near("T54 RGB.b ~196", raw resolve_color_b(c_rgb), 196i64, 1i64));
+    // T55-T60: INVERSE — fg/bg swap (fg=Red, bg=Default)
+    int64:inv_flags = raw cr_CELL_INVERSE();
+    int64:inv_attrs = raw cr_cell_pack_attrs(c_idx1, default_c);
+    drop(check("T55 INV fg.r == 0", raw resolve_fg_r(inv_attrs, inv_flags), 0i64));
+    drop(check("T56 INV fg.g == 0", raw resolve_fg_g(inv_attrs, inv_flags), 0i64));
+    drop(check("T57 INV fg.b == 0", raw resolve_fg_b(inv_attrs, inv_flags), 0i64));
+    drop(check("T58 INV bg.r == 803", raw resolve_bg_r(inv_attrs, inv_flags), red_fp));
+    drop(check("T59 INV bg.g == 0",   raw resolve_bg_g(inv_attrs, inv_flags), 0i64));
+    drop(check("T60 INV bg.b == 0",   raw resolve_bg_b(inv_attrs, inv_flags), 0i64));
+    // T61-T63: DIM — ~67% of default fg (898*670/1000 = 601)
+    int64:dim_flags = raw cr_CELL_DIM();
+    int64:dim_attrs = raw cr_cell_pack_attrs(default_c, default_c);
+    int64:dimmed = def_fg_fp * 670i64 / 1000i64;
+    drop(check_near("T61 DIM fg.r ~601", raw resolve_fg_r(dim_attrs, dim_flags), dimmed, 2i64));
+    drop(check_near("T62 DIM fg.g ~601", raw resolve_fg_g(dim_attrs, dim_flags), dimmed, 2i64));
+    drop(check_near("T63 DIM fg.b ~601", raw resolve_fg_b(dim_attrs, dim_flags), dimmed, 2i64));
+    // T64-T66: HIDDEN — fg == bg (both default_bg = 0)
+    int64:hid_flags = raw cr_CELL_HIDDEN();
+    int64:hid_attrs = raw cr_cell_pack_attrs(default_c, default_c);
+    drop(check("T64 HID fg.r == 0", raw resolve_fg_r(hid_attrs, hid_flags), 0i64));
+    drop(check("T65 HID fg.g == 0", raw resolve_fg_g(hid_attrs, hid_flags), 0i64));
+    drop(check("T66 HID fg.b == 0", raw resolve_fg_b(hid_attrs, hid_flags), 0i64));
+    // T67-T69: BOLD + Indexed(1) → Indexed(9) = Bright Red (1000,0,0)
+    int64:bold_flags = raw cr_CELL_BOLD();
+    int64:bold_attrs = raw cr_cell_pack_attrs(c_idx1, default_c);
+    drop(check("T67 BOLD Idx(1) fg.r == 1000", raw resolve_fg_r(bold_attrs, bold_flags), 1000i64));
+    drop(check("T68 BOLD Idx(1) fg.g == 0",    raw resolve_fg_g(bold_attrs, bold_flags), 0i64));
+    drop(check("T69 BOLD Idx(1) fg.b == 0",    raw resolve_fg_b(bold_attrs, bold_flags), 0i64));
+    // T70-T73: Screen-wide reverse video
+    drop(raw set_screen_reverse(1i64));
+    int64:norm_attrs = raw cr_cell_pack_attrs(default_c, default_c);
+    int64:norm_flags = 0i64;
+    drop(check("T70 SREV fg.r == 0", raw resolve_fg_r(norm_attrs, norm_flags), 0i64));
+    drop(check("T71 SREV fg.g == 0", raw resolve_fg_g(norm_attrs, norm_flags), 0i64));
+    drop(check("T72 SREV fg.b == 0", raw resolve_fg_b(norm_attrs, norm_flags), 0i64));
+    drop(check("T73 SREV bg.r == 898", raw resolve_bg_r(norm_attrs, norm_flags), def_fg_fp));
+    drop(raw set_screen_reverse(0i64));
+    // T74-T75: bg_is_default
+    int64:def_attrs = raw cr_cell_pack_attrs(default_c, default_c);
+    drop(check("T74 bg_is_default default==1", raw bg_is_default(def_attrs, 0i64), 1i64));
+    int64:col_attrs = raw cr_cell_pack_attrs(default_c, c_idx1);
+    drop(check("T75 bg_is_default red==0", raw bg_is_default(col_attrs, 0i64), 0i64));
+    pass(NIL);
+};
+
+func:main = int32() {
+    drop(raw set_screen_reverse(0i64));
+    drop(run_scheme_tests());
+    drop(run_resolve_tests());
+    if (g_fail > 0i64) {
+        drop(write_stdout("FAILED: some color tests failed.\n"));
+        exit 1i32;
+    }
+    drop(write_stdout("All color scheme + resolve tests passed.\n"));
+    exit 0i32;
+};

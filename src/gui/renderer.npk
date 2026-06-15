@@ -48,8 +48,6 @@ int64:g_rend_cols = 80i64;
 /// font_desc: Pango font description e.g. "Monospace 12"
 pub func:renderer_init = NIL(string:font_desc) {
     nitty_render_set_font(font_desc);
-    // Initialize the color scheme (populates ANSI table)
-    drop(init_scheme());
     // Set C renderer default colors from scheme
     nitty_render_set_bg(
         raw scheme_to_fp(raw scheme_default_bg_r()),

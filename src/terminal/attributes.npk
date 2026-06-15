@@ -15,7 +15,7 @@
 // Module-level — single global "current pen" for the terminal session.
 // SGR dispatch modifies this state. The renderer reads it to draw cells.
 
-func:failsafe = int32(tbb32:err) { exit 1; };
+func:failsafe = int32(tbb32:err) { pass(1i32); };
 
 // ═══════════════════════════════════════════════════════════════════════
 // Color Encoding Constants & Helpers
