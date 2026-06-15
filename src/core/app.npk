@@ -7,32 +7,33 @@
 //   app_version()  — return the version string
 //
 // Output goes to stdout (fd 1) via sys(WRITE).
-// Dependencies: none (uses sys() directly to avoid circular imports)
+// Dependencies: none (uses sys() directly to avoid circular imports at this stage)
 
 // fd 1 = stdout
 int64:STDOUT = 1i64;
 
 // Write a string to stdout via sys(WRITE).
 // sys(WRITE, fd, data, len) — pure kernel call, no libc required.
+// drop() discards the Result<int64> from sys(WRITE).
 func:write_stdout = NIL(string:msg) {
     int64:len = string_length(msg);
     drop(sys(WRITE, STDOUT, msg, len));
     pass(NIL);
 };
 
-pub func:app_init = int32() {
-    write_stdout("Nitty v0.0.0 initializing...\n");
-    pass(0i32);
+pub func:app_init = NIL() {
+    drop(write_stdout("Nitty v0.0.0 initializing...\n"));
+    pass(NIL);
 };
 
-pub func:app_run = int32() {
-    write_stdout("Nitty running (no GUI yet)\n");
-    pass(0i32);
+pub func:app_run = NIL() {
+    drop(write_stdout("Nitty running (no GUI yet)\n"));
+    pass(NIL);
 };
 
-pub func:app_shutdown = int32() {
-    write_stdout("Nitty shutting down.\n");
-    pass(0i32);
+pub func:app_shutdown = NIL() {
+    drop(write_stdout("Nitty shutting down.\n"));
+    pass(NIL);
 };
 
 pub func:app_version = string() {

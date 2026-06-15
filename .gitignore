@@ -141,3 +141,5 @@ CTestTestfile.cmake
 # --------------------------------------------------------------------------
 .npkbld/
 .build_state/
+.nitpick_make/
+

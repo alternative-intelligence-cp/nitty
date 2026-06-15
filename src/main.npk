@@ -5,23 +5,22 @@
 //   2. app_run()      — run (main loop, stub for now)
 //   3. app_shutdown() — clean shutdown
 //
-// Returns exit code 0 on success, 1 if any lifecycle function fails.
+// Lifecycle functions return NIL — use drop() to discard the Result.
+// Returns exit code 0 on success.
+//
+// Nitpick binary entry point rules:
+//   - failsafe: func:failsafe = int32(tbb32:err) { exit N; };
+//   - main:     func:main = int32() { ... exit N; };
+//   - pub func calls (even NIL-returning) produce a Result — use drop().
 
 use "core/app.npk".*;
 
-// failsafe is required for all Nitpick binary targets.
-// It is called if the runtime encounters an unrecoverable error.
-func:failsafe = NIL(int32:code) { pass(NIL); };
+// failsafe: called by the runtime on unrecoverable error.
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
 
 func:main = int32() {
-    int32:init_ret = app_init();
-    if (init_ret != 0i32) { pass(1i32); }
-
-    int32:run_ret = app_run();
-    if (run_ret != 0i32) { pass(1i32); }
-
-    int32:shutdown_ret = app_shutdown();
-    if (shutdown_ret != 0i32) { pass(1i32); }
-
-    pass(0i32);
+    drop(app_init());
+    drop(app_run());
+    drop(app_shutdown());
+    exit 0i32;
 };
