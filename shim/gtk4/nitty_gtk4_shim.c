@@ -49,8 +49,35 @@ static int        g_resize_pending   = 0;
 static int64_t    g_resize_width     = 0;
 static int64_t    g_resize_height    = 0;
 
+/* v0.1.4: Terminal mode */
+static int        g_use_terminal     = 0;  /* Set by nitty_gtk4_terminal_enable */
+static int64_t    g_terminal_master_fd = -1;
+static int        g_terminal_shell_dead = 0;
+static int64_t    g_terminal_child_pid = -1;
+
+/* PTY shim functions */
+extern int64_t nitty_pty_openpt(void);
+extern int64_t nitty_pty_grantpt(int64_t master_fd);
+extern int64_t nitty_pty_unlockpt(int64_t master_fd);
+extern int64_t nitty_pty_spawn_shell(int64_t master_fd, int64_t rows, int64_t cols);
+extern int64_t nitty_pty_set_nonblock(int64_t fd);
+extern int64_t nitty_pty_set_winsize(int64_t fd, int64_t rows, int64_t cols,
+                                      int64_t xpixel, int64_t ypixel);
+extern int64_t nitty_pty_read_raw(int64_t fd, int64_t buf_ptr, int64_t max_len);
+extern int64_t nitty_pty_child_alive(int64_t pid);
+extern int64_t nitty_pty_close(int64_t fd);
+
+/* Input terminal mode */
+extern void nitty_input_set_terminal_mode(int64_t master_fd);
+
+/* Grid output processing */
+extern int64_t nitty_grid_process_output(const char *buf, int64_t len);
+
 /* Forward declaration of on_draw_func */
 static void on_draw_func(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer user_data);
+
+/* Forward declaration of terminal output polling (v0.1.4) */
+static void nitty_terminal_poll_output(void);
 
 /* Cursor blink timer callback */
 static gboolean on_cursor_blink(gpointer user_data)
@@ -126,6 +153,50 @@ static void on_activate(GtkApplication *app, gpointer user_data)
 
         /* Cursor blink timer: toggle every 530ms */
         g_timeout_add(530, (GSourceFunc)on_cursor_blink, NULL);
+    }
+
+    /* v0.1.4: Spawn shell and wire PTY I/O */
+    if (g_use_terminal && g_use_grid) {
+        int64_t rows = nitty_grid_get_rows();
+        int64_t cols = nitty_grid_get_cols();
+
+        /* Open PTY master */
+        int64_t master_fd = nitty_pty_openpt();
+        if (master_fd < 0) {
+            fprintf(stderr, "Terminal: ERROR — failed to open PTY master\n");
+        } else {
+            /* Grant and unlock */
+            nitty_pty_grantpt(master_fd);
+            nitty_pty_unlockpt(master_fd);
+
+            /* Set initial window size */
+            nitty_pty_set_winsize(master_fd, rows, cols, 0, 0);
+
+            /* Set non-blocking before spawning */
+            nitty_pty_set_nonblock(master_fd);
+
+            /* Spawn shell */
+            int64_t pid = nitty_pty_spawn_shell(master_fd, rows, cols);
+            if (pid > 0) {
+                g_terminal_master_fd = master_fd;
+                g_terminal_child_pid = pid;
+
+                /* Enable terminal mode input routing */
+                nitty_input_set_terminal_mode(master_fd);
+
+                /* Start fd watch for PTY readability */
+                nitty_gtk4_add_fd_watch(master_fd);
+
+                /* Register output polling callback (16ms ~60fps) */
+                nitty_gtk4_set_idle_callback(nitty_terminal_poll_output);
+
+                fprintf(stdout, "Terminal: shell spawned (PID %ld, master fd %ld, %ldx%ld)\n",
+                        (long)pid, (long)master_fd, (long)cols, (long)rows);
+            } else {
+                fprintf(stderr, "Terminal: ERROR — failed to spawn shell\n");
+                nitty_pty_close(master_fd);
+            }
+        }
     }
 
     gtk_window_present(GTK_WINDOW(window));
@@ -271,6 +342,60 @@ void nitty_gtk4_grid_enable(const char *font_desc)
     if (font_desc != NULL) {
         strncpy(g_grid_font, font_desc, sizeof(g_grid_font) - 1);
         g_grid_font[sizeof(g_grid_font) - 1] = '\0';
+    }
+}
+
+/* ── Terminal enable (v0.1.4) ─────────────────────────────────────────── */
+
+void nitty_gtk4_terminal_enable(void)
+{
+    g_use_terminal = 1;
+}
+
+/* PTY output polling — called every ~16ms from idle callback */
+static char g_poll_buf[16384];
+
+static void nitty_terminal_poll_output(void)
+{
+    if (g_terminal_master_fd < 0 || g_terminal_shell_dead) return;
+
+    /* Check if the shell has exited */
+    if (g_terminal_child_pid > 0 && !nitty_pty_child_alive(g_terminal_child_pid)) {
+        g_terminal_shell_dead = 1;
+        /* Drain remaining output */
+        int64_t n;
+        do {
+            n = nitty_pty_read_raw(g_terminal_master_fd,
+                                    (int64_t)(uintptr_t)g_poll_buf, 16383);
+            if (n > 0) {
+                g_poll_buf[n] = '\0';
+                nitty_grid_process_output(g_poll_buf, n);
+            }
+        } while (n > 0);
+
+        /* Display exit message */
+        const char *msg = "\r\n[Process exited]\r\n";
+        nitty_grid_process_output(msg, (int64_t)strlen(msg));
+        nitty_gtk4_queue_redraw();
+        nitty_input_clear_terminal_mode();
+        return;
+    }
+
+    /* Read and process output */
+    int chunks = 0;
+    int64_t n;
+    do {
+        n = nitty_pty_read_raw(g_terminal_master_fd,
+                                (int64_t)(uintptr_t)g_poll_buf, 16383);
+        if (n > 0) {
+            g_poll_buf[n] = '\0';
+            nitty_grid_process_output(g_poll_buf, n);
+            chunks++;
+        }
+    } while (n > 0 && chunks < 8);  /* Max 8 chunks per tick (128KB) */
+
+    if (chunks > 0) {
+        nitty_gtk4_queue_redraw();
     }
 }
 
@@ -573,4 +698,85 @@ int64_t nitty_gtk4_widget_get_scale_factor(int64_t widget_ptr)
 {
     if (widget_ptr == 0) return 1;
     return (int64_t)gtk_widget_get_scale_factor((GtkWidget *)(uintptr_t)widget_ptr);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.1.4: fd watching, idle callback, monotonic time
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+#include <glib-unix.h>
+
+static int g_fd_watch_ready = 0;
+static guint g_fd_watch_id = 0;
+static guint g_idle_id = 0;
+static void (*g_idle_callback)(void) = NULL;
+
+/* GLib fd watch callback — fires when PTY fd is readable */
+static gboolean on_fd_readable(gint fd, GIOCondition condition, gpointer user_data)
+{
+    (void)fd;
+    (void)user_data;
+    if (condition & G_IO_IN) {
+        g_fd_watch_ready = 1;
+    }
+    return G_SOURCE_CONTINUE;
+}
+
+int64_t nitty_gtk4_add_fd_watch(int64_t fd)
+{
+    if (fd < 0) return -1;
+    g_fd_watch_id = g_unix_fd_add((gint)fd, G_IO_IN | G_IO_HUP | G_IO_ERR,
+                                   on_fd_readable, NULL);
+    if (g_fd_watch_id == 0) return -1;
+    return 0;
+}
+
+int64_t nitty_gtk4_fd_watch_poll(void)
+{
+    return g_fd_watch_ready ? 1 : 0;
+}
+
+void nitty_gtk4_fd_watch_clear(void)
+{
+    g_fd_watch_ready = 0;
+}
+
+void nitty_gtk4_fd_watch_remove(void)
+{
+    if (g_fd_watch_id > 0) {
+        g_source_remove(g_fd_watch_id);
+        g_fd_watch_id = 0;
+    }
+    g_fd_watch_ready = 0;
+}
+
+int64_t nitty_gtk4_get_monotonic_time(void)
+{
+    return (int64_t)g_get_monotonic_time();
+}
+
+/* GLib idle callback — fires each main loop iteration */
+static gboolean on_idle_tick(gpointer user_data)
+{
+    (void)user_data;
+    if (g_idle_callback != NULL) {
+        g_idle_callback();
+    }
+    return G_SOURCE_CONTINUE;
+}
+
+void nitty_gtk4_set_idle_callback(void (*callback)(void))
+{
+    g_idle_callback = callback;
+    if (g_idle_id == 0 && callback != NULL) {
+        /* Use g_timeout_add instead of g_idle_add for a ~16ms tick (60fps) */
+        g_idle_id = g_timeout_add(16, (GSourceFunc)on_idle_tick, NULL);
+    }
+}
+
+void nitty_gtk4_queue_redraw(void)
+{
+    if (g_drawing_area != NULL) {
+        gtk_widget_queue_draw(g_drawing_area);
+    }
 }

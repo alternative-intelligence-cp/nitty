@@ -193,4 +193,22 @@ extern "nitty_gtk4_shim" {
     func:nitty_gtk4_resize_get_width  = int64();
     func:nitty_gtk4_resize_get_height = int64();
     func:nitty_gtk4_grid_handle_key  = NIL(int64:keyval, int64:modifiers);
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.1.4: Grid scrolling, fd watching, idle callback, timing
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_grid_scroll_up         = NIL(int64:lines);
+    func:nitty_grid_process_output    = int64(string:buf, int64:len);
+    func:nitty_gtk4_add_fd_watch      = int64(int64:fd);
+    func:nitty_gtk4_fd_watch_poll     = int64();
+    func:nitty_gtk4_fd_watch_clear    = NIL();
+    func:nitty_gtk4_fd_watch_remove   = NIL();
+    func:nitty_gtk4_get_monotonic_time = int64();
+    func:nitty_gtk4_queue_redraw      = NIL();
+    func:nitty_gtk4_terminal_enable   = NIL();
+
+    // v0.1.4: Terminal mode (keys → PTY)
+    func:nitty_input_set_terminal_mode   = NIL(int64:master_fd);
+    func:nitty_input_clear_terminal_mode = NIL();
 }

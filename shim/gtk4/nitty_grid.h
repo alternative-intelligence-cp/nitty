@@ -96,15 +96,22 @@ int64_t nitty_grid_get_cursor_visible(void);
  */
 int64_t nitty_grid_resize(int64_t new_width_px, int64_t new_height_px);
 
-/* ── Render integration ───────────────────────────────────────────────── */
+/* ── Scrolling (v0.1.4) ──────────────────────────────────────────────── */
+
+void nitty_grid_scroll_up(int64_t lines);
+
+/* ── Output processing (v0.1.4) ──────────────────────────────────────── */
 
 /**
- * Render the entire grid to a Cairo context via Pango.
- * Called from the GTK draw callback.
- * @param cr       Cairo context pointer (as int64)
- * @param width    Drawable area width in pixels
- * @param height   Drawable area height in pixels
+ * Process raw bytes from PTY output and render to the grid.
+ * Handles printable ASCII, newline, carriage return, backspace, tab,
+ * and skips escape sequences.
+ * Returns number of bytes processed.
  */
+int64_t nitty_grid_process_output(const char *buf, int64_t len);
+
+/* ── Render integration ───────────────────────────────────────────────── */
+
 void nitty_grid_render(int64_t cr_ptr, int64_t width, int64_t height);
 
 #ifdef __cplusplus

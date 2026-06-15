@@ -1,0 +1,93 @@
+// src/terminal/output_handler.npk — PTY output → grid rendering
+//
+// v0.1.4: Routes PTY output to the C-side grid processor.
+//
+// The heavy lifting (escape sequence skipping, character rendering,
+// cursor movement, scrolling) is done in nitty_grid_process_output()
+// which is implemented in C for performance and because Nitpick lacks
+// while loops needed for arbitrary-length byte processing.
+//
+// This module is the Nitpick-side API that reads from the PTY and
+// feeds the buffer to the C processor.
+
+use "../gui/terminal_grid.npk".*;
+use "../gui/gtk4_ffi.npk".*;
+use "pty_io.npk".*;
+use "pty_ffi.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════
+// Output processing
+// ═══════════════════════════════════════════════════════════════════
+
+/// Read from PTY and process output to the grid.
+/// Returns bytes processed (> 0), 0 for no data, -2 for EAGAIN, -1 error.
+pub func:output_handler_process = int64(int64:master_fd) {
+    // Read from PTY as string (for passing to C)
+    Result<string>:data_r = pty_io_read_string(master_fd);
+    string:data = data_r ? "";
+    int64:data_len = string_length(data);
+
+    if (data_len <= 0i64) {
+        // Try raw read to distinguish EAGAIN from EOF
+        Result<int64>:n_r = pty_io_read(master_fd);
+        int64:n = n_r ? -1i64;
+        pass(n);
+    }
+
+    // Process the output through the C-side grid processor
+    int64:processed = nitty_grid_process_output(data, data_len);
+
+    // Request redraw
+    nitty_gtk4_queue_redraw();
+
+    pass(processed);
+};
+
+/// Drain and process all available PTY output.
+/// Calls output_handler_process repeatedly until EAGAIN.
+/// Returns total bytes processed.
+pub func:output_handler_drain = int64(int64:master_fd) {
+    int64:total = 0i64;
+
+    // Read up to 8 chunks per drain call (avoid blocking too long)
+    Result<int64>:r1 = output_handler_process(master_fd);
+    int64:n1 = r1 ? 0i64;
+    if (n1 > 0i64) { total = total + n1; }
+    if (n1 <= 0i64) { pass(total); }
+
+    Result<int64>:r2 = output_handler_process(master_fd);
+    int64:n2 = r2 ? 0i64;
+    if (n2 > 0i64) { total = total + n2; }
+    if (n2 <= 0i64) { pass(total); }
+
+    Result<int64>:r3 = output_handler_process(master_fd);
+    int64:n3 = r3 ? 0i64;
+    if (n3 > 0i64) { total = total + n3; }
+    if (n3 <= 0i64) { pass(total); }
+
+    Result<int64>:r4 = output_handler_process(master_fd);
+    int64:n4 = r4 ? 0i64;
+    if (n4 > 0i64) { total = total + n4; }
+    if (n4 <= 0i64) { pass(total); }
+
+    Result<int64>:r5 = output_handler_process(master_fd);
+    int64:n5 = r5 ? 0i64;
+    if (n5 > 0i64) { total = total + n5; }
+    if (n5 <= 0i64) { pass(total); }
+
+    Result<int64>:r6 = output_handler_process(master_fd);
+    int64:n6 = r6 ? 0i64;
+    if (n6 > 0i64) { total = total + n6; }
+    if (n6 <= 0i64) { pass(total); }
+
+    Result<int64>:r7 = output_handler_process(master_fd);
+    int64:n7 = r7 ? 0i64;
+    if (n7 > 0i64) { total = total + n7; }
+    if (n7 <= 0i64) { pass(total); }
+
+    Result<int64>:r8 = output_handler_process(master_fd);
+    int64:n8 = r8 ? 0i64;
+    if (n8 > 0i64) { total = total + n8; }
+
+    pass(total);
+};

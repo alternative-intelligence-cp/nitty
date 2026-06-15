@@ -1,0 +1,197 @@
+// src/terminal/input_handler.npk — Keyboard input → PTY write translation
+//
+// v0.1.4: Translates GDK key events into PTY-compatible bytes/sequences.
+//
+// Handles:
+//   - Printable ASCII (0x20-0x7E): write byte directly
+//   - Enter: write "\r" (carriage return)
+//   - Backspace: write 0x7F (DEL)
+//   - Tab: write 0x09
+//   - Ctrl+letter: write byte (letter - 0x60)
+//   - Arrow keys: write escape sequences (\x1b[A/B/C/D)
+//   - Home/End/Insert/Delete/PgUp/PgDn: escape sequences
+//   - F1-F12: escape sequences
+
+use "../gui/input.npk".*;
+use "../gui/gtk4_ffi.npk".*;
+use "pty_io.npk".*;
+use "pty_ffi.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════
+// Input processing
+// ═══════════════════════════════════════════════════════════════════
+
+/// Process a key event and write appropriate bytes to the PTY.
+/// keyval: GDK keyval, modifiers: modifier bitmask, master_fd: PTY fd.
+/// Returns bytes written, 0 if unhandled, -1 on error.
+pub func:input_handler_process_key = int64(int64:keyval, int64:modifiers,
+                                           int64:master_fd) {
+    // Check for Ctrl modifier
+    Result<int64>:cm_r = MOD_CTRL(); int64:cm = cm_r ? 0i64;
+    int64:has_ctrl = modifiers & cm;
+
+    // Check for Alt modifier
+    Result<int64>:am_r = MOD_ALT(); int64:am = am_r ? 0i64;
+    int64:has_alt = modifiers & am;
+
+    // ── Ctrl+letter combinations ──────────────────────────────────
+    if (has_ctrl != 0i64) {
+        // Ctrl+A through Ctrl+Z: send byte 0x01 through 0x1A
+        // Lowercase: 0x61-0x7A → subtract 0x60
+        if (keyval >= 0x61i64 && keyval <= 0x7Ai64) {
+            int64:ctrl_byte = keyval - 0x60i64;
+            Result<int64>:r = pty_io_write_byte(master_fd, ctrl_byte);
+            int64:v = r ? -1i64;
+            pass(v);
+        }
+        // Uppercase: 0x41-0x5A → subtract 0x40
+        if (keyval >= 0x41i64 && keyval <= 0x5Ai64) {
+            int64:ctrl_byte = keyval - 0x40i64;
+            Result<int64>:r = pty_io_write_byte(master_fd, ctrl_byte);
+            int64:v = r ? -1i64;
+            pass(v);
+        }
+    }
+
+    // ── Special keys ──────────────────────────────────────────────
+
+    // Return/Enter → carriage return
+    Result<int64>:ret_r = KEY_RETURN(); int64:ret = ret_r ? 0i64;
+    if (keyval == ret) {
+        Result<int64>:r = pty_io_write_string(master_fd, "\r");
+        int64:v = r ? -1i64;
+        pass(v);
+    }
+
+    // Backspace → DEL (0x7F)
+    Result<int64>:bs_r = KEY_BACKSPACE(); int64:bs = bs_r ? 0i64;
+    if (keyval == bs) {
+        Result<int64>:r = pty_io_write_byte(master_fd, 0x7Fi64);
+        int64:v = r ? -1i64;
+        pass(v);
+    }
+
+    // Tab → 0x09
+    Result<int64>:tab_r = KEY_TAB(); int64:tab = tab_r ? 0i64;
+    if (keyval == tab) {
+        Result<int64>:r = pty_io_write_byte(master_fd, 0x09i64);
+        int64:v = r ? -1i64;
+        pass(v);
+    }
+
+    // Escape → 0x1B
+    Result<int64>:esc_r = KEY_ESCAPE(); int64:esc = esc_r ? 0i64;
+    if (keyval == esc) {
+        Result<int64>:r = pty_io_write_byte(master_fd, 0x1Bi64);
+        int64:v = r ? -1i64;
+        pass(v);
+    }
+
+    // ── Arrow keys ────────────────────────────────────────────────
+
+    Result<int64>:up_r = KEY_UP();       int64:up = up_r ? 0i64;
+    Result<int64>:dn_r = KEY_DOWN();     int64:dn = dn_r ? 0i64;
+    Result<int64>:lt_r = KEY_LEFT();     int64:lt = lt_r ? 0i64;
+    Result<int64>:rt_r = KEY_RIGHT();    int64:rt = rt_r ? 0i64;
+
+    if (keyval == up) {
+        Result<int64>:r = pty_io_write_string(master_fd, "\x1b[A");
+        int64:v = r ? -1i64; pass(v);
+    }
+    if (keyval == dn) {
+        Result<int64>:r = pty_io_write_string(master_fd, "\x1b[B");
+        int64:v = r ? -1i64; pass(v);
+    }
+    if (keyval == rt) {
+        Result<int64>:r = pty_io_write_string(master_fd, "\x1b[C");
+        int64:v = r ? -1i64; pass(v);
+    }
+    if (keyval == lt) {
+        Result<int64>:r = pty_io_write_string(master_fd, "\x1b[D");
+        int64:v = r ? -1i64; pass(v);
+    }
+
+    // ── Navigation keys ───────────────────────────────────────────
+
+    Result<int64>:home_r = KEY_HOME();     int64:home = home_r ? 0i64;
+    Result<int64>:end_r  = KEY_END();      int64:end_val = end_r ? 0i64;
+    Result<int64>:ins_r  = KEY_INSERT();   int64:ins = ins_r ? 0i64;
+    Result<int64>:del_r  = KEY_DELETE();   int64:del = del_r ? 0i64;
+    Result<int64>:pgup_r = KEY_PAGE_UP();  int64:pgup = pgup_r ? 0i64;
+    Result<int64>:pgdn_r = KEY_PAGE_DOWN();int64:pgdn = pgdn_r ? 0i64;
+
+    if (keyval == home) {
+        Result<int64>:r = pty_io_write_string(master_fd, "\x1b[H");
+        int64:v = r ? -1i64; pass(v);
+    }
+    if (keyval == end_val) {
+        Result<int64>:r = pty_io_write_string(master_fd, "\x1b[F");
+        int64:v = r ? -1i64; pass(v);
+    }
+    if (keyval == ins) {
+        Result<int64>:r = pty_io_write_string(master_fd, "\x1b[2~");
+        int64:v = r ? -1i64; pass(v);
+    }
+    if (keyval == del) {
+        Result<int64>:r = pty_io_write_string(master_fd, "\x1b[3~");
+        int64:v = r ? -1i64; pass(v);
+    }
+    if (keyval == pgup) {
+        Result<int64>:r = pty_io_write_string(master_fd, "\x1b[5~");
+        int64:v = r ? -1i64; pass(v);
+    }
+    if (keyval == pgdn) {
+        Result<int64>:r = pty_io_write_string(master_fd, "\x1b[6~");
+        int64:v = r ? -1i64; pass(v);
+    }
+
+    // ── Function keys ─────────────────────────────────────────────
+
+    Result<int64>:f1_r  = KEY_F1();  int64:f1  = f1_r  ? 0i64;
+    Result<int64>:f2_r  = KEY_F2();  int64:f2  = f2_r  ? 0i64;
+    Result<int64>:f3_r  = KEY_F3();  int64:f3  = f3_r  ? 0i64;
+    Result<int64>:f4_r  = KEY_F4();  int64:f4  = f4_r  ? 0i64;
+    Result<int64>:f5_r  = KEY_F5();  int64:f5  = f5_r  ? 0i64;
+    Result<int64>:f6_r  = KEY_F6();  int64:f6  = f6_r  ? 0i64;
+    Result<int64>:f7_r  = KEY_F7();  int64:f7  = f7_r  ? 0i64;
+    Result<int64>:f8_r  = KEY_F8();  int64:f8  = f8_r  ? 0i64;
+    Result<int64>:f9_r  = KEY_F9();  int64:f9  = f9_r  ? 0i64;
+    Result<int64>:f10_r = KEY_F10(); int64:f10 = f10_r ? 0i64;
+    Result<int64>:f11_r = KEY_F11(); int64:f11 = f11_r ? 0i64;
+    Result<int64>:f12_r = KEY_F12(); int64:f12 = f12_r ? 0i64;
+
+    if (keyval == f1)  { Result<int64>:r = pty_io_write_string(master_fd, "\x1bOP");   int64:v = r ? -1i64; pass(v); }
+    if (keyval == f2)  { Result<int64>:r = pty_io_write_string(master_fd, "\x1bOQ");   int64:v = r ? -1i64; pass(v); }
+    if (keyval == f3)  { Result<int64>:r = pty_io_write_string(master_fd, "\x1bOR");   int64:v = r ? -1i64; pass(v); }
+    if (keyval == f4)  { Result<int64>:r = pty_io_write_string(master_fd, "\x1bOS");   int64:v = r ? -1i64; pass(v); }
+    if (keyval == f5)  { Result<int64>:r = pty_io_write_string(master_fd, "\x1b[15~"); int64:v = r ? -1i64; pass(v); }
+    if (keyval == f6)  { Result<int64>:r = pty_io_write_string(master_fd, "\x1b[17~"); int64:v = r ? -1i64; pass(v); }
+    if (keyval == f7)  { Result<int64>:r = pty_io_write_string(master_fd, "\x1b[18~"); int64:v = r ? -1i64; pass(v); }
+    if (keyval == f8)  { Result<int64>:r = pty_io_write_string(master_fd, "\x1b[19~"); int64:v = r ? -1i64; pass(v); }
+    if (keyval == f9)  { Result<int64>:r = pty_io_write_string(master_fd, "\x1b[20~"); int64:v = r ? -1i64; pass(v); }
+    if (keyval == f10) { Result<int64>:r = pty_io_write_string(master_fd, "\x1b[21~"); int64:v = r ? -1i64; pass(v); }
+    if (keyval == f11) { Result<int64>:r = pty_io_write_string(master_fd, "\x1b[23~"); int64:v = r ? -1i64; pass(v); }
+    if (keyval == f12) { Result<int64>:r = pty_io_write_string(master_fd, "\x1b[24~"); int64:v = r ? -1i64; pass(v); }
+
+    // ── Printable ASCII ───────────────────────────────────────────
+
+    // Alt+key: prepend ESC before the byte
+    if (has_alt != 0i64 && keyval >= 0x20i64 && keyval <= 0x7Ei64) {
+        // Write ESC then the character
+        Result<int64>:e = pty_io_write_byte(master_fd, 0x1Bi64);
+        int64:_e = e ? -1i64;
+        Result<int64>:r = pty_io_write_byte(master_fd, keyval);
+        int64:v = r ? -1i64;
+        pass(v);
+    }
+
+    // Plain printable character
+    if (keyval >= 0x20i64 && keyval <= 0x7Ei64) {
+        Result<int64>:r = pty_io_write_byte(master_fd, keyval);
+        int64:v = r ? -1i64;
+        pass(v);
+    }
+
+    // Unhandled key
+    pass(0i64);
+};

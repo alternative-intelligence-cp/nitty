@@ -1,18 +1,29 @@
 // src/core/app.npk — Application lifecycle for Nitty
 //
-// v0.0.4: Integration & Basic Terminal Grid.
-//         Grid mode enabled: cell buffer, cursor, resize, input→grid→render.
-//         Debug prints kept for development visibility.
+// v0.1.4: First working interactive shell.
 //
 // Architecture:
-//   1. app_init()  — print startup banner
-//   2. app_run()   — configure grid, enable input, run GTK loop
-//   3. app_shutdown() — clean up (grid destroyed by GTK lifecycle)
+//   1. app_init()     — print startup banner
+//   2. app_run()      — configure grid, spawn shell, wire I/O, run GTK loop
+//   3. app_shutdown() — clean up terminal + grid
+//
+// Event integration:
+//   - GLib fd watch monitors PTY master fd for readability
+//   - 16ms idle callback polls: fd watch → drain output → redraw
+//   - Key events: input_handler translates GDK keyvals → PTY writes
+//   - Resize events: terminal_handle_resize → PTY winsize + SIGWINCH
 
 use "../gui/window.npk".*;
 use "../gui/text_renderer.npk".*;
 use "../gui/input.npk".*;
 use "../gui/terminal_grid.npk".*;
+use "../gui/gtk4_ffi.npk".*;
+use "../terminal/terminal.npk".*;
+use "../terminal/shell.npk".*;
+use "../terminal/pty_io.npk".*;
+use "../terminal/input_handler.npk".*;
+use "../terminal/output_handler.npk".*;
+use "../terminal/resize.npk".*;
 
 // fd 1 = stdout
 int64:STDOUT = 1i64;
@@ -23,20 +34,27 @@ func:write_stdout = NIL(string:msg) {
     pass(NIL);
 };
 
+// ═══════════════════════════════════════════════════════════════════
+// Module state
+// ═══════════════════════════════════════════════════════════════════
+
+int64:g_shell_dead = 0i64;  // 1 = shell has exited
+
+// ═══════════════════════════════════════════════════════════════════
+// Application lifecycle
+// ═══════════════════════════════════════════════════════════════════
+
 pub func:app_init = NIL() {
-    drop(write_stdout("Nitty v0.0.4 initializing...\n"));
+    drop(write_stdout("Nitty v0.1.4 initializing...\n"));
     pass(NIL);
 };
 
 pub func:app_run = NIL() {
     // ── Enable the terminal grid ────────────────────────────────────────
-    // Grid mode replaces the old text_renderer fill rendering.
-    // Grid is initialized in on_activate with the window's pixel size.
     drop(write_stdout("Nitty: enabling terminal grid (Monospace 12)\n"));
     drop(grid_enable("Monospace 12"));
 
     // ── Create the DrawingArea ──────────────────────────────────────────
-    // Still needed — the grid renders into this DrawingArea via Cairo.
     Result<int64>:da_r = renderer_init_drawing_area();
     int64:da = da_r ? 0i64;
     if (da == 0i64) {
@@ -44,14 +62,15 @@ pub func:app_run = NIL() {
     }
 
     // ── Enable input ────────────────────────────────────────────────────
-    // Key events route to nitty_gtk4_grid_handle_key() in the C shim.
-    // Printable chars write to grid, Enter/Backspace/arrows work.
     drop(write_stdout("Nitty: enabling keyboard and mouse input\n"));
     drop(input_init());
 
+    // ── Enable terminal mode (shell + PTY I/O) ─────────────────────────
+    drop(write_stdout("Nitty: enabling terminal mode (shell will spawn on activate)\n"));
+    nitty_gtk4_terminal_enable();
+
     // ── Configure and run the GTK window ────────────────────────────────
-    drop(write_stdout("Nitty: starting GTK4 main loop\n"));
-    drop(write_stdout("Nitty: type to see characters appear in the grid\n"));
+    drop(write_stdout("Nitty: starting GTK4 main loop with shell\n"));
     drop(window_configure("Nitty Terminal", 1024i64, 768i64));
 
     Result<int64>:app_r = window_app_create("com.altintel.nitty");
@@ -73,10 +92,11 @@ pub func:app_run = NIL() {
 
 pub func:app_shutdown = NIL() {
     drop(write_stdout("Nitty shutting down.\n"));
+    Result<int64>:_td = terminal_destroy(); int64:__td = _td ? 0i64;
     drop(grid_destroy());
     pass(NIL);
 };
 
 pub func:app_version = string() {
-    pass("0.0.4");
+    pass("0.1.4");
 };

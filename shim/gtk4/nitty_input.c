@@ -28,6 +28,14 @@
 /* Forward declaration — defined in nitty_gtk4_shim.c */
 extern void nitty_gtk4_grid_handle_key(int64_t keyval, int64_t modifiers);
 
+/* v0.1.4: Terminal mode — when set, keys go to PTY instead of grid */
+static int g_terminal_mode = 0;
+static int64_t g_pty_master_fd = -1;
+
+/* PTY shim write functions — defined in nitty_pty_shim.c */
+extern int64_t nitty_pty_write_byte(int64_t fd, int64_t byte_val);
+extern int64_t nitty_pty_write_string(int64_t fd, const char *str);
+
 /* ── Keyboard event state ─────────────────────────────────────────────── */
 
 static int      g_key_pending   = 0;
@@ -63,17 +71,82 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
     g_key_type      = 1;
     g_key_pending   = 1;
 
-    /* Debug: print key event to stdout */
-    const char *mod_str = "";
-    if ((state & GDK_CONTROL_MASK) && (state & GDK_SHIFT_MASK))  mod_str = "Ctrl+Shift+";
-    else if (state & GDK_CONTROL_MASK)                            mod_str = "Ctrl+";
-    else if (state & GDK_SHIFT_MASK)                              mod_str = "Shift+";
-    else if (state & GDK_ALT_MASK)                                mod_str = "Alt+";
-    fprintf(stdout, "KEY PRESS: keyval=0x%04x keycode=%u mods=0x%08x  [%s0x%04x]\n",
-            keyval, keycode, (unsigned)state, mod_str, keyval);
-    fflush(stdout);
+    /* Debug: print key event to stdout (only in non-terminal mode) */
+    if (!g_terminal_mode) {
+        const char *mod_str = "";
+        if ((state & GDK_CONTROL_MASK) && (state & GDK_SHIFT_MASK))  mod_str = "Ctrl+Shift+";
+        else if (state & GDK_CONTROL_MASK)                            mod_str = "Ctrl+";
+        else if (state & GDK_SHIFT_MASK)                              mod_str = "Shift+";
+        else if (state & GDK_ALT_MASK)                                mod_str = "Alt+";
+        fprintf(stdout, "KEY PRESS: keyval=0x%04x keycode=%u mods=0x%08x  [%s0x%04x]\n",
+                keyval, keycode, (unsigned)state, mod_str, keyval);
+        fflush(stdout);
+    }
 
-    /* Route key to grid input handler */
+    /* Route key: terminal mode → PTY, otherwise → grid */
+    if (g_terminal_mode && g_pty_master_fd >= 0) {
+        GdkModifierType mods = state;
+        int has_ctrl = (mods & GDK_CONTROL_MASK) != 0;
+        int has_alt  = (mods & GDK_ALT_MASK) != 0;
+
+        /* Ctrl+letter: send control character */
+        if (has_ctrl && keyval >= 'a' && keyval <= 'z') {
+            nitty_pty_write_byte(g_pty_master_fd, (int64_t)(keyval - 'a' + 1));
+            return TRUE;  /* Consume the event */
+        }
+        if (has_ctrl && keyval >= 'A' && keyval <= 'Z') {
+            nitty_pty_write_byte(g_pty_master_fd, (int64_t)(keyval - 'A' + 1));
+            return TRUE;
+        }
+
+        /* Special keys */
+        switch (keyval) {
+            case GDK_KEY_Return:    nitty_pty_write_string(g_pty_master_fd, "\r");     return TRUE;
+            case GDK_KEY_BackSpace: nitty_pty_write_byte(g_pty_master_fd, 0x7F);       return TRUE;
+            case GDK_KEY_Tab:       nitty_pty_write_byte(g_pty_master_fd, 0x09);       return TRUE;
+            case GDK_KEY_Escape:    nitty_pty_write_byte(g_pty_master_fd, 0x1B);       return TRUE;
+            case GDK_KEY_Up:        nitty_pty_write_string(g_pty_master_fd, "\x1b[A"); return TRUE;
+            case GDK_KEY_Down:      nitty_pty_write_string(g_pty_master_fd, "\x1b[B"); return TRUE;
+            case GDK_KEY_Right:     nitty_pty_write_string(g_pty_master_fd, "\x1b[C"); return TRUE;
+            case GDK_KEY_Left:      nitty_pty_write_string(g_pty_master_fd, "\x1b[D"); return TRUE;
+            case GDK_KEY_Home:      nitty_pty_write_string(g_pty_master_fd, "\x1b[H"); return TRUE;
+            case GDK_KEY_End:       nitty_pty_write_string(g_pty_master_fd, "\x1b[F"); return TRUE;
+            case GDK_KEY_Insert:    nitty_pty_write_string(g_pty_master_fd, "\x1b[2~"); return TRUE;
+            case GDK_KEY_Delete:    nitty_pty_write_string(g_pty_master_fd, "\x1b[3~"); return TRUE;
+            case GDK_KEY_Page_Up:   nitty_pty_write_string(g_pty_master_fd, "\x1b[5~"); return TRUE;
+            case GDK_KEY_Page_Down: nitty_pty_write_string(g_pty_master_fd, "\x1b[6~"); return TRUE;
+            case GDK_KEY_F1:        nitty_pty_write_string(g_pty_master_fd, "\x1bOP");  return TRUE;
+            case GDK_KEY_F2:        nitty_pty_write_string(g_pty_master_fd, "\x1bOQ");  return TRUE;
+            case GDK_KEY_F3:        nitty_pty_write_string(g_pty_master_fd, "\x1bOR");  return TRUE;
+            case GDK_KEY_F4:        nitty_pty_write_string(g_pty_master_fd, "\x1bOS");  return TRUE;
+            case GDK_KEY_F5:        nitty_pty_write_string(g_pty_master_fd, "\x1b[15~"); return TRUE;
+            case GDK_KEY_F6:        nitty_pty_write_string(g_pty_master_fd, "\x1b[17~"); return TRUE;
+            case GDK_KEY_F7:        nitty_pty_write_string(g_pty_master_fd, "\x1b[18~"); return TRUE;
+            case GDK_KEY_F8:        nitty_pty_write_string(g_pty_master_fd, "\x1b[19~"); return TRUE;
+            case GDK_KEY_F9:        nitty_pty_write_string(g_pty_master_fd, "\x1b[20~"); return TRUE;
+            case GDK_KEY_F10:       nitty_pty_write_string(g_pty_master_fd, "\x1b[21~"); return TRUE;
+            case GDK_KEY_F11:       nitty_pty_write_string(g_pty_master_fd, "\x1b[23~"); return TRUE;
+            case GDK_KEY_F12:       nitty_pty_write_string(g_pty_master_fd, "\x1b[24~"); return TRUE;
+            default: break;
+        }
+
+        /* Alt+key: prepend ESC */
+        if (has_alt && keyval >= 0x20 && keyval <= 0x7E) {
+            nitty_pty_write_byte(g_pty_master_fd, 0x1B);
+            nitty_pty_write_byte(g_pty_master_fd, (int64_t)keyval);
+            return TRUE;
+        }
+
+        /* Printable ASCII */
+        if (keyval >= 0x20 && keyval <= 0x7E) {
+            nitty_pty_write_byte(g_pty_master_fd, (int64_t)keyval);
+            return TRUE;
+        }
+
+        return FALSE;  /* Unhandled key */
+    }
+
+    /* Non-terminal mode: route to grid */
     nitty_gtk4_grid_handle_key((int64_t)keyval, (int64_t)state);
 
     return FALSE;
@@ -314,4 +387,20 @@ int64_t nitty_gtk4_mouse_get_scroll_dx(void)
 int64_t nitty_gtk4_mouse_get_scroll_dy(void)
 {
     return (int64_t)(g_mouse_scroll_dy * 1000.0);
+}
+
+/* ── Terminal mode (v0.1.4) ───────────────────────────────────────────── */
+
+void nitty_input_set_terminal_mode(int64_t master_fd)
+{
+    g_terminal_mode   = 1;
+    g_pty_master_fd   = master_fd;
+    fprintf(stdout, "Input: terminal mode enabled (fd=%d)\n", (int)master_fd);
+    fflush(stdout);
+}
+
+void nitty_input_clear_terminal_mode(void)
+{
+    g_terminal_mode   = 0;
+    g_pty_master_fd   = -1;
 }

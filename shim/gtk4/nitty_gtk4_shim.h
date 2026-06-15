@@ -182,6 +182,42 @@ int64_t nitty_gtk4_resize_get_height(void);
  */
 void nitty_gtk4_grid_handle_key(int64_t keyval, int64_t modifiers);
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.1.4: fd watching, idle callback, monotonic time
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Watch a file descriptor for readability using GLib's event loop.
+ * When the fd becomes readable, sets an internal flag.
+ * Returns 0 on success, -1 on error.
+ */
+int64_t nitty_gtk4_add_fd_watch(int64_t fd);
+
+/** Return 1 if the watched fd has data ready, 0 otherwise. */
+int64_t nitty_gtk4_fd_watch_poll(void);
+
+/** Clear the fd-ready flag. */
+void nitty_gtk4_fd_watch_clear(void);
+
+/** Remove the fd watch. */
+void nitty_gtk4_fd_watch_remove(void);
+
+/** Get monotonic time in microseconds. */
+int64_t nitty_gtk4_get_monotonic_time(void);
+
+/**
+ * Register an idle callback that fires every frame.
+ * The callback pointer is called each GLib main loop iteration.
+ * Used to poll PTY output and process it.
+ */
+void nitty_gtk4_set_idle_callback(void (*callback)(void));
+
+/** Enable terminal mode — spawn shell in on_activate after grid init. */
+void nitty_gtk4_terminal_enable(void);
+
+/** Request a redraw of the DrawingArea. */
+void nitty_gtk4_queue_redraw(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -113,6 +113,14 @@ int64_t nitty_gtk4_mouse_get_scroll_dx(void);
 /** Return vertical scroll delta (fixed-point × 1000). */
 int64_t nitty_gtk4_mouse_get_scroll_dy(void);
 
+/* ── Terminal mode (v0.1.4) ───────────────────────────────────────────── */
+
+/** Enable terminal mode: key events route to PTY fd instead of grid. */
+void nitty_input_set_terminal_mode(int64_t master_fd);
+
+/** Disable terminal mode: key events route back to grid. */
+void nitty_input_clear_terminal_mode(void);
+
 #ifdef __cplusplus
 }
 #endif

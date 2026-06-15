@@ -1,0 +1,157 @@
+// tests/test_output_processing.npk — Tests for v0.1.4 grid output processing
+//
+// Tests grid_scroll_up and grid_process_output (C-side).
+// Does NOT require GTK runtime — uses direct grid C calls.
+
+use "../src/gui/gtk4_ffi.npk".*;
+use "../src/gui/terminal_grid.npk".*;
+
+int64:STDOUT = 1i64;
+int64:pass_count = 0i64;
+int64:fail_count = 0i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:assert_eq = NIL(string:name, int64:actual, int64:expected) {
+    if (actual == expected) {
+        pass_count = pass_count + 1i64;
+        drop(write_stdout("[PASS] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    }
+    if (actual != expected) {
+        fail_count = fail_count + 1i64;
+        drop(write_stdout("[FAIL] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    }
+    pass(NIL);
+};
+
+pub func:failsafe = int32(tbb32:err) {
+    drop(write_stdout("FAILSAFE: test aborted\n"));
+    exit 1;
+};
+
+pub func:main = int32() {
+    // ── Init grid (800x600, ~80x31) ─────────────────────────────────
+    int64:init_ok = nitty_grid_init(800i64, 600i64, "Monospace 12");
+    drop(assert_eq("T01 grid_init", init_ok, 1i64));
+    Result<int64>:cols_r = grid_cols(); int64:cols = cols_r ? 80i64;
+    Result<int64>:rows_r = grid_rows(); int64:rows = rows_r ? 24i64;
+
+    // ── T02: grid_scroll_up(1) ──────────────────────────────────────
+    // Write 'A' at (0,0), then scroll up — should move to nowhere
+    nitty_grid_set_cell(0i64, 0i64, 0x41i64, 0xCCCCCCi64, 0x1E1E1Ei64);
+    int64:c1 = nitty_grid_get_cell_char(0i64, 0i64);
+    drop(assert_eq("T02a cell before scroll", c1, 0x41i64));
+
+    nitty_grid_scroll_up(1i64);
+    int64:c2 = nitty_grid_get_cell_char(0i64, 0i64);
+    // After scroll, row 0 should now have what was in row 1 (space)
+    // The original 'A' at row 0 scrolled off the top
+    drop(assert_eq("T02b cell after scroll_up(1)", c2, 0x20i64));
+
+    // ── T03: scroll_up preserves content ────────────────────────────
+    // Clear, write 'B' at (0,1), scroll up 1 — 'B' should be at (0,0)
+    nitty_grid_clear(0xCCCCCCi64, 0x1E1E1Ei64);
+    nitty_grid_set_cell(0i64, 1i64, 0x42i64, 0xCCCCCCi64, 0x1E1E1Ei64);
+    nitty_grid_scroll_up(1i64);
+    int64:c3 = nitty_grid_get_cell_char(0i64, 0i64);
+    drop(assert_eq("T03 scroll preserves content", c3, 0x42i64));
+
+    // ── T04: scroll_up(rows) clears grid ────────────────────────────
+    nitty_grid_set_cell(0i64, 0i64, 0x43i64, 0xCCCCCCi64, 0x1E1E1Ei64);
+    nitty_grid_scroll_up(rows);
+    int64:c4 = nitty_grid_get_cell_char(0i64, 0i64);
+    drop(assert_eq("T04 scroll_up(rows) clears grid", c4, 0x20i64));
+
+    // ── T05: grid_process_output — printable chars ──────────────────
+    nitty_grid_clear(0xCCCCCCi64, 0x1E1E1Ei64);
+    nitty_grid_set_cursor(0i64, 0i64);
+    int64:p1 = nitty_grid_process_output("ABC", 3i64);
+    drop(assert_eq("T05a process_output returns 3", p1, 3i64));
+    int64:c5a = nitty_grid_get_cell_char(0i64, 0i64);
+    drop(assert_eq("T05b char A at (0,0)", c5a, 0x41i64));
+    int64:c5b = nitty_grid_get_cell_char(1i64, 0i64);
+    drop(assert_eq("T05c char B at (1,0)", c5b, 0x42i64));
+    int64:c5c = nitty_grid_get_cell_char(2i64, 0i64);
+    drop(assert_eq("T05d char C at (2,0)", c5c, 0x43i64));
+    // Cursor should be at (3,0) after writing 3 chars
+    int64:cc = nitty_grid_get_cursor_col();
+    drop(assert_eq("T05e cursor col", cc, 3i64));
+
+    // ── T06: newline (LF) ───────────────────────────────────────────
+    nitty_grid_clear(0xCCCCCCi64, 0x1E1E1Ei64);
+    nitty_grid_set_cursor(0i64, 0i64);
+    int64:p2 = nitty_grid_process_output("A\nB", 3i64);
+    drop(assert_eq("T06a process LF returns 3", p2, 3i64));
+    int64:c6a = nitty_grid_get_cell_char(0i64, 0i64);
+    drop(assert_eq("T06b char A at (0,0)", c6a, 0x41i64));
+    // B should be on row 1, col 0 (LF only moves row, not col)
+    // Actually LF just moves cursor down, col stays at 0 (since A was at 0 and we wrote A then LF, cursor was at col 1)
+    int64:c6b = nitty_grid_get_cell_char(1i64, 1i64);
+    drop(assert_eq("T06c char B at (1,1)", c6b, 0x42i64));
+
+    // ── T07: carriage return (CR + LF) ──────────────────────────────
+    nitty_grid_clear(0xCCCCCCi64, 0x1E1E1Ei64);
+    nitty_grid_set_cursor(0i64, 0i64);
+    int64:p3 = nitty_grid_process_output("A\r\nB", 4i64);
+    drop(assert_eq("T07a process CR+LF returns 4", p3, 4i64));
+    int64:c7a = nitty_grid_get_cell_char(0i64, 0i64);
+    drop(assert_eq("T07b char A at (0,0)", c7a, 0x41i64));
+    // After CR+LF, cursor should be at (0,1), so B goes to (0,1)
+    int64:c7b = nitty_grid_get_cell_char(0i64, 1i64);
+    drop(assert_eq("T07c char B at (0,1)", c7b, 0x42i64));
+
+    // ── T08: escape sequence skipping ───────────────────────────────
+    nitty_grid_clear(0xCCCCCCi64, 0x1E1E1Ei64);
+    nitty_grid_set_cursor(0i64, 0i64);
+    // ESC[31m is "set red color" — should be skipped
+    int64:p4 = nitty_grid_process_output("X\x1b[31mY", 7i64);
+    drop(assert_eq("T08a process with escape returns 7", p4, 7i64));
+    int64:c8a = nitty_grid_get_cell_char(0i64, 0i64);
+    drop(assert_eq("T08b char X at (0,0)", c8a, 0x58i64));
+    // Y should be at (1,0) — escape sequence was skipped
+    int64:c8b = nitty_grid_get_cell_char(1i64, 0i64);
+    drop(assert_eq("T08c char Y at (1,0)", c8b, 0x59i64));
+
+    // ── T09: tab (0x09) ─────────────────────────────────────────────
+    nitty_grid_clear(0xCCCCCCi64, 0x1E1E1Ei64);
+    nitty_grid_set_cursor(0i64, 0i64);
+    int64:p5 = nitty_grid_process_output("A\tB", 3i64);
+    int64:c9a = nitty_grid_get_cell_char(0i64, 0i64);
+    drop(assert_eq("T09a char A at (0,0)", c9a, 0x41i64));
+    // Tab from col 1 → col 8, then B at col 8
+    int64:c9b = nitty_grid_get_cell_char(8i64, 0i64);
+    drop(assert_eq("T09b char B at (8,0) after tab", c9b, 0x42i64));
+
+    // ── T10: backspace ──────────────────────────────────────────────
+    nitty_grid_clear(0xCCCCCCi64, 0x1E1E1Ei64);
+    nitty_grid_set_cursor(0i64, 0i64);
+    int64:p6 = nitty_grid_process_output("AB\x08C", 4i64);
+    // A at (0,0), B at (1,0), backspace to (0,0)... wait, BS goes from col 2 to col 1
+    int64:c10a = nitty_grid_get_cell_char(0i64, 0i64);
+    drop(assert_eq("T10a char A at (0,0)", c10a, 0x41i64));
+    // C overwrites B at (1,0)
+    int64:c10b = nitty_grid_get_cell_char(1i64, 0i64);
+    drop(assert_eq("T10b char C overwrites B at (1,0)", c10b, 0x43i64));
+
+    // ── Cleanup ─────────────────────────────────────────────────────
+    drop(grid_destroy());
+
+    // ── Summary ─────────────────────────────────────────────────────
+    if (fail_count == 0i64) {
+        drop(write_stdout("All output processing tests passed.\n"));
+        exit 0;
+    }
+    if (fail_count > 0i64) {
+        drop(write_stdout("SOME TESTS FAILED.\n"));
+        exit 1;
+    }
+    exit 0;
+};

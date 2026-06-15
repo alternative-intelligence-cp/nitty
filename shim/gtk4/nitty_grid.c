@@ -304,7 +304,145 @@ int64_t nitty_grid_resize(int64_t new_width_px, int64_t new_height_px)
     return 1;
 }
 
+/* ── Scrolling (v0.1.4) ──────────────────────────────────────────────── */
+
+void nitty_grid_scroll_up(int64_t lines)
+{
+    if (g_cells == NULL || lines <= 0) return;
+    if (lines >= g_rows) {
+        /* Clear entire grid */
+        int64_t dfg = (int64_t)((g_default_fg[0] << 16) | (g_default_fg[1] << 8) | g_default_fg[2]);
+        int64_t dbg = (int64_t)((g_default_bg[0] << 16) | (g_default_bg[1] << 8) | g_default_bg[2]);
+        nitty_grid_clear(dfg, dbg);
+        return;
+    }
+
+    /* Move rows up: copy row[lines..rows-1] to row[0..rows-lines-1] */
+    int64_t rows_to_copy = g_rows - lines;
+    size_t  row_bytes    = (size_t)(g_cols * CELL_SIZE);
+    memmove(g_cells,
+            g_cells + (lines * g_cols * CELL_SIZE),
+            (size_t)rows_to_copy * row_bytes);
+
+    /* Fill bottom rows with spaces + default colors */
+    int64_t dfg = (int64_t)((g_default_fg[0] << 16) | (g_default_fg[1] << 8) | g_default_fg[2]);
+    int64_t dbg = (int64_t)((g_default_bg[0] << 16) | (g_default_bg[1] << 8) | g_default_bg[2]);
+    for (int64_t r = rows_to_copy; r < g_rows; r++) {
+        for (int64_t c = 0; c < g_cols; c++) {
+            uint8_t *cell = &g_cells[(r * g_cols + c) * CELL_SIZE];
+            int32_t sp = 0x20;
+            memcpy(cell, &sp, 4);
+            cell[4] = (uint8_t)((dfg >> 16) & 0xFF);
+            cell[5] = (uint8_t)((dfg >> 8)  & 0xFF);
+            cell[6] = (uint8_t)( dfg        & 0xFF);
+            cell[7] = (uint8_t)((dbg >> 16) & 0xFF);
+            cell[8] = (uint8_t)((dbg >> 8)  & 0xFF);
+            cell[9] = (uint8_t)( dbg        & 0xFF);
+        }
+    }
+}
+
+/* ── Output processing (v0.1.4) ──────────────────────────────────────── */
+
+int64_t nitty_grid_process_output(const char *buf, int64_t len)
+{
+    if (buf == NULL || len <= 0 || g_cells == NULL) return 0;
+
+    /* Default colors for character rendering */
+    int64_t fg = (int64_t)((g_default_fg[0] << 16) | (g_default_fg[1] << 8) | g_default_fg[2]);
+    int64_t bg = (int64_t)((g_default_bg[0] << 16) | (g_default_bg[1] << 8) | g_default_bg[2]);
+
+    int in_escape = 0;  /* 1 = inside escape sequence */
+    int in_csi    = 0;  /* 1 = inside CSI (ESC [) sequence */
+
+    for (int64_t i = 0; i < len; i++) {
+        unsigned char b = (unsigned char)buf[i];
+
+        /* ── Escape sequence handling ─────────────────────── */
+        if (in_escape) {
+            if (b == '[') {
+                in_csi = 1;
+                continue;
+            }
+            if (in_csi) {
+                /* CSI parameters and intermediates: 0x20-0x3F */
+                /* CSI final byte: 0x40-0x7E ends the sequence */
+                if (b >= 0x40 && b <= 0x7E) {
+                    in_escape = 0;
+                    in_csi    = 0;
+                }
+                continue;
+            }
+            /* SS2/SS3 (ESC O, ESC N): consume one more char */
+            if (b == 'O' || b == 'N') {
+                /* Next char is the final, consume it */
+                if (i + 1 < len) i++;
+                in_escape = 0;
+                continue;
+            }
+            /* Other ESC sequences: single char after ESC */
+            in_escape = 0;
+            continue;
+        }
+
+        if (b == 0x1B) {  /* ESC */
+            in_escape = 1;
+            in_csi    = 0;
+            continue;
+        }
+
+        /* ── Control characters ───────────────────────────── */
+        if (b == 0x07) continue;  /* Bell: ignore */
+
+        if (b == 0x08) {  /* Backspace */
+            if (g_cursor_col > 0) g_cursor_col--;
+            continue;
+        }
+
+        if (b == 0x09) {  /* Tab */
+            int64_t next = ((g_cursor_col / 8) + 1) * 8;
+            if (next >= g_cols) next = g_cols - 1;
+            g_cursor_col = next;
+            continue;
+        }
+
+        if (b == 0x0A) {  /* Newline (LF) */
+            g_cursor_row++;
+            if (g_cursor_row >= g_rows) {
+                nitty_grid_scroll_up(1);
+                g_cursor_row = g_rows - 1;
+            }
+            continue;
+        }
+
+        if (b == 0x0D) {  /* Carriage return */
+            g_cursor_col = 0;
+            continue;
+        }
+
+        /* Skip other control characters */
+        if (b < 0x20) continue;
+
+        /* ── Printable characters ─────────────────────────── */
+        nitty_grid_set_cell(g_cursor_col, g_cursor_row, (int64_t)b, fg, bg);
+        g_cursor_col++;
+
+        /* Line wrap */
+        if (g_cursor_col >= g_cols) {
+            g_cursor_col = 0;
+            g_cursor_row++;
+            if (g_cursor_row >= g_rows) {
+                nitty_grid_scroll_up(1);
+                g_cursor_row = g_rows - 1;
+            }
+        }
+    }
+
+    return len;
+}
+
 /* ── Render ───────────────────────────────────────────────────────────── */
+
 
 void nitty_grid_render(int64_t cr_ptr, int64_t width, int64_t height)
 {
