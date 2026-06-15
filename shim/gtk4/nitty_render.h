@@ -234,6 +234,55 @@ int64_t nitty_render_get_total_cells(void);
  */
 void nitty_render_reset_perf_stats(void);
 
+/* ── v0.4.0: Tab bar rendering ────────────────────────────────────────── */
+
+/**
+ * Set the pixel height of the tab bar region at the top of the DrawingArea.
+ * The terminal grid is rendered starting at y = tab_bar_height.
+ * Set to 0 to disable the tab bar (default).
+ */
+void nitty_render_set_tab_bar_height(int64_t height);
+
+/**
+ * Get the current tab bar height offset.
+ */
+int64_t nitty_render_get_tab_bar_height(void);
+
+/**
+ * Draw a filled rectangle in the tab bar region.
+ * Used for tab backgrounds. Colors are fixed-point [0..1000].
+ */
+void nitty_render_draw_tab_bg(int64_t x, int64_t y, int64_t w, int64_t h,
+                               int64_t r, int64_t g, int64_t b);
+
+/**
+ * Draw text in the tab bar region using the terminal font.
+ * @param x, y   Position (pixels)
+ * @param text   UTF-8 text to draw
+ * @param r,g,b  Text color (fixed-point [0..1000])
+ * @param bold   1 = render bold, 0 = normal weight
+ */
+void nitty_render_draw_tab_text(int64_t x, int64_t y, const char *text,
+                                 int64_t r, int64_t g, int64_t b,
+                                 int64_t bold);
+
+/**
+ * Draw an accent underline in the tab bar.
+ * @param x, y   Left edge, baseline Y
+ * @param w      Width in pixels
+ * @param r,g,b  Underline color (fixed-point [0..1000])
+ */
+void nitty_render_draw_tab_underline(int64_t x, int64_t y, int64_t w,
+                                      int64_t r, int64_t g, int64_t b);
+
+/**
+ * Draw a vertical separator line between tabs.
+ * @param x      X position
+ * @param y      Top Y
+ * @param h      Height in pixels
+ */
+void nitty_render_draw_tab_separator(int64_t x, int64_t y, int64_t h);
+
 #ifdef __cplusplus
 }
 #endif

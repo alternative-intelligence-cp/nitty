@@ -1,6 +1,6 @@
 // src/core/app.npk — Application lifecycle for Nitty
 //
-// v0.3.0: Cell grid renderer — TerminalState → GTK4/Cairo/Pango visual output.
+// v0.4.0: Tab data model + tab bar UI. Single-tab scaffolding.
 //
 // Architecture:
 //   1. app_init()     — print startup banner
@@ -25,6 +25,8 @@ use "../terminal/pty_io.npk".*;
 use "../terminal/input_handler.npk".*;
 use "../terminal/output_handler.npk".*;
 use "../terminal/resize.npk".*;
+use "tab_manager.npk".*;
+use "../gui/tab_bar.npk".*;
 
 // fd 1 = stdout
 int64:STDOUT = 1i64;
@@ -46,7 +48,7 @@ int64:g_shell_dead = 0i64;  // 1 = shell has exited
 // ═══════════════════════════════════════════════════════════════════
 
 pub func:app_init = NIL() {
-    drop(write_stdout("Nitty v0.3.0 initializing...\n"));
+    drop(write_stdout("Nitty v0.4.0 initializing...\n"));
     pass(NIL);
 };
 
@@ -54,6 +56,12 @@ pub func:app_run = NIL() {
     // ── Initialize Nitpick terminal pipeline + renderer ──────────────────────────
     drop(write_stdout("Nitty: initializing terminal widget (Monospace 12)\n"));
     drop(tw_init(24i64, 80i64, "Monospace 12"));
+
+    // ── Initialize tab manager ─────────────────────────────────────────────
+    drop(write_stdout("Nitty: initializing tab manager\n"));
+    drop(tm_init());
+    int64:default_tab_id = raw tm_add_tab(-1i64);
+    drop(tm_activate(default_tab_id));
 
     // ── Enable the legacy terminal grid (C-side VT parser, still active in v0.3.0) ──
     drop(write_stdout("Nitty: enabling terminal grid (Monospace 12)\n"));
@@ -73,6 +81,12 @@ pub func:app_run = NIL() {
     // ── Enable terminal mode (shell + PTY I/O) ─────────────────────────
     drop(write_stdout("Nitty: enabling terminal mode (shell will spawn on activate)\n"));
     nitty_gtk4_terminal_enable();
+
+    // ── Initialize tab bar (needs cell height from renderer) ────────────────
+    // Cell height may be 0 until the first draw frame. Use a default of 20px.
+    int64:cell_h = nitty_render_get_cell_height();
+    if (cell_h == 0i64) { cell_h = 20i64; }
+    drop(tb_init(cell_h));
 
     // ── Configure and run the GTK window ────────────────────────────────
     drop(write_stdout("Nitty: starting GTK4 main loop with shell\n"));
@@ -103,5 +117,5 @@ pub func:app_shutdown = NIL() {
 };
 
 pub func:app_version = string() {
-    pass("0.3.0");
+    pass("0.4.0");
 };

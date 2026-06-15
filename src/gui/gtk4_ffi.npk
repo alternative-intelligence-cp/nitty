@@ -296,4 +296,27 @@ extern "nitty_gtk4_shim" {
 
     // Reset all performance counters to zero.
     func:nitty_render_reset_perf_stats = NIL();
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.4.0: Tab bar rendering
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Set the pixel height of the tab bar at the top of the DrawingArea.
+    // Terminal grid is rendered below this offset. Set 0 to disable.
+    func:nitty_render_set_tab_bar_height = NIL(int64:height);
+
+    // Get current tab bar height.
+    func:nitty_render_get_tab_bar_height = int64();
+
+    // Draw a filled rectangle (tab background). Colors [0..1000].
+    func:nitty_render_draw_tab_bg = NIL(int64:x, int64:y, int64:w, int64:h, int64:r, int64:g, int64:b);
+
+    // Draw text in the tab bar. bold: 1=bold, 0=normal.
+    func:nitty_render_draw_tab_text = NIL(int64:x, int64:y, string:text, int64:r, int64:g, int64:b, int64:bold);
+
+    // Draw accent underline below active tab.
+    func:nitty_render_draw_tab_underline = NIL(int64:x, int64:y, int64:w, int64:r, int64:g, int64:b);
+
+    // Draw vertical separator between tabs.
+    func:nitty_render_draw_tab_separator = NIL(int64:x, int64:y, int64:h);
 }

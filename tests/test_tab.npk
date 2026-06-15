@@ -1,0 +1,106 @@
+// tests/test_tab.npk — Tab data model unit tests (v0.4.0)
+
+use "../src/core/tab.npk".*;
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+func:check_str = NIL(string:name, string:expected, string:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+func:run_tests = NIL() {
+    // T01: tab_create sets id
+    drop(tab_create(0i64, 1i64, 5i64));
+    drop(check("T01: id", 1i64, raw tab_get_id(0i64)));
+
+    // T02: tab_create sets pty_fd
+    drop(check("T02: pty_fd", 5i64, raw tab_get_pty_fd(0i64)));
+
+    // T03: tab_create defaults is_active to 0
+    drop(check("T03: is_active default", 0i64, raw tab_is_active(0i64)));
+
+    // T04: tab_create defaults has_activity to 0
+    drop(check("T04: has_activity default", 0i64, raw tab_has_activity(0i64)));
+
+    // T05: tab_create defaults has_bell to 0
+    drop(check("T05: has_bell default", 0i64, raw tab_has_bell(0i64)));
+
+    // T06: tab_create defaults title to "Shell"
+    drop(check_str("T06: title default", "Shell", raw tab_get_title(0i64)));
+
+    // T07: tab_set_title updates title
+    drop(tab_set_title(0i64, "bash"));
+    drop(check_str("T07: set title", "bash", raw tab_get_title(0i64)));
+
+    // T08: tab_set_active toggles
+    drop(tab_set_active(0i64, 1i64));
+    drop(check("T08: set active", 1i64, raw tab_is_active(0i64)));
+
+    // T09: tab_mark_activity sets flag
+    drop(tab_mark_activity(0i64));
+    drop(check("T09: mark activity", 1i64, raw tab_has_activity(0i64)));
+
+    // T10: tab_clear_activity clears flag
+    drop(tab_clear_activity(0i64));
+    drop(check("T10: clear activity", 0i64, raw tab_has_activity(0i64)));
+
+    // T11: tab_mark_bell sets flag
+    drop(tab_mark_bell(0i64));
+    drop(check("T11: mark bell", 1i64, raw tab_has_bell(0i64)));
+
+    // T12: tab_clear_bell clears flag
+    drop(tab_clear_bell(0i64));
+    drop(check("T12: clear bell", 0i64, raw tab_has_bell(0i64)));
+
+    // T13: tab_destroy clears all fields
+    drop(tab_destroy(0i64));
+    drop(check("T13a: destroy id", 0i64, raw tab_get_id(0i64)));
+    drop(check("T13b: destroy pty_fd", -1i64, raw tab_get_pty_fd(0i64)));
+    drop(check("T13c: destroy is_active", 0i64, raw tab_is_active(0i64)));
+    drop(check_str("T13d: destroy title", "", raw tab_get_title(0i64)));
+
+    // T14: Multiple slots are independent
+    drop(tab_create(0i64, 10i64, 100i64));
+    drop(tab_create(1i64, 20i64, 200i64));
+    drop(tab_set_title(0i64, "first"));
+    drop(tab_set_title(1i64, "second"));
+    drop(check("T14a: slot0 id", 10i64, raw tab_get_id(0i64)));
+    drop(check("T14b: slot1 id", 20i64, raw tab_get_id(1i64)));
+    drop(check_str("T14c: slot0 title", "first", raw tab_get_title(0i64)));
+    drop(check_str("T14d: slot1 title", "second", raw tab_get_title(1i64)));
+    drop(check("T14e: slot0 pty_fd", 100i64, raw tab_get_pty_fd(0i64)));
+    drop(check("T14f: slot1 pty_fd", 200i64, raw tab_get_pty_fd(1i64)));
+
+    // T15: tab_max_tabs returns 16
+    drop(check("T15: max tabs", 16i64, raw tab_max_tabs()));
+
+    // T16: tab_set_pty_fd updates fd
+    drop(tab_set_pty_fd(0i64, 42i64));
+    drop(check("T16: set pty_fd", 42i64, raw tab_get_pty_fd(0i64)));
+
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    drop(run_tests());
+    if (g_fail > 0i64) {
+        exit 1i32;
+    }
+    print("All tab data model tests passed.");
+    exit 0i32;
+};

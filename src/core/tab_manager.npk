@@ -1,0 +1,234 @@
+// src/core/tab_manager.npk — Tab collection manager (v0.4.0)
+//
+// Manages the ordered collection of tabs. Owns the tab creation/deletion
+// lifecycle, active tab tracking, and tab ordering.
+//
+// Architecture:
+//   - g_tm_order[16] stores tab IDs in display order (left-to-right)
+//   - g_tm_count tracks how many tabs are open
+//   - g_tm_active_index is the display position of the focused tab
+//   - g_tm_next_id is a monotonically increasing ID counter
+//
+// Tab slots in tab.npk are indexed by display position [0..count-1].
+// The manager ensures tab.npk slots match display order.
+
+use "tab.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════
+// Module state
+// ═══════════════════════════════════════════════════════════════════
+
+int64:g_tm_count = 0i64;          // number of open tabs
+int64:g_tm_active_index = 0i64;   // display position of active tab
+int64:g_tm_next_id = 1i64;        // next unique tab ID to assign
+
+// ═══════════════════════════════════════════════════════════════════
+// Initialization
+// ═══════════════════════════════════════════════════════════════════
+
+/// Initialize the tab manager. Call once at startup.
+pub func:tm_init = NIL() {
+    g_tm_count = 0i64;
+    g_tm_active_index = 0i64;
+    g_tm_next_id = 1i64;
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Tab creation / deletion
+// ═══════════════════════════════════════════════════════════════════
+
+/// Create a new tab with the given PTY fd.
+/// Appends to the end of the tab list.
+/// Returns the new tab's unique ID.
+pub func:tm_add_tab = int64(int64:pty_fd) {
+    int64:slot = g_tm_count;
+    int64:id = g_tm_next_id;
+    g_tm_next_id = g_tm_next_id + 1i64;
+
+    // Initialize the tab slot
+    drop(tab_create(slot, id, pty_fd));
+
+    g_tm_count = g_tm_count + 1i64;
+    pass(id);
+};
+
+/// Remove a tab by its unique ID.
+/// Returns 1 on success, 0 if not found.
+/// Shifts remaining tabs left to fill the gap.
+/// Adjusts active_index if needed.
+pub func:tm_remove_tab = int64(int64:id) {
+    // Find the slot with this ID
+    int64:found = -1i64;
+    int64:i = 0i64;
+    while (i < g_tm_count) {
+        if (raw tab_get_id(i) == id) {
+            found = i;
+        }
+        i = i + 1i64;
+    }
+
+    if (found == -1i64) {
+        pass(0i64);
+    }
+
+    // Destroy the tab at found
+    drop(tab_destroy(found));
+
+    // Shift remaining tabs left to fill gap
+    i = found;
+    while (i < g_tm_count - 1i64) {
+        int64:next = i + 1i64;
+        // Copy next slot into current slot
+        drop(tab_create(i, raw tab_get_id(next), raw tab_get_pty_fd(next)));
+        drop(tab_set_active(i, raw tab_is_active(next)));
+        drop(tab_set_title(i, raw tab_get_title(next)));
+        if (raw tab_has_activity(next) != 0i64) {
+            drop(tab_mark_activity(i));
+        }
+        if (raw tab_has_bell(next) != 0i64) {
+            drop(tab_mark_bell(i));
+        }
+        i = i + 1i64;
+    }
+
+    // Clear the last slot (now unused)
+    drop(tab_destroy(g_tm_count - 1i64));
+
+    g_tm_count = g_tm_count - 1i64;
+
+    // Adjust active index
+    if (g_tm_count == 0i64) {
+        g_tm_active_index = 0i64;
+    }
+    if (g_tm_count > 0i64) {
+        if (g_tm_active_index >= g_tm_count) {
+            g_tm_active_index = g_tm_count - 1i64;
+        }
+    }
+
+    // Ensure the new active tab is marked active
+    if (g_tm_count > 0i64) {
+        drop(tab_set_active(g_tm_active_index, 1i64));
+    }
+
+    pass(1i64);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Activation
+// ═══════════════════════════════════════════════════════════════════
+
+/// Activate a tab by its unique ID.
+/// Clears active flag on old tab, sets on new tab.
+/// Also clears activity/bell flags on the newly focused tab.
+pub func:tm_activate = NIL(int64:id) {
+    // Deactivate current
+    if (g_tm_count > 0i64) {
+        drop(tab_set_active(g_tm_active_index, 0i64));
+    }
+
+    // Find and activate the new tab
+    int64:i = 0i64;
+    while (i < g_tm_count) {
+        if (raw tab_get_id(i) == id) {
+            g_tm_active_index = i;
+            drop(tab_set_active(i, 1i64));
+            drop(tab_clear_activity(i));
+            drop(tab_clear_bell(i));
+        }
+        i = i + 1i64;
+    }
+    pass(NIL);
+};
+
+/// Activate a tab by its display position (0-indexed).
+/// Used for Ctrl+1..Ctrl+9 shortcuts.
+pub func:tm_activate_index = NIL(int64:index) {
+    if (index < 0i64) { pass(NIL); }
+    if (index >= g_tm_count) { pass(NIL); }
+
+    // Deactivate current
+    if (g_tm_count > 0i64) {
+        drop(tab_set_active(g_tm_active_index, 0i64));
+    }
+
+    g_tm_active_index = index;
+    drop(tab_set_active(index, 1i64));
+    drop(tab_clear_activity(index));
+    drop(tab_clear_bell(index));
+    pass(NIL);
+};
+
+/// Cycle to the next tab (wraps around).
+pub func:tm_next = NIL() {
+    if (g_tm_count <= 1i64) { pass(NIL); }
+
+    drop(tab_set_active(g_tm_active_index, 0i64));
+
+    g_tm_active_index = g_tm_active_index + 1i64;
+    if (g_tm_active_index >= g_tm_count) {
+        g_tm_active_index = 0i64;
+    }
+
+    drop(tab_set_active(g_tm_active_index, 1i64));
+    drop(tab_clear_activity(g_tm_active_index));
+    drop(tab_clear_bell(g_tm_active_index));
+    pass(NIL);
+};
+
+/// Cycle to the previous tab (wraps around).
+pub func:tm_prev = NIL() {
+    if (g_tm_count <= 1i64) { pass(NIL); }
+
+    int64:old = g_tm_active_index;
+    int64:new_idx = old - 1i64;
+    if (old == 0i64) {
+        new_idx = g_tm_count - 1i64;
+    }
+
+    drop(tab_set_active(old, 0i64));
+    g_tm_active_index = new_idx;
+    drop(tab_set_active(new_idx, 1i64));
+    drop(tab_clear_activity(new_idx));
+    drop(tab_clear_bell(new_idx));
+    pass(NIL);
+};
+
+
+
+// ═══════════════════════════════════════════════════════════════════
+// Accessors
+// ═══════════════════════════════════════════════════════════════════
+
+/// Number of open tabs.
+pub func:tm_count = int64() {
+    pass(g_tm_count);
+};
+
+/// Display index of the active tab.
+pub func:tm_get_active_index = int64() {
+    pass(g_tm_active_index);
+};
+
+/// Unique ID of the active tab. Returns 0 if no tabs.
+pub func:tm_get_active_id = int64() {
+    if (g_tm_count == 0i64) { pass(0i64); }
+    pass(raw tab_get_id(g_tm_active_index));
+};
+
+/// PTY master fd of the active tab. Returns -1 if no tabs.
+pub func:tm_get_active_pty_fd = int64() {
+    if (g_tm_count == 0i64) { pass(-1i64); }
+    pass(raw tab_get_pty_fd(g_tm_active_index));
+};
+
+/// Get the unique ID of the tab at display position index.
+pub func:tm_get_id_at = int64(int64:index) {
+    pass(raw tab_get_id(index));
+};
+
+/// Get the title of the tab at display position index.
+pub func:tm_get_title_at = string(int64:index) {
+    pass(raw tab_get_title(index));
+};

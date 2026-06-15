@@ -1,0 +1,160 @@
+// src/core/tab.npk — Tab data model (v0.4.0)
+//
+// Stores per-tab metadata as parallel flat arrays.
+// Each tab occupies one slot [0..MAX_TABS-1].
+//
+// Fields per tab:
+//   id          — unique monotonic ID
+//   pty_fd      — PTY master file descriptor (-1 if none)
+//   is_active   — 1 = focused, 0 = background
+//   has_activity — unseen output since last focus
+//   has_bell    — unseen bell since last focus
+//   created_at  — creation timestamp (monotonic µs, 0 if unused)
+//   title       — display title (default "Shell")
+//
+// Slot lifecycle:
+//   tab_create(slot, id, pty_fd)  → initialize all fields
+//   tab_destroy(slot)             → zero all fields (does NOT close PTY)
+
+// ═══════════════════════════════════════════════════════════════════
+// Constants
+// ═══════════════════════════════════════════════════════════════════
+
+int64:MAX_TABS = 16i64;
+
+// ═══════════════════════════════════════════════════════════════════
+// Module state — parallel flat arrays
+// ═══════════════════════════════════════════════════════════════════
+
+int64[16]:g_tab_id;
+int64[16]:g_tab_pty_fd;
+int64[16]:g_tab_is_active;
+int64[16]:g_tab_has_activity;
+int64[16]:g_tab_has_bell;
+int64[16]:g_tab_created_at;
+string[16]:g_tab_title;
+
+// ═══════════════════════════════════════════════════════════════════
+// Slot lifecycle
+// ═══════════════════════════════════════════════════════════════════
+
+/// Initialize a tab slot with the given ID and PTY fd.
+/// Sets title to "Shell", is_active to 0, activity/bell to 0.
+pub func:tab_create = NIL(int64:slot, int64:id, int64:pty_fd) {
+    g_tab_id[slot] = id;
+    g_tab_pty_fd[slot] = pty_fd;
+    g_tab_is_active[slot] = 0i64;
+    g_tab_has_activity[slot] = 0i64;
+    g_tab_has_bell[slot] = 0i64;
+    g_tab_created_at[slot] = 0i64;
+    g_tab_title[slot] = "Shell";
+    pass(NIL);
+};
+
+/// Clear a tab slot. Does NOT close the PTY — caller is responsible.
+pub func:tab_destroy = NIL(int64:slot) {
+    g_tab_id[slot] = 0i64;
+    g_tab_pty_fd[slot] = -1i64;
+    g_tab_is_active[slot] = 0i64;
+    g_tab_has_activity[slot] = 0i64;
+    g_tab_has_bell[slot] = 0i64;
+    g_tab_created_at[slot] = 0i64;
+    g_tab_title[slot] = "";
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Getters
+// ═══════════════════════════════════════════════════════════════════
+
+/// Get the unique ID for a tab slot.
+pub func:tab_get_id = int64(int64:slot) {
+    pass(g_tab_id[slot]);
+};
+
+/// Get the PTY master fd for a tab slot.
+pub func:tab_get_pty_fd = int64(int64:slot) {
+    pass(g_tab_pty_fd[slot]);
+};
+
+/// Check if a tab is the active (focused) tab.
+pub func:tab_is_active = int64(int64:slot) {
+    pass(g_tab_is_active[slot]);
+};
+
+/// Check if a tab has unseen output activity.
+pub func:tab_has_activity = int64(int64:slot) {
+    pass(g_tab_has_activity[slot]);
+};
+
+/// Check if a tab has an unseen bell.
+pub func:tab_has_bell = int64(int64:slot) {
+    pass(g_tab_has_bell[slot]);
+};
+
+/// Get the creation timestamp for a tab slot.
+pub func:tab_get_created_at = int64(int64:slot) {
+    pass(g_tab_created_at[slot]);
+};
+
+/// Get the display title for a tab slot.
+pub func:tab_get_title = string(int64:slot) {
+    pass(g_tab_title[slot]);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Setters
+// ═══════════════════════════════════════════════════════════════════
+
+/// Set whether a tab is the active (focused) tab.
+pub func:tab_set_active = NIL(int64:slot, int64:val) {
+    g_tab_is_active[slot] = val;
+    pass(NIL);
+};
+
+/// Set the display title for a tab slot.
+pub func:tab_set_title = NIL(int64:slot, string:title) {
+    g_tab_title[slot] = title;
+    pass(NIL);
+};
+
+/// Set the PTY master fd for a tab slot.
+pub func:tab_set_pty_fd = NIL(int64:slot, int64:fd) {
+    g_tab_pty_fd[slot] = fd;
+    pass(NIL);
+};
+
+/// Set the creation timestamp for a tab slot.
+pub func:tab_set_created_at = NIL(int64:slot, int64:ts) {
+    g_tab_created_at[slot] = ts;
+    pass(NIL);
+};
+
+/// Mark a tab as having unseen output activity.
+pub func:tab_mark_activity = NIL(int64:slot) {
+    g_tab_has_activity[slot] = 1i64;
+    pass(NIL);
+};
+
+/// Clear the unseen output activity flag (on focus).
+pub func:tab_clear_activity = NIL(int64:slot) {
+    g_tab_has_activity[slot] = 0i64;
+    pass(NIL);
+};
+
+/// Mark a tab as having an unseen bell.
+pub func:tab_mark_bell = NIL(int64:slot) {
+    g_tab_has_bell[slot] = 1i64;
+    pass(NIL);
+};
+
+/// Clear the unseen bell flag (on focus).
+pub func:tab_clear_bell = NIL(int64:slot) {
+    g_tab_has_bell[slot] = 0i64;
+    pass(NIL);
+};
+
+/// Get the maximum number of tabs supported.
+pub func:tab_max_tabs = int64() {
+    pass(MAX_TABS);
+};

@@ -38,6 +38,7 @@ use "../terminal/cell.npk".*;
 use "../terminal/scrollback.npk".*;
 use "color_scheme.npk".*;
 use "color_resolve.npk".*;
+use "tab_bar.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Module state
@@ -101,7 +102,10 @@ pub func:renderer_resize = NIL(int64:w_px, int64:h_px) {
     if (cw > 0i64) {
         if (ch > 0i64) {
             int64:cols = w_px / cw;
-            int64:rows = h_px / ch;
+            // v0.4.0: subtract tab bar height from available vertical space
+            int64:avail_h = h_px - raw tb_get_height();
+            if (avail_h < ch) { avail_h = ch; }
+            int64:rows = avail_h / ch;
             if (cols < 1i64) { cols = 1i64; }
             if (rows < 1i64) { rows = 1i64; }
             g_rend_cols = cols;
@@ -132,6 +136,10 @@ pub func:renderer_get_rows = int64() { pass(g_rend_rows); };
 /// v0.3.3: hides cursor when scrolled up (cursor is on live output).
 /// v0.3.4: calls nitty_render_set_scroll_info for C-side scrollbar.
 pub func:renderer_sync_frame = NIL() {
+    // v0.4.0: Render tab bar first (above the grid area)
+    int64:draw_w = nitty_gtk4_get_draw_width();
+    drop(tb_render(draw_w));
+
     // Blank the C grid — prevents stale chars from prior frames
     nitty_render_clear_grid();
 

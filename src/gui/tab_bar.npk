@@ -1,0 +1,199 @@
+// src/gui/tab_bar.npk — Cairo-drawn tab bar renderer (v0.4.0)
+//
+// Renders the tab bar at the top of the DrawingArea using Cairo/Pango
+// (via C shim FFI functions). Called every frame from renderer_sync_frame().
+//
+// Color scheme: dark theme consistent with the terminal background.
+//   - Tab bar background:  rgb(38, 38, 38)   — #262626
+//   - Active tab bg:       rgb(58, 58, 58)   — #3a3a3a
+//   - Inactive tab bg:     rgb(38, 38, 38)   — same as bar
+//   - Active tab text:     rgb(230, 230, 230) — bright white
+//   - Inactive tab text:   rgb(150, 150, 150) — dimmed
+//   - Accent underline:    rgb(80, 160, 240)  — blue accent
+//   - Separator:           rgb(90, 90, 90)    — subtle vertical line
+
+use "../core/tab_manager.npk".*;
+use "../core/tab.npk".*;
+use "gtk4_ffi.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════
+// Constants (colors are fixed-point × 1000)
+// ═══════════════════════════════════════════════════════════════════
+
+// Tab bar background
+int64:TB_BAR_R = 38i64;
+int64:TB_BAR_G = 38i64;
+int64:TB_BAR_B = 38i64;
+
+// Active tab background
+int64:TB_ACTIVE_BG_R = 58i64;
+int64:TB_ACTIVE_BG_G = 58i64;
+int64:TB_ACTIVE_BG_B = 58i64;
+
+// Active tab text (bright white)
+int64:TB_ACTIVE_FG_R = 900i64;
+int64:TB_ACTIVE_FG_G = 900i64;
+int64:TB_ACTIVE_FG_B = 900i64;
+
+// Inactive tab text (dimmed)
+int64:TB_INACTIVE_FG_R = 590i64;
+int64:TB_INACTIVE_FG_G = 590i64;
+int64:TB_INACTIVE_FG_B = 590i64;
+
+// Accent underline (blue)
+int64:TB_ACCENT_R = 310i64;
+int64:TB_ACCENT_G = 630i64;
+int64:TB_ACCENT_B = 940i64;
+
+// Layout constants
+int64:TB_PAD_X = 16i64;         // horizontal padding inside each tab
+int64:TB_PAD_Y = 4i64;          // vertical padding above/below text
+int64:TB_MIN_TAB_W = 120i64;    // minimum tab width in pixels
+
+// ═══════════════════════════════════════════════════════════════════
+// Module state
+// ═══════════════════════════════════════════════════════════════════
+
+int64:g_tb_height = 0i64;       // computed tab bar height (pixels)
+int64:g_tb_visible = 1i64;      // 1 = show tab bar, 0 = hide
+int64:g_tb_cell_height = 0i64;  // cached cell height for tab sizing
+
+// ═══════════════════════════════════════════════════════════════════
+// Initialization
+// ═══════════════════════════════════════════════════════════════════
+
+/// Initialize the tab bar. Computes height from cell metrics.
+/// cell_height is the terminal cell height in pixels.
+pub func:tb_init = NIL(int64:cell_height) {
+    g_tb_cell_height = cell_height;
+    // Tab bar height = cell_height + 2 * padding
+    g_tb_height = cell_height + TB_PAD_Y + TB_PAD_Y;
+    drop(nitty_render_set_tab_bar_height(g_tb_height));
+    pass(NIL);
+};
+
+/// Get the tab bar height in pixels.
+pub func:tb_get_height = int64() {
+    pass(g_tb_height);
+};
+
+/// Show or hide the tab bar.
+pub func:tb_set_visible = NIL(int64:visible) {
+    g_tb_visible = visible;
+    if (visible == 0i64) {
+        drop(nitty_render_set_tab_bar_height(0i64));
+    }
+    if (visible != 0i64) {
+        drop(nitty_render_set_tab_bar_height(g_tb_height));
+    }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Rendering
+// ═══════════════════════════════════════════════════════════════════
+
+/// Render the tab bar. Call every frame before rendering the terminal grid.
+/// This draws directly into the Cairo context via FFI.
+pub func:tb_render = NIL(int64:window_width) {
+    if (g_tb_visible == 0i64) { pass(NIL); }
+    if (g_tb_height == 0i64) { pass(NIL); }
+
+    int64:count = raw tm_count();
+    if (count == 0i64) { pass(NIL); }
+
+    // 1. Draw tab bar background (full width)
+    drop(nitty_render_draw_tab_bg(
+        0i64, 0i64, window_width, g_tb_height,
+        TB_BAR_R, TB_BAR_G, TB_BAR_B
+    ));
+
+    // 2. Compute tab width (distribute evenly, but clamp to min)
+    int64:tab_w = window_width / count;
+    if (tab_w < TB_MIN_TAB_W) {
+        tab_w = TB_MIN_TAB_W;
+    }
+
+    // 3. Draw each tab
+    int64:x = 0i64;
+    int64:active_idx = raw tm_get_active_index();
+    int64:i = 0i64;
+
+    while (i < count) {
+        int64:is_active_tab = 0i64;
+        if (i == active_idx) {
+            is_active_tab = 1i64;
+        }
+
+        // Active tab: draw highlighted background
+        if (is_active_tab == 1i64) {
+            drop(nitty_render_draw_tab_bg(
+                x, 0i64, tab_w, g_tb_height,
+                TB_ACTIVE_BG_R, TB_ACTIVE_BG_G, TB_ACTIVE_BG_B
+            ));
+        }
+
+        // Draw tab title text
+        string:title = raw tm_get_title_at(i);
+        int64:text_x = x + TB_PAD_X;
+        int64:text_y = TB_PAD_Y;
+
+        if (is_active_tab == 1i64) {
+            drop(nitty_render_draw_tab_text(
+                text_x, text_y, title,
+                TB_ACTIVE_FG_R, TB_ACTIVE_FG_G, TB_ACTIVE_FG_B,
+                1i64
+            ));
+            // Active tab accent underline
+            drop(nitty_render_draw_tab_underline(
+                x, g_tb_height - 2i64, tab_w,
+                TB_ACCENT_R, TB_ACCENT_G, TB_ACCENT_B
+            ));
+        }
+        if (is_active_tab == 0i64) {
+            drop(nitty_render_draw_tab_text(
+                text_x, text_y, title,
+                TB_INACTIVE_FG_R, TB_INACTIVE_FG_G, TB_INACTIVE_FG_B,
+                0i64
+            ));
+        }
+
+        // Draw separator after each tab (except the last)
+        if (i < count - 1i64) {
+            int64:sep_x = x + tab_w;
+            drop(nitty_render_draw_tab_separator(
+                sep_x, TB_PAD_Y, g_tb_cell_height
+            ));
+        }
+
+        x = x + tab_w;
+        i = i + 1i64;
+    }
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Hit testing
+// ═══════════════════════════════════════════════════════════════════
+
+/// Returns the tab index at the given pixel position, or -1 if outside.
+pub func:tb_hit_test = int64(int64:x_px, int64:y_px) {
+    if (g_tb_visible == 0i64) { pass(-1i64); }
+    if (y_px < 0i64) { pass(-1i64); }
+    if (y_px >= g_tb_height) { pass(-1i64); }
+
+    int64:count = raw tm_count();
+    if (count == 0i64) { pass(-1i64); }
+
+    // Use same tab_w calculation as render
+    int64:window_w = nitty_gtk4_get_draw_width();
+    int64:tab_w = window_w / count;
+    if (tab_w < TB_MIN_TAB_W) {
+        tab_w = TB_MIN_TAB_W;
+    }
+
+    int64:index = x_px / tab_w;
+    if (index >= count) { pass(-1i64); }
+    pass(index);
+};

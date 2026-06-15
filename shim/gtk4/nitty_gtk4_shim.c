@@ -553,7 +553,8 @@ void nitty_gtk4_grid_handle_key(int64_t keyval, int64_t modifiers)
 
 /* ── Draw state (valid only inside on_draw_func) ──────────────────────── */
 
-static cairo_t *g_draw_cr      = NULL;
+/* v0.4.0: Non-static so nitty_render.c can extern it for tab bar drawing */
+cairo_t *g_draw_cr      = NULL;
 static int      g_draw_width   = 0;
 static int      g_draw_height  = 0;
 

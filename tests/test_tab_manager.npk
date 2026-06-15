@@ -1,0 +1,150 @@
+// tests/test_tab_manager.npk — Tab manager unit tests (v0.4.0)
+
+use "../src/core/tab_manager.npk".*;
+use "../src/core/tab.npk".*;
+
+func:failsafe = int32(tbb32:_err) { exit 98i32; };
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+func:check_str = NIL(string:name, string:expected, string:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+func:run_tests = NIL() {
+    // ── Init ──
+    drop(tm_init());
+
+    // T01: Initial count is 0
+    drop(check("T01: initial count", 0i64, raw tm_count()));
+
+    // T02: Initial active index is 0
+    drop(check("T02: initial active index", 0i64, raw tm_get_active_index()));
+
+    // T03: Active ID is 0 when no tabs
+    drop(check("T03: active id no tabs", 0i64, raw tm_get_active_id()));
+
+    // T04: Active PTY fd is -1 when no tabs
+    drop(check("T04: active pty_fd no tabs", -1i64, raw tm_get_active_pty_fd()));
+
+    // ── Add tabs ──
+
+    // T05: Add first tab returns ID 1
+    int64:id1 = raw tm_add_tab(10i64);
+    drop(check("T05: first tab id", 1i64, id1));
+
+    // T06: Count is now 1
+    drop(check("T06: count after add", 1i64, raw tm_count()));
+
+    // T07: Tab at index 0 has correct ID
+    drop(check("T07: id at 0", 1i64, raw tm_get_id_at(0i64)));
+
+    // T08: Tab at index 0 has correct pty_fd
+    drop(check("T08: pty_fd at 0", 10i64, raw tab_get_pty_fd(0i64)));
+
+    // T09: Title defaults to "Shell"
+    drop(check_str("T09: title default", "Shell", raw tm_get_title_at(0i64)));
+
+    // T10: Add second tab returns ID 2
+    int64:id2 = raw tm_add_tab(20i64);
+    drop(check("T10: second tab id", 2i64, id2));
+
+    // T11: Count is now 2
+    drop(check("T11: count after second add", 2i64, raw tm_count()));
+
+    // T12: Add third tab returns ID 3
+    int64:id3 = raw tm_add_tab(30i64);
+    drop(check("T12: third tab id", 3i64, id3));
+    drop(check("T12b: count after third add", 3i64, raw tm_count()));
+
+    // ── Activation ──
+
+    // T13: Activate by ID
+    drop(tm_activate(id2));
+    drop(check("T13a: active index after activate", 1i64, raw tm_get_active_index()));
+    drop(check("T13b: active id after activate", 2i64, raw tm_get_active_id()));
+    drop(check("T13c: active pty_fd", 20i64, raw tm_get_active_pty_fd()));
+
+    // T14: Activate by index
+    drop(tm_activate_index(2i64));
+    drop(check("T14: active index after activate_index", 2i64, raw tm_get_active_index()));
+
+    // T15: Activate index 0
+    drop(tm_activate_index(0i64));
+    drop(check("T15: active index 0", 0i64, raw tm_get_active_index()));
+
+    // ── Next / Prev ──
+
+    // T16: Next wraps forward
+    drop(tm_activate_index(0i64));
+    drop(tm_next());
+    drop(check("T16: next from 0", 1i64, raw tm_get_active_index()));
+
+    // T17: Next from last wraps to 0
+    drop(tm_activate_index(2i64));
+    drop(tm_next());
+    drop(check("T17: next wrap", 0i64, raw tm_get_active_index()));
+
+    // T18: Prev from 0 wraps to last
+    drop(tm_activate_index(0i64));
+    drop(tm_prev());
+    drop(check("T18: prev wrap", 2i64, raw tm_get_active_index()));
+
+    // ── Remove ──
+
+    // T19: Remove middle tab
+    drop(tm_activate_index(0i64));
+    int64:rem = raw tm_remove_tab(id2);
+    drop(check("T19a: remove success", 1i64, rem));
+    drop(check("T19b: count after remove", 2i64, raw tm_count()));
+
+    // T20: Remaining tabs shifted correctly
+    drop(check("T20a: id at 0", 1i64, raw tm_get_id_at(0i64)));
+    drop(check("T20b: id at 1", 3i64, raw tm_get_id_at(1i64)));
+
+    // T21: Remove non-existent tab returns 0
+    int64:rem2 = raw tm_remove_tab(999i64);
+    drop(check("T21: remove non-existent", 0i64, rem2));
+
+    // T22: Remove last remaining tabs
+    drop(tm_remove_tab(id1));
+    drop(check("T22a: count after remove", 1i64, raw tm_count()));
+    drop(tm_remove_tab(id3));
+    drop(check("T22b: count empty", 0i64, raw tm_count()));
+
+    // T23: Active index resets when all tabs removed
+    drop(check("T23: active index empty", 0i64, raw tm_get_active_index()));
+
+    // ── Re-add after empty ──
+
+    // T24: IDs continue incrementing
+    int64:id4 = raw tm_add_tab(40i64);
+    drop(check("T24: id continues", 4i64, id4));
+    drop(check("T24b: count", 1i64, raw tm_count()));
+
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    drop(run_tests());
+    if (g_fail > 0i64) {
+        exit 1i32;
+    }
+    print("All tab manager tests passed.");
+    exit 0i32;
+};

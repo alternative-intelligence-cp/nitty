@@ -38,6 +38,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+/* v0.4.0: Access the draw-callback Cairo context from nitty_gtk4_shim.c */
+extern cairo_t *g_draw_cr;
+
 /* ── Flag constants (mirroring cell.npk CELL_* values) ───────────────── */
 
 #define FLAG_BOLD         0x001
@@ -163,6 +166,10 @@ static int64_t  g_perf_atlas_hits   = 0;
 static int64_t  g_perf_atlas_misses = 0;
 static int64_t  g_perf_dirty_cells  = 0;
 static int64_t  g_perf_total_cells  = 0;
+
+/* ── v0.4.0: Tab bar offset ───────────────────────────────────────────── */
+
+static int64_t  g_tab_bar_height    = 0;  /* pixels reserved for tab bar at top */
 
 /* Forward declaration for draw_scrollbar */
 static void draw_scrollbar(cairo_t *cr, int width, int height);
@@ -856,9 +863,15 @@ void nitty_render_frame(void *cr_ptr, int width, int height)
 
     /* Calculate visible grid dimensions */
     int visible_cols = width / g_cell_width;
-    int visible_rows = height / g_cell_height;
+    int visible_rows = (height - (int)g_tab_bar_height) / g_cell_height;
     if (visible_cols > g_grid_cols) visible_cols = g_grid_cols;
     if (visible_rows > g_grid_rows) visible_rows = g_grid_rows;
+
+    /* v0.4.0: Offset grid rendering by tab bar height */
+    if (g_tab_bar_height > 0) {
+        cairo_save(cr);
+        cairo_translate(cr, 0.0, (double)g_tab_bar_height);
+    }
 
     /* v0.3.6: Compute damage (diff current grid against previous snapshot) */
     damage_compute();
@@ -1046,6 +1059,11 @@ void nitty_render_frame(void *cr_ptr, int width, int height)
     /* 5. Draw cursor on top of all cell content */
     draw_cursor(cr);
 
+    /* v0.4.0: Restore cairo state before scrollbar (scrollbar uses absolute coords) */
+    if (g_tab_bar_height > 0) {
+        cairo_restore(cr);
+    }
+
     /* 6. Draw scrollbar overlay (v0.3.4) */
     draw_scrollbar(cr, width, height);
 
@@ -1221,4 +1239,84 @@ static void draw_scrollbar(cairo_t *cr, int width, int height)
     cairo_set_source_rgba(cr, 0.75, 0.75, 0.75, 0.70);
     cairo_rectangle(cr, (double)(width - 7), handle_y + 1.0, 6.0, handle_h - 2.0);
     cairo_fill(cr);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.4.0: Tab bar rendering API
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+void nitty_render_set_tab_bar_height(int64_t height)
+{
+    if (height < 0) height = 0;
+    if (height != g_tab_bar_height) {
+        g_tab_bar_height = height;
+        g_full_redraw = 1;  /* force full repaint on change */
+    }
+}
+
+int64_t nitty_render_get_tab_bar_height(void)
+{
+    return g_tab_bar_height;
+}
+
+void nitty_render_draw_tab_bg(int64_t x, int64_t y, int64_t w, int64_t h,
+                               int64_t r, int64_t g, int64_t b)
+{
+    if (g_draw_cr == NULL) return;
+    cairo_set_source_rgb(g_draw_cr,
+        (double)r / 1000.0,
+        (double)g / 1000.0,
+        (double)b / 1000.0);
+    cairo_rectangle(g_draw_cr, (double)x, (double)y, (double)w, (double)h);
+    cairo_fill(g_draw_cr);
+}
+
+void nitty_render_draw_tab_text(int64_t x, int64_t y, const char *text,
+                                 int64_t r, int64_t g, int64_t b,
+                                 int64_t bold)
+{
+    if (g_draw_cr == NULL || text == NULL) return;
+    if (g_font_desc_str[0] == '\0') return;
+
+    PangoLayout *layout = pango_cairo_create_layout(g_draw_cr);
+    PangoFontDescription *fd = pango_font_description_from_string(g_font_desc_str);
+    if (bold) {
+        pango_font_description_set_weight(fd, PANGO_WEIGHT_BOLD);
+    }
+    pango_layout_set_font_description(layout, fd);
+    pango_layout_set_text(layout, text, -1);
+
+    cairo_set_source_rgb(g_draw_cr,
+        (double)r / 1000.0,
+        (double)g / 1000.0,
+        (double)b / 1000.0);
+    cairo_move_to(g_draw_cr, (double)x, (double)y);
+    pango_cairo_show_layout(g_draw_cr, layout);
+
+    pango_font_description_free(fd);
+    g_object_unref(layout);
+}
+
+void nitty_render_draw_tab_underline(int64_t x, int64_t y, int64_t w,
+                                      int64_t r, int64_t g, int64_t b)
+{
+    if (g_draw_cr == NULL) return;
+    cairo_set_source_rgb(g_draw_cr,
+        (double)r / 1000.0,
+        (double)g / 1000.0,
+        (double)b / 1000.0);
+    cairo_set_line_width(g_draw_cr, 2.0);
+    cairo_move_to(g_draw_cr, (double)x, (double)y);
+    cairo_line_to(g_draw_cr, (double)(x + w), (double)y);
+    cairo_stroke(g_draw_cr);
+}
+
+void nitty_render_draw_tab_separator(int64_t x, int64_t y, int64_t h)
+{
+    if (g_draw_cr == NULL) return;
+    cairo_set_source_rgba(g_draw_cr, 0.35, 0.35, 0.35, 0.6);
+    cairo_set_line_width(g_draw_cr, 1.0);
+    cairo_move_to(g_draw_cr, (double)x + 0.5, (double)y);
+    cairo_line_to(g_draw_cr, (double)x + 0.5, (double)(y + h));
+    cairo_stroke(g_draw_cr);
 }
