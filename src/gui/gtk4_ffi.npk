@@ -277,4 +277,23 @@ extern "nitty_gtk4_shim" {
 
     // Blink visibility (already used in renderer.npk, formally declared here)
     func:nitty_render_set_blink_visible  = NIL(int64:visible);
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.3.6: Performance stats
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Glyph atlas cache hit count (since last reset).
+    func:nitty_render_get_atlas_hits   = int64();
+
+    // Glyph atlas cache miss count (since last reset).
+    func:nitty_render_get_atlas_misses = int64();
+
+    // Number of dirty (changed) cells in the last frame.
+    func:nitty_render_get_dirty_cells  = int64();
+
+    // Total visible cells in the last frame.
+    func:nitty_render_get_total_cells  = int64();
+
+    // Reset all performance counters to zero.
+    func:nitty_render_reset_perf_stats = NIL();
 }

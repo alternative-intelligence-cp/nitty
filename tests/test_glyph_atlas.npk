@@ -1,0 +1,80 @@
+// tests/test_glyph_atlas.npk — Glyph atlas cache tests (v0.3.6)
+//
+// Tests the glyph atlas cache by verifying the C-side perf stats API.
+// Since the atlas operates during nitty_render_frame() with a Cairo context,
+// we validate that the API is callable and returns correct initial values.
+
+use "../src/gui/gtk4_ffi.npk".*;
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+func:run_tests = NIL() {
+    // T01: Initial atlas hits = 0
+    drop(check("T01: initial atlas hits",    0i64, nitty_render_get_atlas_hits()));
+
+    // T02: Initial atlas misses = 0
+    drop(check("T02: initial atlas misses",  0i64, nitty_render_get_atlas_misses()));
+
+    // T03: Initial dirty cells = 0
+    drop(check("T03: initial dirty cells",   0i64, nitty_render_get_dirty_cells()));
+
+    // T04: Initial total cells = 0
+    drop(check("T04: initial total cells",   0i64, nitty_render_get_total_cells()));
+
+    // T05: Reset perf stats works (no crash)
+    nitty_render_reset_perf_stats();
+    drop(check("T05: post-reset atlas hits", 0i64, nitty_render_get_atlas_hits()));
+
+    // T06: Set cells — atlas stats don't change until frame
+    nitty_render_set_cell_cp(0i64, 0i64, 0x41i64);
+    nitty_render_set_cell_cp(1i64, 0i64, 0x42i64);
+    nitty_render_set_cell_cp(2i64, 0i64, 0x43i64);
+    drop(check("T06: no atlas activity before frame", 0i64, nitty_render_get_atlas_hits()));
+
+    // T07: Cell width/height are 0 before font measurement
+    drop(check("T07: cell width before frame",  0i64, nitty_render_get_cell_width()));
+
+    // T08: Clear grid doesn't crash
+    nitty_render_clear_grid();
+    drop(check("T08: atlas hits unchanged after clear", 0i64, nitty_render_get_atlas_hits()));
+
+    // T09: Set font string doesn't crash
+    nitty_render_set_font("Monospace 12");
+    drop(check("T09: no misses from set_font alone", 0i64, nitty_render_get_atlas_misses()));
+
+    // T10: Multiple reset cycles are stable
+    nitty_render_reset_perf_stats();
+    nitty_render_reset_perf_stats();
+    drop(check("T10a: double reset hits",   0i64, nitty_render_get_atlas_hits()));
+    drop(check("T10b: double reset misses", 0i64, nitty_render_get_atlas_misses()));
+
+    // T11: Set cell_fg doesn't affect atlas stats
+    nitty_render_set_cell_cp(0i64, 0i64, 0x58i64);
+    nitty_render_set_cell_fg(0i64, 0i64, 1000i64, 0i64, 0i64);
+    drop(check("T11: fg color doesn't trigger atlas", 0i64, nitty_render_get_atlas_hits()));
+
+    // T12: Set cell_flags doesn't affect atlas stats
+    nitty_render_set_cell_flags(0i64, 0i64, 1i64);
+    drop(check("T12: flags don't trigger atlas", 0i64, nitty_render_get_atlas_misses()));
+
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    drop(run_tests());
+    if (g_fail > 0i64) {
+        exit 1i32;
+    }
+    print("All glyph atlas tests passed.");
+    exit 0i32;
+};

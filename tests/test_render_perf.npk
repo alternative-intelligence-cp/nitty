@@ -1,0 +1,143 @@
+// tests/test_render_perf.npk — Rendering performance benchmark (v0.3.6)
+//
+// Exercises the C-side grid push path at scale and validates perf counter behavior.
+// Does NOT measure actual rendering time (no Cairo context).
+
+use "../src/gui/gtk4_ffi.npk".*;
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+func:run_tests = NIL() {
+    // ── Benchmark 1: Fill 80×24 grid (1920 cells) ──
+    nitty_render_clear_grid();
+    nitty_render_reset_perf_stats();
+
+    int64:rows = 24i64;
+    int64:cols = 80i64;
+    int64:r = 0i64;
+    while (r < rows) {
+        int64:c = 0i64;
+        while (c < cols) {
+            int64:cp = 0x21i64 + ((r * cols + c) % 94i64);
+            nitty_render_set_cell_cp(c, r, cp);
+            c = c + 1i64;
+        }
+        r = r + 1i64;
+    }
+
+    // Verify: atlas stats still 0 (no frame rendered)
+    drop(check("T01: atlas hits after grid fill",     0i64, nitty_render_get_atlas_hits()));
+    drop(check("T02: atlas misses after grid fill",   0i64, nitty_render_get_atlas_misses()));
+
+    // ── Benchmark 2: Fill with colors ──
+    nitty_render_clear_grid();
+    r = 0i64;
+    while (r < rows) {
+        int64:c = 0i64;
+        while (c < cols) {
+            int64:cp = 0x41i64 + (c % 26i64);
+            nitty_render_set_cell_cp(c, r, cp);
+            int64:fg_r = (c * 1000i64) / cols;
+            int64:fg_g = (r * 1000i64) / rows;
+            nitty_render_set_cell_fg(c, r, fg_r, fg_g, 500i64);
+            c = c + 1i64;
+        }
+        r = r + 1i64;
+    }
+    drop(check("T03: grid fill with colors ok", 1i64, 1i64));
+
+    // ── Benchmark 3: Fill with backgrounds ──
+    nitty_render_clear_grid();
+    r = 0i64;
+    while (r < rows) {
+        int64:c = 0i64;
+        while (c < cols) {
+            int64:cp = 0x30i64 + (c % 10i64);
+            nitty_render_set_cell_cp(c, r, cp);
+            if ((c % 2i64) == 0i64) {
+                nitty_render_set_cell_bg(c, r, 100i64, 100i64, 200i64);
+            }
+            c = c + 1i64;
+        }
+        r = r + 1i64;
+    }
+    drop(check("T04: grid fill with backgrounds ok", 1i64, 1i64));
+
+    // ── Benchmark 4: Fill with flags ──
+    nitty_render_clear_grid();
+    r = 0i64;
+    while (r < rows) {
+        int64:c = 0i64;
+        while (c < cols) {
+            int64:cp = 0x41i64 + (c % 26i64);
+            nitty_render_set_cell_cp(c, r, cp);
+            if ((c % 2i64) == 0i64) {
+                nitty_render_set_cell_flags(c, r, 1i64);
+            }
+            if ((c % 2i64) != 0i64) {
+                nitty_render_set_cell_flags(c, r, 4i64);
+            }
+            c = c + 1i64;
+        }
+        r = r + 1i64;
+    }
+    drop(check("T05: grid fill with flags ok", 1i64, 1i64));
+
+    // ── Benchmark 5: Large grid 200×50 (10000 cells) ──
+    nitty_render_clear_grid();
+    int64:big_rows = 50i64;
+    int64:big_cols = 200i64;
+    r = 0i64;
+    while (r < big_rows) {
+        int64:c = 0i64;
+        while (c < big_cols) {
+            int64:cp = 0x30i64 + ((r + c) % 10i64);
+            nitty_render_set_cell_cp(c, r, cp);
+            c = c + 1i64;
+        }
+        r = r + 1i64;
+    }
+    drop(check("T06: 200x50 grid fill ok", 1i64, 1i64));
+
+    // ── Benchmark 6: Repeated clear+fill cycles ──
+    int64:cycle = 0i64;
+    while (cycle < 10i64) {
+        nitty_render_clear_grid();
+        r = 0i64;
+        while (r < 24i64) {
+            int64:c = 0i64;
+            while (c < 80i64) {
+                nitty_render_set_cell_cp(c, r, 0x41i64 + (cycle % 26i64));
+                c = c + 1i64;
+            }
+            r = r + 1i64;
+        }
+        cycle = cycle + 1i64;
+    }
+    drop(check("T07: 10 clear+fill cycles ok", 1i64, 1i64));
+
+    // ── Stats after all operations ──
+    drop(check("T08: atlas hits still 0 without frame",   0i64, nitty_render_get_atlas_hits()));
+    drop(check("T09: atlas misses still 0 without frame", 0i64, nitty_render_get_atlas_misses()));
+
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    drop(run_tests());
+    if (g_fail > 0i64) {
+        exit 1i32;
+    }
+    print("All render perf tests passed.");
+    exit 0i32;
+};

@@ -204,6 +204,36 @@ void nitty_render_set_letter_spacing(int64_t px);
  */
 void nitty_render_set_ligatures(int64_t enabled);
 
+/* ── v0.3.6: Performance stats ────────────────────────────────────────── */
+
+/**
+ * Get the number of glyph atlas cache hits since last reset.
+ * A hit means the character was already cached in the atlas.
+ */
+int64_t nitty_render_get_atlas_hits(void);
+
+/**
+ * Get the number of glyph atlas cache misses since last reset.
+ * A miss means the character had to be rendered via Pango and cached.
+ */
+int64_t nitty_render_get_atlas_misses(void);
+
+/**
+ * Get the number of dirty (changed) cells in the last frame.
+ * Lower is better — indicates how much work the partial redraw saved.
+ */
+int64_t nitty_render_get_dirty_cells(void);
+
+/**
+ * Get the total number of visible cells in the last frame.
+ */
+int64_t nitty_render_get_total_cells(void);
+
+/**
+ * Reset all performance counters to zero.
+ */
+void nitty_render_reset_perf_stats(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -122,6 +122,48 @@ static int     g_ligatures_enabled = 0;    /* 0 = disable (default), 1 = enable 
 /* Cached Pango attribute list for ligature suppression (NULL when enabled) */
 static PangoAttrList *g_no_ligature_attrs = NULL;
 
+/* ── v0.3.6: Glyph Atlas Cache ────────────────────────────────────────── */
+
+#define ATLAS_W          2048
+#define ATLAS_H          2048
+#define ATLAS_BUCKETS    4096   /* hash table size (power of 2) */
+#define ATLAS_EMPTY_KEY  0xFFFFFFFFU  /* sentinel for empty bucket */
+
+typedef struct {
+    uint32_t codepoint;   /* Unicode codepoint */
+    uint16_t flags_key;   /* bold|italic|wide bits → 3 bits, 8 combos */
+    uint16_t fg_packed;   /* (r/8)<<10 | (g/8)<<5 | (b/8) — 15-bit color */
+} GlyphKey;
+
+typedef struct {
+    GlyphKey key;
+    int      ax, ay;      /* position in atlas surface */
+    int      gw, gh;      /* glyph pixel dimensions */
+} GlyphEntry;
+
+static cairo_surface_t *g_atlas_surface  = NULL;
+static cairo_t         *g_atlas_cr       = NULL;
+static GlyphEntry       g_atlas_entries[ATLAS_BUCKETS]; /* open-addressing hash table */
+static int              g_atlas_count    = 0;           /* entries in use */
+static int              g_atlas_next_x   = 0;           /* packing cursor */
+static int              g_atlas_next_y   = 0;
+static int              g_atlas_row_h    = 0;           /* tallest glyph in current row */
+
+/* ── v0.3.6: Damage Tracking (double-buffer diff) ────────────────────── */
+
+static GridCell g_prev_grid[NITTY_MAX_ROWS][NITTY_MAX_COLS];
+static int      g_prev_cols = 0, g_prev_rows = 0;
+static uint8_t  g_dirty[NITTY_MAX_ROWS][NITTY_MAX_COLS];
+static int      g_full_redraw   = 1;  /* force first frame */
+static int      g_prev_cursor_col = -1, g_prev_cursor_row = -1;
+
+/* ── v0.3.6: Performance counters ─────────────────────────────────────── */
+
+static int64_t  g_perf_atlas_hits   = 0;
+static int64_t  g_perf_atlas_misses = 0;
+static int64_t  g_perf_dirty_cells  = 0;
+static int64_t  g_perf_total_cells  = 0;
+
 /* Forward declaration for draw_scrollbar */
 static void draw_scrollbar(cairo_t *cr, int width, int height);
 
@@ -216,6 +258,305 @@ static PangoFontDescription *select_font(int flags)
     if (bold)           return g_font_bold        ? g_font_bold        : g_font_regular;
     if (italic)         return g_font_italic      ? g_font_italic      : g_font_regular;
     return g_font_regular;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.3.6: Glyph Atlas Implementation
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static void glyph_atlas_init(cairo_t *screen_cr)
+{
+    (void)screen_cr; /* used only as fallback; atlas has its own cr */
+    if (g_atlas_surface != NULL) return;
+    g_atlas_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, ATLAS_W, ATLAS_H);
+    g_atlas_cr = cairo_create(g_atlas_surface);
+    /* Clear atlas to transparent */
+    cairo_set_operator(g_atlas_cr, CAIRO_OPERATOR_SOURCE);
+    cairo_set_source_rgba(g_atlas_cr, 0, 0, 0, 0);
+    cairo_paint(g_atlas_cr);
+    cairo_set_operator(g_atlas_cr, CAIRO_OPERATOR_OVER);
+    /* Initialize hash table with empty sentinel */
+    for (int i = 0; i < ATLAS_BUCKETS; i++) {
+        g_atlas_entries[i].key.codepoint = ATLAS_EMPTY_KEY;
+    }
+    g_atlas_count  = 0;
+    g_atlas_next_x = 0;
+    g_atlas_next_y = 0;
+    g_atlas_row_h  = 0;
+}
+
+static void glyph_atlas_clear(void)
+{
+    if (g_atlas_cr != NULL) {
+        /* Clear to transparent */
+        cairo_set_operator(g_atlas_cr, CAIRO_OPERATOR_SOURCE);
+        cairo_set_source_rgba(g_atlas_cr, 0, 0, 0, 0);
+        cairo_paint(g_atlas_cr);
+        cairo_set_operator(g_atlas_cr, CAIRO_OPERATOR_OVER);
+    }
+    for (int i = 0; i < ATLAS_BUCKETS; i++) {
+        g_atlas_entries[i].key.codepoint = ATLAS_EMPTY_KEY;
+    }
+    g_atlas_count  = 0;
+    g_atlas_next_x = 0;
+    g_atlas_next_y = 0;
+    g_atlas_row_h  = 0;
+}
+
+static uint32_t glyph_key_hash(GlyphKey k)
+{
+    /* FNV-1a */
+    uint32_t h = 2166136261u;
+    h ^= k.codepoint; h *= 16777619u;
+    h ^= k.flags_key; h *= 16777619u;
+    h ^= k.fg_packed;  h *= 16777619u;
+    return h;
+}
+
+static int glyph_key_eq(GlyphKey a, GlyphKey b)
+{
+    return a.codepoint == b.codepoint &&
+           a.flags_key == b.flags_key &&
+           a.fg_packed  == b.fg_packed;
+}
+
+static GlyphKey make_glyph_key(const GridCell *cell)
+{
+    GlyphKey k;
+    uint32_t cp = 0;
+    /* Decode first UTF-8 codepoint from cell->ch */
+    const unsigned char *s = (const unsigned char *)cell->ch;
+    if (s[0] < 0x80)       cp = s[0];
+    else if (s[0] < 0xE0)  cp = ((s[0] & 0x1F) << 6) | (s[1] & 0x3F);
+    else if (s[0] < 0xF0)  cp = ((s[0] & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
+    else                    cp = ((s[0] & 0x07) << 18) | ((s[1] & 0x3F) << 12) | ((s[2] & 0x3F) << 6) | (s[3] & 0x3F);
+    k.codepoint = cp;
+
+    /* flags_key: 3 bits → bold|italic|wide */
+    k.flags_key = (uint16_t)(
+        ((cell->flags & FLAG_BOLD)   ? 1 : 0) |
+        ((cell->flags & FLAG_ITALIC) ? 2 : 0) |
+        ((cell->flags & FLAG_WIDE)   ? 4 : 0)
+    );
+
+    /* fg_packed: 15-bit quantized color */
+    int fr = cell->has_fg ? cell->fg_r : g_fg_r;
+    int fg = cell->has_fg ? cell->fg_g : g_fg_g;
+    int fb = cell->has_fg ? cell->fg_b : g_fg_b;
+    k.fg_packed = (uint16_t)(((fr / 8) << 10) | ((fg / 8) << 5) | (fb / 8));
+
+    return k;
+}
+
+/* Lookup: returns pointer to entry or NULL if not found */
+static GlyphEntry *glyph_atlas_lookup(GlyphKey key)
+{
+    uint32_t idx = glyph_key_hash(key) & (ATLAS_BUCKETS - 1);
+    for (int probe = 0; probe < ATLAS_BUCKETS; probe++) {
+        GlyphEntry *e = &g_atlas_entries[idx];
+        if (e->key.codepoint == ATLAS_EMPTY_KEY) return NULL; /* empty slot = not found */
+        if (glyph_key_eq(e->key, key)) return e;
+        idx = (idx + 1) & (ATLAS_BUCKETS - 1);
+    }
+    return NULL;
+}
+
+/* Render a glyph to the atlas surface, insert into hash table, return entry */
+static GlyphEntry *glyph_atlas_render(GlyphKey key, const GridCell *cell, cairo_t *screen_cr)
+{
+    if (g_atlas_cr == NULL) glyph_atlas_init(screen_cr);
+
+    /* If atlas hash table is full, clear and start over */
+    if (g_atlas_count >= ATLAS_BUCKETS * 3 / 4) {
+        glyph_atlas_clear();
+    }
+
+    int is_wide = (key.flags_key & 4) ? 1 : 0;
+    int glyph_w = is_wide ? (2 * g_cell_width) : g_cell_width;
+    int glyph_h = g_cell_height;
+
+    /* Check if we have room in current row */
+    if (g_atlas_next_x + glyph_w > ATLAS_W) {
+        /* Move to next row */
+        g_atlas_next_x  = 0;
+        g_atlas_next_y += g_atlas_row_h;
+        g_atlas_row_h   = 0;
+    }
+    if (g_atlas_next_y + glyph_h > ATLAS_H) {
+        /* Atlas surface full — clear and restart */
+        glyph_atlas_clear();
+    }
+
+    int ax = g_atlas_next_x;
+    int ay = g_atlas_next_y;
+
+    /* Render glyph to atlas surface using Pango */
+    PangoLayout *lo = pango_cairo_create_layout(g_atlas_cr);
+    pango_layout_set_font_description(lo, select_font(cell->flags));
+    if (!g_ligatures_enabled && g_no_ligature_attrs != NULL) {
+        pango_layout_set_attributes(lo, g_no_ligature_attrs);
+    }
+    if (is_wide) {
+        pango_layout_set_width(lo, glyph_w * PANGO_SCALE);
+        pango_layout_set_alignment(lo, PANGO_ALIGN_CENTER);
+    }
+    pango_layout_set_text(lo, cell->ch, -1);
+
+    /* Set text color */
+    int fr = cell->has_fg ? cell->fg_r : g_fg_r;
+    int fg = cell->has_fg ? cell->fg_g : g_fg_g;
+    int fb = cell->has_fg ? cell->fg_b : g_fg_b;
+    cairo_set_source_rgb(g_atlas_cr, (double)fr / 1000.0, (double)fg / 1000.0, (double)fb / 1000.0);
+
+    cairo_move_to(g_atlas_cr, (double)ax, (double)ay);
+    pango_cairo_show_layout(g_atlas_cr, lo);
+
+    /* Synthetic bold: draw twice offset by 0.5px */
+    if ((cell->flags & FLAG_BOLD) && g_bold_wider) {
+        cairo_move_to(g_atlas_cr, (double)ax + 0.5, (double)ay);
+        pango_cairo_show_layout(g_atlas_cr, lo);
+    }
+
+    g_object_unref(lo);
+
+    /* Insert into hash table */
+    uint32_t idx = glyph_key_hash(key) & (ATLAS_BUCKETS - 1);
+    while (g_atlas_entries[idx].key.codepoint != ATLAS_EMPTY_KEY) {
+        idx = (idx + 1) & (ATLAS_BUCKETS - 1);
+    }
+    g_atlas_entries[idx].key = key;
+    g_atlas_entries[idx].ax  = ax;
+    g_atlas_entries[idx].ay  = ay;
+    g_atlas_entries[idx].gw  = glyph_w;
+    g_atlas_entries[idx].gh  = glyph_h;
+    g_atlas_count++;
+
+    /* Advance packing cursor */
+    g_atlas_next_x += glyph_w;
+    if (glyph_h > g_atlas_row_h) g_atlas_row_h = glyph_h;
+
+    return &g_atlas_entries[idx];
+}
+
+/* Get: lookup or render */
+static GlyphEntry *glyph_atlas_get(GlyphKey key, const GridCell *cell, cairo_t *screen_cr)
+{
+    GlyphEntry *e = glyph_atlas_lookup(key);
+    if (e != NULL) {
+        g_perf_atlas_hits++;
+        return e;
+    }
+    g_perf_atlas_misses++;
+    return glyph_atlas_render(key, cell, screen_cr);
+}
+
+/* Blit a glyph from atlas to screen */
+static void glyph_atlas_blit(GlyphEntry *e, cairo_t *cr, double dest_x, double dest_y)
+{
+    if (g_atlas_surface == NULL) return;
+    cairo_save(cr);
+    cairo_rectangle(cr, dest_x, dest_y, (double)e->gw, (double)e->gh);
+    cairo_clip(cr);
+    cairo_set_source_surface(cr, g_atlas_surface,
+                             dest_x - (double)e->ax,
+                             dest_y - (double)e->ay);
+    cairo_paint(cr);
+    cairo_restore(cr);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.3.6: Damage Tracking Implementation
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static int cell_eq(const GridCell *a, const GridCell *b)
+{
+    return memcmp(a->ch, b->ch, sizeof(a->ch)) == 0 &&
+           a->has_fg == b->has_fg && a->has_bg == b->has_bg &&
+           a->fg_r == b->fg_r && a->fg_g == b->fg_g && a->fg_b == b->fg_b &&
+           a->bg_r == b->bg_r && a->bg_g == b->bg_g && a->bg_b == b->bg_b &&
+           a->flags == b->flags;
+}
+
+static void damage_compute(void)
+{
+    g_perf_dirty_cells = 0;
+    g_perf_total_cells = 0;
+
+    if (g_full_redraw) {
+        /* Mark everything dirty */
+        memset(g_dirty, 1, sizeof(g_dirty));
+        int total = g_grid_rows * g_grid_cols;
+        g_perf_dirty_cells = total;
+        g_perf_total_cells = total;
+        return;
+    }
+
+    /* Dimension change → full redraw */
+    if (g_grid_cols != g_prev_cols || g_grid_rows != g_prev_rows) {
+        g_full_redraw = 1;
+        memset(g_dirty, 1, sizeof(g_dirty));
+        int total = g_grid_rows * g_grid_cols;
+        g_perf_dirty_cells = total;
+        g_perf_total_cells = total;
+        return;
+    }
+
+    /* Differential: compare cell-by-cell */
+    memset(g_dirty, 0, sizeof(g_dirty));
+    int rows = g_grid_rows < NITTY_MAX_ROWS ? g_grid_rows : NITTY_MAX_ROWS;
+    int cols = g_grid_cols < NITTY_MAX_COLS ? g_grid_cols : NITTY_MAX_COLS;
+    g_perf_total_cells = rows * cols;
+
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            if (!cell_eq(&g_grid[r][c], &g_prev_grid[r][c])) {
+                g_dirty[r][c] = 1;
+                g_perf_dirty_cells++;
+            }
+        }
+    }
+
+    /* Mark old and new cursor positions dirty (cursor moves without cell changes) */
+    if (g_prev_cursor_row >= 0 && g_prev_cursor_row < rows &&
+        g_prev_cursor_col >= 0 && g_prev_cursor_col < cols) {
+        if (!g_dirty[g_prev_cursor_row][g_prev_cursor_col]) {
+            g_dirty[g_prev_cursor_row][g_prev_cursor_col] = 1;
+            g_perf_dirty_cells++;
+        }
+    }
+    if (g_cursor_row >= 0 && g_cursor_row < rows &&
+        g_cursor_col >= 0 && g_cursor_col < cols) {
+        if (!g_dirty[g_cursor_row][g_cursor_col]) {
+            g_dirty[g_cursor_row][g_cursor_col] = 1;
+            g_perf_dirty_cells++;
+        }
+    }
+}
+
+static void damage_snapshot(void)
+{
+    memcpy(g_prev_grid, g_grid, sizeof(g_grid));
+    g_prev_cols = g_grid_cols;
+    g_prev_rows = g_grid_rows;
+    g_prev_cursor_col = g_cursor_col;
+    g_prev_cursor_row = g_cursor_row;
+    g_full_redraw = 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.3.6: Performance Stats API
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+int64_t nitty_render_get_atlas_hits(void)   { return g_perf_atlas_hits; }
+int64_t nitty_render_get_atlas_misses(void) { return g_perf_atlas_misses; }
+int64_t nitty_render_get_dirty_cells(void)  { return g_perf_dirty_cells; }
+int64_t nitty_render_get_total_cells(void)  { return g_perf_total_cells; }
+void    nitty_render_reset_perf_stats(void)
+{
+    g_perf_atlas_hits   = 0;
+    g_perf_atlas_misses = 0;
+    g_perf_dirty_cells  = 0;
+    g_perf_total_cells  = 0;
 }
 
 /* ── Forward declarations ──────────────────────────────────────────────── */
@@ -483,6 +824,9 @@ void nitty_render_clear_grid(void)
     memset(g_grid, 0, sizeof(g_grid));
     g_grid_cols = 0;
     g_grid_rows = 0;
+    /* v0.3.6: don't force full_redraw here — let damage_compute() diff
+       the cleared grid against the previous frame's snapshot.
+       The cells are now all-zero which differs from prev if any were set. */
 }
 
 /* ── Render the grid ──────────────────────────────────────────────────── */
@@ -492,61 +836,137 @@ void nitty_render_frame(void *cr_ptr, int width, int height)
     cairo_t *cr = (cairo_t *)cr_ptr;
     if (cr == NULL) return;
 
-    /* Measure font if needed */
+    /* Measure font if needed — also invalidates atlas on font change */
+    int font_was_changed = g_font_changed;
     measure_font(cr);
     if (g_cell_width <= 0 || g_cell_height <= 0) return;
 
+    if (font_was_changed) {
+        glyph_atlas_clear();
+        g_full_redraw = 1;
+    }
+
+    /* Initialize atlas surface if needed */
+    if (g_atlas_surface == NULL) {
+        glyph_atlas_init(cr);
+    }
+
     /* Reset blink-cell tracker for this frame */
     g_has_blink_cells = 0;
-
-    /* 1. Fill entire background */
-    cairo_set_source_rgb(cr,
-        (double)g_bg_r / 1000.0,
-        (double)g_bg_g / 1000.0,
-        (double)g_bg_b / 1000.0
-    );
-    cairo_paint(cr);
 
     /* Calculate visible grid dimensions */
     int visible_cols = width / g_cell_width;
     int visible_rows = height / g_cell_height;
     if (visible_cols > g_grid_cols) visible_cols = g_grid_cols;
     if (visible_rows > g_grid_rows) visible_rows = g_grid_rows;
-    if (visible_cols <= 0 || visible_rows <= 0) return;
 
-    /* 2. Draw cell backgrounds (only cells with custom bg) */
+    /* v0.3.6: Compute damage (diff current grid against previous snapshot) */
+    damage_compute();
+
+    int do_full = g_full_redraw;
+
+    /* 1. Fill entire background (only on full redraw) */
+    if (do_full) {
+        cairo_set_source_rgb(cr,
+            (double)g_bg_r / 1000.0,
+            (double)g_bg_g / 1000.0,
+            (double)g_bg_b / 1000.0
+        );
+        cairo_paint(cr);
+    }
+
+    if (visible_cols <= 0 || visible_rows <= 0) {
+        damage_snapshot();
+        return;
+    }
+
+    /* 2. Draw cell backgrounds — v0.3.6: batched + damage-aware */
     for (int r = 0; r < visible_rows; r++) {
-        for (int c = 0; c < visible_cols; c++) {
-            GridCell *cell = &g_grid[r][c];
-            if (cell->has_bg) {
+        /* For partial redraw: clear dirty cells with default bg first */
+        if (!do_full) {
+            for (int c = 0; c < visible_cols; c++) {
+                if (!g_dirty[r][c]) continue;
+                /* Clear this cell's area with default background */
                 cairo_set_source_rgb(cr,
-                    (double)cell->bg_r / 1000.0,
-                    (double)cell->bg_g / 1000.0,
-                    (double)cell->bg_b / 1000.0
+                    (double)g_bg_r / 1000.0,
+                    (double)g_bg_g / 1000.0,
+                    (double)g_bg_b / 1000.0
                 );
-                /* v0.3.5: wide cells span 2 columns */
-                int cell_span = (cell->flags & FLAG_WIDE) ? 2 : 1;
                 cairo_rectangle(cr,
                     (double)(c * g_cell_width),
                     (double)(r * g_cell_height),
-                    (double)(cell_span * g_cell_width),
+                    (double)g_cell_width,
                     (double)g_cell_height
                 );
                 cairo_fill(cr);
             }
         }
+
+        /* Background batching: merge adjacent cells with same bg color */
+        int run_start = -1;
+        int run_bg_r = 0, run_bg_g = 0, run_bg_b = 0;
+
+        for (int c = 0; c <= visible_cols; c++) {
+            int extend_run = 0;
+
+            if (c < visible_cols) {
+                GridCell *cell = &g_grid[r][c];
+                /* Only process dirty cells (or all cells on full redraw) */
+                if ((do_full || g_dirty[r][c]) && cell->has_bg) {
+                    if (run_start >= 0 &&
+                        cell->bg_r == run_bg_r &&
+                        cell->bg_g == run_bg_g &&
+                        cell->bg_b == run_bg_b) {
+                        extend_run = 1;
+                    } else {
+                        /* Flush previous run if any */
+                        if (run_start >= 0) {
+                            cairo_set_source_rgb(cr,
+                                (double)run_bg_r / 1000.0,
+                                (double)run_bg_g / 1000.0,
+                                (double)run_bg_b / 1000.0);
+                            cairo_rectangle(cr,
+                                (double)(run_start * g_cell_width),
+                                (double)(r * g_cell_height),
+                                (double)((c - run_start) * g_cell_width),
+                                (double)g_cell_height);
+                            cairo_fill(cr);
+                        }
+                        /* Start new run */
+                        run_start = c;
+                        run_bg_r = cell->bg_r;
+                        run_bg_g = cell->bg_g;
+                        run_bg_b = cell->bg_b;
+                        extend_run = 1;
+                    }
+                }
+            }
+
+            if (!extend_run) {
+                /* Flush run */
+                if (run_start >= 0) {
+                    cairo_set_source_rgb(cr,
+                        (double)run_bg_r / 1000.0,
+                        (double)run_bg_g / 1000.0,
+                        (double)run_bg_b / 1000.0);
+                    cairo_rectangle(cr,
+                        (double)(run_start * g_cell_width),
+                        (double)(r * g_cell_height),
+                        (double)((c - run_start) * g_cell_width),
+                        (double)g_cell_height);
+                    cairo_fill(cr);
+                    run_start = -1;
+                }
+            }
+        }
     }
 
-    /* 3. Draw text characters */
-    PangoLayout *layout = pango_cairo_create_layout(cr);
-
-    /* v0.3.5: Apply ligature suppression attribute if needed */
-    if (!g_ligatures_enabled && g_no_ligature_attrs != NULL) {
-        pango_layout_set_attributes(layout, g_no_ligature_attrs);
-    }
-
+    /* 3. Draw text characters — v0.3.6: atlas-based + damage-aware */
     for (int r = 0; r < visible_rows; r++) {
         for (int c = 0; c < visible_cols; c++) {
+            /* Skip clean cells on partial redraw */
+            if (!do_full && !g_dirty[r][c]) continue;
+
             GridCell *cell = &g_grid[r][c];
             int flags = cell->flags;
 
@@ -555,7 +975,7 @@ void nitty_render_frame(void *cr_ptr, int width, int height)
                 g_has_blink_cells = 1;
             }
 
-            /* v0.3.5: Skip continuation cells — drawn as part of WIDE cell */
+            /* Skip continuation cells — drawn as part of WIDE cell */
             if (flags & FLAG_CONT) continue;
 
             /* Skip empty cells */
@@ -564,70 +984,31 @@ void nitty_render_frame(void *cr_ptr, int width, int height)
             /* Suppress blinking text when blink phase is hidden */
             if ((flags & (FLAG_BLINK | FLAG_RAPID_BLINK)) && !g_blink_visible) continue;
 
-            /* Set font variant (bold/italic) */
-            PangoFontDescription *font = select_font(flags);
-            pango_layout_set_font_description(layout, font);
-
-            /* v0.3.5: Wide cells span 2 cell widths */
-            if (flags & FLAG_WIDE) {
-                pango_layout_set_width(layout, 2 * g_cell_width * PANGO_SCALE);
-                pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
-            } else {
-                pango_layout_set_width(layout, -1);
-                pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
-            }
-
-            /* Set text color */
-            double fr, fg, fb;
-            if (cell->has_fg) {
-                fr = (double)cell->fg_r / 1000.0;
-                fg = (double)cell->fg_g / 1000.0;
-                fb = (double)cell->fg_b / 1000.0;
-            } else {
-                fr = (double)g_fg_r / 1000.0;
-                fg = (double)g_fg_g / 1000.0;
-                fb = (double)g_fg_b / 1000.0;
-            }
-            cairo_set_source_rgb(cr, fr, fg, fb);
-
-            double px = (double)(c * g_cell_width);
-            double py = (double)(r * g_cell_height);
-
-            if ((flags & FLAG_BOLD) && g_bold_wider) {
-                /* Synthetic bold: draw twice at x and x+0.5 */
-                cairo_move_to(cr, px, py);
-                pango_layout_set_text(layout, cell->ch, -1);
-                pango_cairo_show_layout(cr, layout);
-                cairo_move_to(cr, px + 0.5, py);
-                pango_cairo_show_layout(cr, layout);
-            } else {
-                cairo_move_to(cr, px, py);
-                pango_layout_set_text(layout, cell->ch, -1);
-                pango_cairo_show_layout(cr, layout);
-            }
-
-            /* Reset wide layout settings */
-            if (flags & FLAG_WIDE) {
-                pango_layout_set_width(layout, -1);
-                pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+            /* v0.3.6: Atlas-based rendering */
+            GlyphKey key = make_glyph_key(cell);
+            GlyphEntry *entry = glyph_atlas_get(key, cell, cr);
+            if (entry != NULL) {
+                double px = (double)(c * g_cell_width);
+                double py = (double)(r * g_cell_height);
+                glyph_atlas_blit(entry, cr, px, py);
             }
         }
     }
-    g_object_unref(layout);
 
     /* 4. Draw text decorations (underline, strikethrough, overline) */
     for (int r = 0; r < visible_rows; r++) {
         for (int c = 0; c < visible_cols; c++) {
+            /* Skip clean cells on partial redraw */
+            if (!do_full && !g_dirty[r][c]) continue;
+
             GridCell *cell = &g_grid[r][c];
             int flags = cell->flags;
 
             if (!(flags & (FLAG_UNDERLINE | FLAG_STRIKE | FLAG_OVERLINE))) continue;
-            /* v0.3.5: skip cont cells — decoration drawn with WIDE cell */
             if (flags & FLAG_CONT) continue;
 
             double px = (double)(c * g_cell_width);
             double py = (double)(r * g_cell_height);
-            /* v0.3.5: decoration spans 2 cells for wide chars */
             int cell_span = (flags & FLAG_WIDE) ? 2 : 1;
             double cw = (double)(cell_span * g_cell_width);
             double ch = (double)g_cell_height;
@@ -644,19 +1025,14 @@ void nitty_render_frame(void *cr_ptr, int width, int height)
                 fb = (double)g_fg_b / 1000.0;
             }
 
-            /* Underline */
             if (flags & FLAG_UNDERLINE) {
                 int ul_style = (flags & FLAG_UL_STYLE_MASK) >> FLAG_UL_STYLE_SHIFT;
                 draw_underline(cr, px, py, cw, g_cell_height, ul_style, fr, fg, fb);
             }
-
-            /* Strikethrough: horizontal line at vertical center */
             if (flags & FLAG_STRIKE) {
                 cairo_set_source_rgb(cr, fr, fg, fb);
                 draw_hline(cr, px, py + ch / 2.0, cw, 1.0);
             }
-
-            /* Overline: 1px from top */
             if (flags & FLAG_OVERLINE) {
                 cairo_set_source_rgb(cr, fr, fg, fb);
                 draw_hline(cr, px, py + 1.0, cw, 1.0);
@@ -672,6 +1048,9 @@ void nitty_render_frame(void *cr_ptr, int width, int height)
 
     /* 6. Draw scrollbar overlay (v0.3.4) */
     draw_scrollbar(cr, width, height);
+
+    /* v0.3.6: Snapshot grid for next frame's damage computation */
+    damage_snapshot();
 }
 
 /* v0.3.3: Cursor drawing — called at end of nitty_render_frame() */

@@ -1,0 +1,75 @@
+// tests/test_damage_tracker.npk — Damage tracking tests (v0.3.6)
+//
+// Tests the damage tracking system by verifying the C-side perf stats API.
+// The damage tracker works by comparing the current grid against a previous
+// snapshot during nitty_render_frame(). We verify API correctness here.
+
+use "../src/gui/gtk4_ffi.npk".*;
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+func:run_tests = NIL() {
+    // T01: Initial dirty cells = 0
+    drop(check("T01: initial dirty cells",   0i64, nitty_render_get_dirty_cells()));
+
+    // T02: Initial total cells = 0
+    drop(check("T02: initial total cells",   0i64, nitty_render_get_total_cells()));
+
+    // T03: Reset clears dirty/total
+    nitty_render_reset_perf_stats();
+    drop(check("T03a: reset dirty cells",    0i64, nitty_render_get_dirty_cells()));
+    drop(check("T03b: reset total cells",    0i64, nitty_render_get_total_cells()));
+
+    // T04: Set cell doesn't change damage stats (no frame yet)
+    nitty_render_set_cell_cp(0i64, 0i64, 0x41i64);
+    nitty_render_set_cell_cp(1i64, 0i64, 0x42i64);
+    drop(check("T04: no damage before frame", 0i64, nitty_render_get_dirty_cells()));
+
+    // T05: Atlas hits/misses are independent
+    drop(check("T05a: atlas hits independent",   0i64, nitty_render_get_atlas_hits()));
+    drop(check("T05b: atlas misses independent", 0i64, nitty_render_get_atlas_misses()));
+
+    // T06: Set cell flags doesn't crash
+    nitty_render_set_cell_flags(0i64, 0i64, 1i64);
+    drop(check("T06: flags no damage before frame", 0i64, nitty_render_get_dirty_cells()));
+
+    // T07: Set cell fg doesn't crash
+    nitty_render_set_cell_fg(0i64, 0i64, 1000i64, 0i64, 0i64);
+    drop(check("T07: fg color no damage before frame", 0i64, nitty_render_get_dirty_cells()));
+
+    // T08: Set cell bg doesn't crash
+    nitty_render_set_cell_bg(0i64, 0i64, 0i64, 0i64, 500i64);
+    drop(check("T08: bg color no damage before frame", 0i64, nitty_render_get_dirty_cells()));
+
+    // T09: Clear grid and verify
+    nitty_render_clear_grid();
+    drop(check("T09: clear no damage before frame", 0i64, nitty_render_get_dirty_cells()));
+
+    // T10: Consecutive resets stable
+    nitty_render_reset_perf_stats();
+    nitty_render_reset_perf_stats();
+    nitty_render_reset_perf_stats();
+    drop(check("T10a: multi-reset dirty", 0i64, nitty_render_get_dirty_cells()));
+    drop(check("T10b: multi-reset total", 0i64, nitty_render_get_total_cells()));
+
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    drop(run_tests());
+    if (g_fail > 0i64) {
+        exit 1i32;
+    }
+    print("All damage tracker tests passed.");
+    exit 0i32;
+};
