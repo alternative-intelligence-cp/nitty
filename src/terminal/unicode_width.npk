@@ -1,0 +1,174 @@
+// src/terminal/unicode_width.npk — Unicode East Asian Width classification (v0.3.5)
+//
+// Returns the display width of a Unicode codepoint:
+//   0 — zero-width (combining characters, variation selectors, ZWJ)
+//   1 — normal width (ASCII, Latin, most alphabetic scripts)
+//   2 — double-width (CJK ideographs, Hangul, fullwidth forms, most emoji)
+//
+// Based on Unicode UAX #11 (East Asian Width) with pragmatic emoji additions.
+// Implementation uses compact sorted range tables with sequential scan.
+//
+// Combining characters (width 0) are currently treated as width 1 by ts_print()
+// because multi-codepoint cells are not yet implemented. See KNOWN_ISSUES.
+
+// ═══════════════════════════════════════════════════════════════════════
+// Range table storage
+// ═══════════════════════════════════════════════════════════════════════
+
+// 28 width-2 ranges (each has a start and end)
+pub func:UW_W2_COUNT = int64() { pass(28i64); };
+
+int64[28]:g_w2_start;
+int64[28]:g_w2_end;
+
+// 6 width-0 ranges
+pub func:UW_W0_COUNT = int64() { pass(6i64); };
+
+int64[6]:g_w0_start;
+int64[6]:g_w0_end;
+
+// Initialization guard
+int64:g_uw_initialized = 0i64;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Table initialization
+// ═══════════════════════════════════════════════════════════════════════
+
+func:unicode_width_init = NIL() {
+    if (g_uw_initialized != 0i64) { pass(NIL); }
+    g_uw_initialized = 1i64;
+
+    // Width-2 start ranges
+    g_w2_start[0i64]  = 0x1100i64;   // Hangul Jamo
+    g_w2_start[1i64]  = 0x231Ai64;   // Watch, Hourglass
+    g_w2_start[2i64]  = 0x2329i64;   // Angle brackets
+    g_w2_start[3i64]  = 0x23E9i64;   // Media controls
+    g_w2_start[4i64]  = 0x25AAi64;   // Geometric shapes
+    g_w2_start[5i64]  = 0x25FBi64;   // White squares
+    g_w2_start[6i64]  = 0x2614i64;   // Umbrella
+    g_w2_start[7i64]  = 0x2648i64;   // Aries
+    g_w2_start[8i64]  = 0x267Fi64;   // Wheelchair
+    g_w2_start[9i64]  = 0x2693i64;   // Anchor
+    g_w2_start[10i64] = 0x26AAi64;   // Medium circle
+    g_w2_start[11i64] = 0x26BDi64;   // Soccer ball
+    g_w2_start[12i64] = 0x26C4i64;   // Snowman
+    g_w2_start[13i64] = 0x26CEi64;   // Ophiuchus
+    g_w2_start[14i64] = 0x26D4i64;   // No entry
+    g_w2_start[15i64] = 0x26EAi64;   // Church
+    g_w2_start[16i64] = 0x26F2i64;   // Fountain
+    g_w2_start[17i64] = 0x2702i64;   // Scissors
+    g_w2_start[18i64] = 0x2705i64;   // Check mark
+    g_w2_start[19i64] = 0x2728i64;   // Sparkles
+    g_w2_start[20i64] = 0x274Ci64;   // Cross mark
+    g_w2_start[21i64] = 0x2B50i64;   // Star
+    g_w2_start[22i64] = 0x2B55i64;   // Heavy circle
+    g_w2_start[23i64] = 0x2E80i64;   // CJK Radicals Supplement
+    g_w2_start[24i64] = 0xAC00i64;   // Hangul Syllables
+    g_w2_start[25i64] = 0xF900i64;   // CJK Compatibility Ideographs
+    g_w2_start[26i64] = 0xFE10i64;   // Fullwidth/vertical forms
+    g_w2_start[27i64] = 0x1F004i64;  // Emoji block
+
+    // Width-2 end ranges (inclusive)
+    g_w2_end[0i64]  = 0x115Fi64;    // Hangul Jamo end
+    g_w2_end[1i64]  = 0x231Bi64;    // Hourglass
+    g_w2_end[2i64]  = 0x232Ai64;    // Angle brackets
+    g_w2_end[3i64]  = 0x23F3i64;    // Hourglass not done
+    g_w2_end[4i64]  = 0x25ABi64;    // Geometric shapes
+    g_w2_end[5i64]  = 0x25FEi64;    // White squares
+    g_w2_end[6i64]  = 0x2615i64;    // Hot beverage
+    g_w2_end[7i64]  = 0x2653i64;    // Pisces
+    g_w2_end[8i64]  = 0x267Fi64;    // Wheelchair
+    g_w2_end[9i64]  = 0x2693i64;    // Anchor
+    g_w2_end[10i64] = 0x26AAi64;    // Medium white/black circle
+    g_w2_end[11i64] = 0x26BEi64;    // Baseball
+    g_w2_end[12i64] = 0x26C5i64;    // Sun behind cloud
+    g_w2_end[13i64] = 0x26CEi64;    // Ophiuchus
+    g_w2_end[14i64] = 0x26D4i64;    // No entry
+    g_w2_end[15i64] = 0x26EAi64;    // Church
+    g_w2_end[16i64] = 0x26F3i64;    // Flag in hole
+    g_w2_end[17i64] = 0x2704i64;    // Scissors end
+    g_w2_end[18i64] = 0x2707i64;    // Tape end
+    g_w2_end[19i64] = 0x2728i64;    // Sparkles
+    g_w2_end[20i64] = 0x274Ci64;    // Cross mark
+    g_w2_end[21i64] = 0x2B50i64;    // Star
+    g_w2_end[22i64] = 0x2B55i64;    // Heavy circle
+    g_w2_end[23i64] = 0xA4CFi64;    // CJK/Kana/Hangul through CJK Ext-A
+    g_w2_end[24i64] = 0xD7A3i64;    // Hangul Syllables end
+    g_w2_end[25i64] = 0xFAFFi64;    // CJK Compat Ideographs end
+    g_w2_end[26i64] = 0xFF60i64;    // Fullwidth end
+    g_w2_end[27i64] = 0x1FAFFi64;   // Emoji/symbols end
+
+    // Width-0 start ranges (combining marks)
+    g_w0_start[0i64] = 0x0300i64;   // Combining Diacritical Marks
+    g_w0_start[1i64] = 0x0483i64;   // Combining Cyrillic
+    g_w0_start[2i64] = 0x0591i64;   // Hebrew combining
+    g_w0_start[3i64] = 0x20D0i64;   // Combining Diacritical for Symbols
+    g_w0_start[4i64] = 0xFE20i64;   // Combining Half Marks
+    g_w0_start[5i64] = 0xE0100i64;  // Variation Selectors Supplement
+
+    // Width-0 end ranges (inclusive)
+    g_w0_end[0i64] = 0x036Fi64;     // Combining Diacritical Marks end
+    g_w0_end[1i64] = 0x0489i64;     // Combining Cyrillic end
+    g_w0_end[2i64] = 0x05BDi64;     // Hebrew combining end
+    g_w0_end[3i64] = 0x20FFi64;     // Combining Diacritical for Symbols end
+    g_w0_end[4i64] = 0xFE2Fi64;     // Combining Half Marks end
+    g_w0_end[5i64] = 0xE01EFi64;    // Variation Selectors Supplement end
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Public API
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Return display width of a Unicode codepoint: 0, 1, or 2.
+/// Width 0: combining/zero-width characters.
+/// Width 1: ASCII, Latin, most scripts.
+/// Width 2: CJK, Hangul, fullwidth forms, emoji.
+pub func:unicode_width = int64(int64:cp) {
+    drop(unicode_width_init());
+
+    // Null and C0 controls: width 0 (never printed visibly)
+    if (cp < 0x20i64) { pass(0i64); }
+
+    // ASCII fast path: U+0020..U+007E → width 1
+    if (cp <= 0x7Ei64) { pass(1i64); }
+
+    // Latin-1 Supplement: U+007F..U+00FF → width 1
+    if (cp <= 0x00FFi64) { pass(1i64); }
+
+    // Check width-0 ranges (combining characters)
+    int64:w0_count = raw UW_W0_COUNT();
+    int64:i0 = 0i64;
+    int64:w0_found = 0i64;
+    while (i0 < w0_count) {
+        if (w0_found == 0i64) {
+            if (cp >= g_w0_start[i0]) {
+                if (cp <= g_w0_end[i0]) {
+                    w0_found = 1i64;
+                }
+            }
+        }
+        i0 = i0 + 1i64;
+    }
+    if (w0_found != 0i64) { pass(0i64); }
+
+    // Check width-2 ranges (double-width)
+    int64:w2_count = raw UW_W2_COUNT();
+    int64:i2 = 0i64;
+    int64:w2_found = 0i64;
+    while (i2 < w2_count) {
+        if (w2_found == 0i64) {
+            if (cp >= g_w2_start[i2]) {
+                if (cp <= g_w2_end[i2]) {
+                    w2_found = 1i64;
+                }
+            }
+        }
+        i2 = i2 + 1i64;
+    }
+    if (w2_found != 0i64) { pass(2i64); }
+
+    // Default: width 1
+    pass(1i64);
+};

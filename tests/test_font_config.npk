@@ -1,0 +1,85 @@
+// tests/test_font_config.npk — FontConfig module tests (v0.3.5)
+//
+// Tests the font_config.npk getters/setters.
+// Note: font_config_apply() calls into the C shim, so it is NOT tested here.
+// Run with: .nitpick_make/build/test_font_config
+
+use "../src/gui/font_config.npk".*;
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check_int = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+func:check_str = NIL(string:name, string:expected, string:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+func:run_tests = NIL() {
+    // ── Default values ──────────────────────────────────────────────────
+    drop(check_str("T01: default family",         "Monospace", raw font_config_get_family()));
+    drop(check_int("T02: default size",           12i64,       raw font_config_get_size()));
+    drop(check_int("T03: default line_height",    1000i64,     raw font_config_get_line_height()));
+    drop(check_int("T04: default letter_spacing", 0i64,        raw font_config_get_letter_spacing()));
+    drop(check_int("T05: default ligatures",      0i64,        raw font_config_get_ligatures()));
+
+    // ── Setters ─────────────────────────────────────────────────────────
+    drop(font_config_set_family("JetBrains Mono"));
+    drop(check_str("T06: set family",             "JetBrains Mono", raw font_config_get_family()));
+
+    drop(font_config_set_size(16i64));
+    drop(check_int("T07: set size",               16i64, raw font_config_get_size()));
+
+    drop(font_config_set_line_height(1200i64));
+    drop(check_int("T08: set line_height",        1200i64, raw font_config_get_line_height()));
+
+    drop(font_config_set_letter_spacing(2i64));
+    drop(check_int("T09: set letter_spacing",     2i64, raw font_config_get_letter_spacing()));
+
+    drop(font_config_set_ligatures(1i64));
+    drop(check_int("T10: set ligatures on",       1i64, raw font_config_get_ligatures()));
+
+    drop(font_config_set_ligatures(0i64));
+    drop(check_int("T11: set ligatures off",      0i64, raw font_config_get_ligatures()));
+
+    // ── Fallback ────────────────────────────────────────────────────────
+    drop(font_config_set_fallback("Noto Sans CJK, Noto Color Emoji"));
+    drop(check_str("T12: set fallback",
+        "Noto Sans CJK, Noto Color Emoji",
+        raw font_config_get_fallback()));
+
+    // ── Reset to defaults and verify ────────────────────────────────────
+    drop(font_config_set_family("Monospace"));
+    drop(font_config_set_size(12i64));
+    drop(font_config_set_line_height(1000i64));
+    drop(font_config_set_letter_spacing(0i64));
+    drop(font_config_set_ligatures(0i64));
+
+    drop(check_str("T13: reset family",           "Monospace", raw font_config_get_family()));
+    drop(check_int("T14: reset size",             12i64,       raw font_config_get_size()));
+    drop(check_int("T15: reset line_height",      1000i64,     raw font_config_get_line_height()));
+    drop(check_int("T16: reset letter_spacing",   0i64,        raw font_config_get_letter_spacing()));
+    drop(check_int("T17: reset ligatures",        0i64,        raw font_config_get_ligatures()));
+
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    drop(run_tests());
+    if (g_fail > 0i64) {
+        exit 1i32;
+    }
+    exit 0i32;
+};

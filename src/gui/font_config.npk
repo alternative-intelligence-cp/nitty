@@ -1,0 +1,106 @@
+// src/gui/font_config.npk — Font configuration module (v0.3.5)
+//
+// Stores and manages all terminal font settings:
+//   - Primary font family and size
+//   - Line height multiplier (×1000, so 1000 = 1.0×)
+//   - Letter spacing in pixels
+//   - Ligature toggle (0=disabled default, 1=enabled)
+//   - Fallback font families (comma-separated for Pango)
+//
+// The canonical Pango description is assembled in font_config_apply()
+// which writes to nitty_render_set_font() and the auxiliary setters.
+//
+// Usage:
+//   drop(font_config_set_family("JetBrains Mono"));
+//   drop(font_config_set_size(14i64));
+//   drop(font_config_apply());
+
+use "gtk4_ffi.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Module state
+// ═══════════════════════════════════════════════════════════════════════
+
+string:g_fc_family         = "Monospace";
+int64:g_fc_size            = 12i64;
+int64:g_fc_line_height     = 1000i64;  // 1000 = 1.0×
+int64:g_fc_letter_spacing  = 0i64;     // pixels
+int64:g_fc_ligatures       = 0i64;     // 0=disabled (default)
+string:g_fc_fallback       = "Noto Color Emoji, Symbols Nerd Font Mono";
+
+// ═══════════════════════════════════════════════════════════════════════
+// Setters
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Set the primary font family (e.g. "JetBrains Mono", "Monospace").
+pub func:font_config_set_family = NIL(string:family) {
+    g_fc_family = family;
+    pass(NIL);
+};
+
+/// Set the font size in points (e.g. 12, 14, 16).
+pub func:font_config_set_size = NIL(int64:size) {
+    g_fc_size = size;
+    pass(NIL);
+};
+
+/// Set line height multiplier (×1000). 1000=1.0×, 1200=1.2×. Clamped [800,3000].
+pub func:font_config_set_line_height = NIL(int64:lh) {
+    g_fc_line_height = lh;
+    pass(NIL);
+};
+
+/// Set additional horizontal letter spacing in pixels. 0=none (default).
+pub func:font_config_set_letter_spacing = NIL(int64:px) {
+    g_fc_letter_spacing = px;
+    pass(NIL);
+};
+
+/// Set ligature rendering: 0=disabled (default), 1=enabled.
+pub func:font_config_set_ligatures = NIL(int64:enabled) {
+    g_fc_ligatures = enabled;
+    pass(NIL);
+};
+
+/// Set fallback font families (comma-separated Pango string).
+/// Example: "Noto Color Emoji, Symbols Nerd Font Mono, Noto Sans CJK SC"
+pub func:font_config_set_fallback = NIL(string:fallback) {
+    g_fc_fallback = fallback;
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Getters
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:font_config_get_family        = string()  { pass(g_fc_family); };
+pub func:font_config_get_size          = int64()   { pass(g_fc_size); };
+pub func:font_config_get_line_height   = int64()   { pass(g_fc_line_height); };
+pub func:font_config_get_letter_spacing = int64()  { pass(g_fc_letter_spacing); };
+pub func:font_config_get_ligatures     = int64()   { pass(g_fc_ligatures); };
+pub func:font_config_get_fallback      = string()  { pass(g_fc_fallback); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Apply
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Build the Pango font description string and push all settings to the C renderer.
+///
+/// Pango description format: "Family, Fallback1, Fallback2 SIZE"
+/// Example: "JetBrains Mono, Noto Color Emoji, Symbols Nerd Font Mono 14"
+///
+/// Must be called after any set_* call to take effect.
+pub func:font_config_apply = NIL() {
+    // Construct: "Family, fallback SIZE"
+    // Pango parses comma-separated fallbacks: "JetBrains Mono, Noto Color Emoji 14"
+    string:size_str = string_from_int(g_fc_size);
+    string:desc = g_fc_family + ", " + g_fc_fallback + " " + size_str;
+    nitty_render_set_font(desc);
+
+    // Apply auxiliary settings
+    nitty_render_set_line_height(g_fc_line_height);
+    nitty_render_set_letter_spacing(g_fc_letter_spacing);
+    nitty_render_set_ligatures(g_fc_ligatures);
+
+    pass(NIL);
+};

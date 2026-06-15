@@ -180,6 +180,30 @@ void nitty_render_set_cursor_blink_phase(int64_t phase);
  */
 void nitty_render_set_scroll_info(int64_t offset, int64_t total, int64_t visible);
 
+/* ── v0.3.5: Font system ──────────────────────────────────────────────── */
+
+/**
+ * Set the line height multiplier (fixed-point × 1000).
+ * 1000 = 1.0× (default — cell height equals font height).
+ * 1200 = 1.2× (20% extra vertical spacing).
+ * Triggers a font re-measurement on the next frame.
+ */
+void nitty_render_set_line_height(int64_t lh_x1000);
+
+/**
+ * Set additional horizontal letter spacing in pixels (default: 0).
+ * Applied in addition to the natural character advance.
+ * Triggers a font re-measurement on the next frame.
+ */
+void nitty_render_set_letter_spacing(int64_t px);
+
+/**
+ * Enable or disable Pango font ligatures (default: disabled).
+ * @param enabled  1 = allow ligatures (default Pango/HarfBuzz behavior).
+ *                 0 = disable liga, calt, dlig features via font-features attr.
+ */
+void nitty_render_set_ligatures(int64_t enabled);
+
 #ifdef __cplusplus
 }
 #endif

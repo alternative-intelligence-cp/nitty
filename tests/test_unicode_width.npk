@@ -1,0 +1,81 @@
+// tests/test_unicode_width.npk — Unicode width classification tests (v0.3.5)
+//
+// Tests the unicode_width() function from unicode_width.npk.
+// Run with: .nitpick_make/build/test_unicode_width
+
+use "../src/terminal/unicode_width.npk".*;
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+func:run_tests = NIL() {
+    // ── ASCII: all width 1 ──────────────────────────────────────────────
+    drop(check("T01: space (U+0020)",   1i64, raw unicode_width(0x20i64)));
+    drop(check("T02: 'A' (U+0041)",     1i64, raw unicode_width(0x41i64)));
+    drop(check("T03: 'z' (U+007A)",     1i64, raw unicode_width(0x7Ai64)));
+    drop(check("T04: '~' (U+007E)",     1i64, raw unicode_width(0x7Ei64)));
+
+    // ── Latin-1: width 1 ───────────────────────────────────────────────
+    drop(check("T05: U+00C0 (À)",       1i64, raw unicode_width(0xC0i64)));
+    drop(check("T06: U+00FF (ÿ)",       1i64, raw unicode_width(0xFFi64)));
+
+    // ── CJK: width 2 ───────────────────────────────────────────────────
+    drop(check("T07: U+4E2D (中)",      2i64, raw unicode_width(0x4E2Di64)));
+    drop(check("T08: U+4E00 (一)",      2i64, raw unicode_width(0x4E00i64)));
+    drop(check("T09: U+9FFF (end CJK)", 2i64, raw unicode_width(0x9FFFi64)));
+    drop(check("T10: U+6587 (文)",      2i64, raw unicode_width(0x6587i64)));
+
+    // ── Hangul Syllables: width 2 ──────────────────────────────────────
+    drop(check("T11: U+AC00 (가)",      2i64, raw unicode_width(0xAC00i64)));
+    drop(check("T12: U+D7A3 (힣)",      2i64, raw unicode_width(0xD7A3i64)));
+
+    // ── Fullwidth Latin: width 2 ───────────────────────────────────────
+    drop(check("T13: U+FF21 (Ａ)",      2i64, raw unicode_width(0xFF21i64)));
+    drop(check("T14: U+FF41 (ａ)",      2i64, raw unicode_width(0xFF41i64)));
+
+    // ── Emoji: width 2 ─────────────────────────────────────────────────
+    drop(check("T15: U+1F600 (😀)",     2i64, raw unicode_width(0x1F600i64)));
+    drop(check("T16: U+1F680 (🚀)",     2i64, raw unicode_width(0x1F680i64)));
+    drop(check("T17: U+1F4A9 (💩)",     2i64, raw unicode_width(0x1F4A9i64)));
+
+    // ── Combining diacritical marks: width 0 ───────────────────────────
+    drop(check("T18: U+0300 (combining grave)",  0i64, raw unicode_width(0x0300i64)));
+    drop(check("T19: U+0301 (combining acute)",  0i64, raw unicode_width(0x0301i64)));
+    drop(check("T20: U+036F (combining end)",    0i64, raw unicode_width(0x036Fi64)));
+
+    // ── CJK Compatibility Ideographs: width 2 ─────────────────────────
+    drop(check("T21: U+F900 (CJK compat)",      2i64, raw unicode_width(0xF900i64)));
+    drop(check("T22: U+FAFF (CJK compat end)",  2i64, raw unicode_width(0xFAFFi64)));
+
+    // ── Hangul Jamo (half-jamo) area: width 2 ─────────────────────────
+    drop(check("T23: U+1100 (Hangul Jamo)",     2i64, raw unicode_width(0x1100i64)));
+    drop(check("T24: U+115F (Hangul Jamo end)", 2i64, raw unicode_width(0x115Fi64)));
+
+    // ── Normal scripts: width 1 ────────────────────────────────────────
+    drop(check("T25: U+0100 (Ā, Latin Ext-A)",  1i64, raw unicode_width(0x0100i64)));
+    drop(check("T26: U+0391 (Α, Greek)",        1i64, raw unicode_width(0x0391i64)));
+    drop(check("T27: U+0410 (А, Cyrillic)",     1i64, raw unicode_width(0x0410i64)));
+    drop(check("T28: U+05D0 (א, Hebrew)",       1i64, raw unicode_width(0x05D0i64)));
+
+    // ── Control chars below 0x20: width 0 ─────────────────────────────
+    drop(check("T29: NUL (U+0000)",    0i64, raw unicode_width(0x0000i64)));
+    drop(check("T30: ESC (U+001B)",    0i64, raw unicode_width(0x001Bi64)));
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    drop(run_tests());
+    if (g_fail > 0i64) {
+        exit 1i32;
+    }
+    exit 0i32;
+};

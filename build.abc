@@ -283,3 +283,19 @@ deps = ["gtk4_shim", "pty_shim"]
 flags = []
 link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
 link_paths = [".nitpick_make/build"]
+
+[target.test_unicode_width]
+type = "binary"
+sources = ["tests/test_unicode_width.npk"]
+deps = ["gtk4_shim", "pty_shim"]
+flags = []
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_paths = [".nitpick_make/build"]
+
+[target.test_font_config]
+type = "binary"
+sources = ["tests/test_font_config.npk"]
+deps = ["gtk4_shim", "pty_shim"]
+flags = []
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_paths = [".nitpick_make/build"]

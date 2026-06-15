@@ -261,4 +261,20 @@ extern "nitty_gtk4_shim" {
     // Poll for a scroll shortcut key event (Shift+PgUp/PgDn/Home/End)
     // Returns: 0=none, 1=pgup, 2=pgdown, 3=top, 4=bottom
     func:nitty_gtk4_scroll_event_poll   = int64();
+
+    // ===================================================================
+    // v0.3.5: Font system
+    // ===================================================================
+
+    // Line height multiplier (fixed-point ×1000; 1000=1.0×, 1200=1.2×).
+    func:nitty_render_set_line_height    = NIL(int64:lh_x1000);
+
+    // Additional horizontal letter spacing in pixels (0=none).
+    func:nitty_render_set_letter_spacing = NIL(int64:px);
+
+    // Ligature toggle: 0=disabled (default), 1=enabled.
+    func:nitty_render_set_ligatures      = NIL(int64:enabled);
+
+    // Blink visibility (already used in renderer.npk, formally declared here)
+    func:nitty_render_set_blink_visible  = NIL(int64:visible);
 }

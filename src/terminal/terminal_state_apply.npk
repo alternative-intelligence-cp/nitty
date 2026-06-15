@@ -21,6 +21,7 @@ use "attributes.npk".*;
 use "modes.npk".*;
 use "actions.npk".*;
 use "scrollback.npk".*;
+use "unicode_width.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Auto-Wrap Helper
@@ -56,6 +57,7 @@ func:ts_do_wrap = NIL() {
 // ═══════════════════════════════════════════════════════════════════════
 
 /// Write a Unicode codepoint at the current cursor position.
+/// v0.3.5: Handles double-width (CJK/emoji) and wide-char margin behavior.
 pub func:ts_print = NIL(int64:cp) {
     // Resolve charset translation
     int64:gl = raw ts_get_gl();
@@ -74,6 +76,11 @@ pub func:ts_print = NIL(int64:cp) {
         }
     }
 
+    // v0.3.5: Get display width (0=combining, 1=normal, 2=double-wide)
+    int64:w = raw unicode_width(out_cp);
+    // Width-0 combining chars: treat as width-1 for now (KNOWN_ISSUES)
+    if (w == 0i64) { w = 1i64; }
+
     drop(ts_do_wrap());
 
     int64:row = raw ts_get_cursor_row();
@@ -85,17 +92,83 @@ pub func:ts_print = NIL(int64:cp) {
         drop(grid_insert_chars(row, col, 1i64));
     }
 
-    // Write cell
     int64:attrs = raw ts_current_cell_attrs();
     int64:flags = raw ts_current_cell_flags();
-    drop(grid_set(row, col, out_cp, attrs, flags));
 
-    // Advance cursor
+    if (w == 1i64) {
+        // ── Normal width ──
+        // If we are overwriting the first cell of a wide char, clear its continuation
+        int64:existing_flags = raw grid_get_flags(row, col);
+        if (raw cell_flag_wide(existing_flags) != 0i64) {
+            if (col + 1i64 < cols) {
+                drop(grid_set(row, col + 1i64, raw CELL_DEFAULT_CP(), raw CELL_DEFAULT_ATTRS(), raw CELL_DEFAULT_FLAGS()));
+            }
+        }
+        // If we are overwriting the second cell of a wide char, clear its first
+        if (raw cell_flag_cont(existing_flags) != 0i64) {
+            if (col > 0i64) {
+                drop(grid_set(row, col - 1i64, raw CELL_DEFAULT_CP(), raw CELL_DEFAULT_ATTRS(), raw CELL_DEFAULT_FLAGS()));
+            }
+        }
+        drop(grid_set(row, col, out_cp, attrs, flags));
+        // Advance cursor
+        if (col >= cols - 1i64) {
+            drop(ts_set_pending_wrap(1i64));
+            pass(NIL);
+        }
+        drop(ts_set_cursor_col(col + 1i64));
+        drop(ts_set_pending_wrap(0i64));
+        pass(NIL);
+    }
+
+    // ── Wide char (w == 2) ──
+    // If no room for 2 cells in this column, fill the last col with space and wrap.
     if (col >= cols - 1i64) {
+        // Write a space at the last column (xterm behavior)
+        drop(grid_set(row, col, raw CELL_DEFAULT_CP(), attrs, raw CELL_DEFAULT_FLAGS()));
+        drop(ts_set_cursor_col(0i64));
+        drop(ts_set_pending_wrap(0i64));
+        drop(ts_do_wrap());
+        // Recalculate after wrap
+        row = raw ts_get_cursor_row();
+        col = raw ts_get_cursor_col();
+    }
+
+    // Clear any wide char being overwritten at col
+    int64:ef0 = raw grid_get_flags(row, col);
+    if (raw cell_flag_wide(ef0) != 0i64) {
+        if (col + 1i64 < cols) {
+            drop(grid_set(row, col + 1i64, raw CELL_DEFAULT_CP(), raw CELL_DEFAULT_ATTRS(), raw CELL_DEFAULT_FLAGS()));
+        }
+    }
+    if (raw cell_flag_cont(ef0) != 0i64) {
+        if (col > 0i64) {
+            drop(grid_set(row, col - 1i64, raw CELL_DEFAULT_CP(), raw CELL_DEFAULT_ATTRS(), raw CELL_DEFAULT_FLAGS()));
+        }
+    }
+    // Clear the cont cell at col+1 if it was part of a wide char
+    int64:ef1 = raw grid_get_flags(row, col + 1i64);
+    if (raw cell_flag_wide(ef1) != 0i64) {
+        if (col + 2i64 < cols) {
+            drop(grid_set(row, col + 2i64, raw CELL_DEFAULT_CP(), raw CELL_DEFAULT_ATTRS(), raw CELL_DEFAULT_FLAGS()));
+        }
+    }
+    if (raw cell_flag_cont(ef1) != 0i64) {
+        drop(grid_set(row, col, raw CELL_DEFAULT_CP(), raw CELL_DEFAULT_ATTRS(), raw CELL_DEFAULT_FLAGS()));
+    }
+
+    // Write wide char: CELL_WIDE at col, CELL_CONT at col+1
+    int64:wide_flags = flags + raw CELL_WIDE();
+    int64:cont_flags = raw CELL_CONT();
+    drop(grid_set(row, col, out_cp, attrs, wide_flags));
+    drop(grid_set(row, col + 1i64, 0x20i64, attrs, cont_flags));
+
+    // Advance cursor by 2
+    if (col + 2i64 >= cols) {
         drop(ts_set_pending_wrap(1i64));
         pass(NIL);
     }
-    drop(ts_set_cursor_col(col + 1i64));
+    drop(ts_set_cursor_col(col + 2i64));
     drop(ts_set_pending_wrap(0i64));
     pass(NIL);
 };

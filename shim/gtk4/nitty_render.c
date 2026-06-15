@@ -1,6 +1,8 @@
 /*
  * nitty_render.c — Terminal grid renderer for Nitty
  *
+ * v0.3.5: Font system — line height, letter spacing, ligature toggle (Pango
+ *         font features), wide character (double-cell) rendering.
  * v0.3.2: Bold/italic font variants, underline styles (single/double/curly/
  *         dotted/dashed), strikethrough, overline, blink suppression.
  * v0.0.2: C-side rendering of a monospace character grid using Cairo + Pango.
@@ -45,6 +47,8 @@
 #define FLAG_RAPID_BLINK  0x020
 #define FLAG_STRIKE       0x100
 #define FLAG_OVERLINE     0x200
+#define FLAG_WIDE         0x400  /* v0.3.5: cell is 2 columns wide */
+#define FLAG_CONT         0x800  /* v0.3.5: cell is 2nd col of a wide char */
 #define FLAG_UL_STYLE_SHIFT 12
 #define FLAG_UL_STYLE_MASK  0x7000
 
@@ -111,6 +115,13 @@ static int64_t g_scroll_offset  = 0;   /* rows scrolled up from bottom */
 static int64_t g_scroll_total   = 0;   /* total rows (scrollback + visible) */
 static int64_t g_scroll_visible = 0;   /* visible rows on screen */
 
+/* v0.3.5: Font system globals */
+static int     g_line_height_x1000 = 1000; /* 1000 = 1.0× (no extra spacing) */
+static int     g_letter_spacing    = 0;    /* additional px per cell (default 0) */
+static int     g_ligatures_enabled = 0;    /* 0 = disable (default), 1 = enable */
+/* Cached Pango attribute list for ligature suppression (NULL when enabled) */
+static PangoAttrList *g_no_ligature_attrs = NULL;
+
 /* Forward declaration for draw_scrollbar */
 static void draw_scrollbar(cairo_t *cr, int width, int height);
 
@@ -170,9 +181,15 @@ static void measure_font(cairo_t *cr)
     g_object_unref(layout);
 
     if (char_w > 0 && char_h > 0) {
-        g_cell_width    = char_w;
-        g_cell_height   = char_h;
+        g_cell_width  = char_w + g_letter_spacing;
+        /* v0.3.5: apply line height multiplier */
+        int raw_h     = char_h;
+        g_cell_height = (raw_h * g_line_height_x1000 + 500) / 1000; /* round */
+        if (g_cell_height < raw_h) g_cell_height = raw_h; /* never shorter than font */
+        /* Adjust baseline to center text vertically in the taller cell */
+        int extra     = g_cell_height - raw_h;
         g_font_baseline = (ink_rect.y < 0) ? (-ink_rect.y * 1000) : 0;
+        g_font_baseline += (extra / 2) * 1000; /* center vertically */
     }
 
     /* Check if bold variant overflows cell width */
@@ -507,10 +524,12 @@ void nitty_render_frame(void *cr_ptr, int width, int height)
                     (double)cell->bg_g / 1000.0,
                     (double)cell->bg_b / 1000.0
                 );
+                /* v0.3.5: wide cells span 2 columns */
+                int cell_span = (cell->flags & FLAG_WIDE) ? 2 : 1;
                 cairo_rectangle(cr,
                     (double)(c * g_cell_width),
                     (double)(r * g_cell_height),
-                    (double)g_cell_width,
+                    (double)(cell_span * g_cell_width),
                     (double)g_cell_height
                 );
                 cairo_fill(cr);
@@ -520,6 +539,11 @@ void nitty_render_frame(void *cr_ptr, int width, int height)
 
     /* 3. Draw text characters */
     PangoLayout *layout = pango_cairo_create_layout(cr);
+
+    /* v0.3.5: Apply ligature suppression attribute if needed */
+    if (!g_ligatures_enabled && g_no_ligature_attrs != NULL) {
+        pango_layout_set_attributes(layout, g_no_ligature_attrs);
+    }
 
     for (int r = 0; r < visible_rows; r++) {
         for (int c = 0; c < visible_cols; c++) {
@@ -531,6 +555,9 @@ void nitty_render_frame(void *cr_ptr, int width, int height)
                 g_has_blink_cells = 1;
             }
 
+            /* v0.3.5: Skip continuation cells — drawn as part of WIDE cell */
+            if (flags & FLAG_CONT) continue;
+
             /* Skip empty cells */
             if (cell->ch[0] == '\0' || cell->ch[0] == ' ') continue;
 
@@ -540,6 +567,15 @@ void nitty_render_frame(void *cr_ptr, int width, int height)
             /* Set font variant (bold/italic) */
             PangoFontDescription *font = select_font(flags);
             pango_layout_set_font_description(layout, font);
+
+            /* v0.3.5: Wide cells span 2 cell widths */
+            if (flags & FLAG_WIDE) {
+                pango_layout_set_width(layout, 2 * g_cell_width * PANGO_SCALE);
+                pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
+            } else {
+                pango_layout_set_width(layout, -1);
+                pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+            }
 
             /* Set text color */
             double fr, fg, fb;
@@ -569,6 +605,12 @@ void nitty_render_frame(void *cr_ptr, int width, int height)
                 pango_layout_set_text(layout, cell->ch, -1);
                 pango_cairo_show_layout(cr, layout);
             }
+
+            /* Reset wide layout settings */
+            if (flags & FLAG_WIDE) {
+                pango_layout_set_width(layout, -1);
+                pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
+            }
         }
     }
     g_object_unref(layout);
@@ -580,10 +622,14 @@ void nitty_render_frame(void *cr_ptr, int width, int height)
             int flags = cell->flags;
 
             if (!(flags & (FLAG_UNDERLINE | FLAG_STRIKE | FLAG_OVERLINE))) continue;
+            /* v0.3.5: skip cont cells — decoration drawn with WIDE cell */
+            if (flags & FLAG_CONT) continue;
 
             double px = (double)(c * g_cell_width);
             double py = (double)(r * g_cell_height);
-            double cw = (double)g_cell_width;
+            /* v0.3.5: decoration spans 2 cells for wide chars */
+            int cell_span = (flags & FLAG_WIDE) ? 2 : 1;
+            double cw = (double)(cell_span * g_cell_width);
             double ch = (double)g_cell_height;
 
             /* Resolve foreground color for decorations */
@@ -637,7 +683,12 @@ static void draw_cursor(cairo_t *cr)
 
     double x  = (double)(g_cursor_col * g_cell_width);
     double y  = (double)(g_cursor_row * g_cell_height);
-    double cw = (double)g_cell_width;
+    /* v0.3.5: block cursor spans 2 cells when on a wide char */
+    int is_wide = 0;
+    if (g_cursor_row < NITTY_MAX_ROWS && g_cursor_col < NITTY_MAX_COLS) {
+        is_wide = (g_grid[g_cursor_row][g_cursor_col].flags & FLAG_WIDE) ? 1 : 0;
+    }
+    double cw = is_wide ? (double)(2 * g_cell_width) : (double)g_cell_width;
     double ch = (double)g_cell_height;
 
     /* Cursor color: use default foreground */
@@ -658,6 +709,10 @@ static void draw_cursor(cairo_t *cr)
                 if (cell->ch[0] != '\0' && cell->ch[0] != ' ') {
                     PangoLayout *lo = pango_cairo_create_layout(cr);
                     pango_layout_set_font_description(lo, select_font(cell->flags));
+                    if (is_wide) {
+                        pango_layout_set_width(lo, 2 * g_cell_width * PANGO_SCALE);
+                        pango_layout_set_alignment(lo, PANGO_ALIGN_CENTER);
+                    }
                     pango_layout_set_text(lo, cell->ch, -1);
                     /* Draw in background color */
                     cairo_set_source_rgb(cr,
@@ -708,6 +763,50 @@ void nitty_render_set_scroll_info(int64_t offset, int64_t total, int64_t visible
     g_scroll_offset  = offset;
     g_scroll_total   = total;
     g_scroll_visible = visible;
+}
+
+/* ── v0.3.5: Font system setters ─────────────────────────────────────── */
+
+void nitty_render_set_line_height(int64_t lh_x1000)
+{
+    int v = (int)lh_x1000;
+    if (v < 800)  v = 800;   /* clamp: minimum 0.8× */
+    if (v > 3000) v = 3000;  /* clamp: maximum 3.0× */
+    if (v != g_line_height_x1000) {
+        g_line_height_x1000 = v;
+        g_font_changed = 1;
+    }
+}
+
+void nitty_render_set_letter_spacing(int64_t px)
+{
+    int v = (int)px;
+    if (v < 0)   v = 0;    /* no negative spacing */
+    if (v > 100) v = 100;  /* sanity cap */
+    if (v != g_letter_spacing) {
+        g_letter_spacing = v;
+        g_font_changed = 1;
+    }
+}
+
+void nitty_render_set_ligatures(int64_t enabled)
+{
+    int v = (enabled != 0) ? 1 : 0;
+    if (v == g_ligatures_enabled) return;
+    g_ligatures_enabled = v;
+
+    /* Free the cached attr list — will be recreated if still disabled */
+    if (g_no_ligature_attrs != NULL) {
+        pango_attr_list_unref(g_no_ligature_attrs);
+        g_no_ligature_attrs = NULL;
+    }
+
+    if (!g_ligatures_enabled) {
+        /* Build attr list: disable common ligature features */
+        g_no_ligature_attrs = pango_attr_list_new();
+        PangoAttribute *attr = pango_attr_font_features_new("liga=0, calt=0, dlig=0");
+        pango_attr_list_insert(g_no_ligature_attrs, attr);
+    }
 }
 
 /* ── v0.3.4: Scrollbar overlay ────────────────────────────────────────── */
