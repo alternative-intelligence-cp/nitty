@@ -1,0 +1,311 @@
+// tests/test_csi_integration.npk — End-to-end parser + dispatch tests
+//
+// v0.2.1: Feeds raw byte sequences through the VtParser, then dispatches
+// the resulting events via csi_dispatch. Tests realistic terminal sequences
+// used by programs like vim and top.
+
+use "../src/terminal/escape_types.npk".*;
+use "../src/terminal/actions.npk".*;
+use "../src/terminal/vt_parser.npk".*;
+use "../src/terminal/csi_dispatch.npk".*;
+
+int64:STDOUT = 1i64;
+int64:pass_count = 0i64;
+int64:fail_count = 0i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:assert_eq = NIL(string:name, int64:actual, int64:expected) {
+    if (actual == expected) {
+        pass_count = pass_count + 1i64;
+        drop(write_stdout("[PASS] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    } else {
+        fail_count = fail_count + 1i64;
+        drop(write_stdout("[FAIL] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    }
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:err) {
+    drop(write_stdout("FAILSAFE\n"));
+    exit 1;
+};
+
+func:main = int32() {
+    drop(write_stdout("=== CSI Integration Tests ===\n"));
+
+    // Cache action type constants
+    int64:POS        = raw ACT_CURSOR_POS();
+    int64:UP         = raw ACT_CURSOR_UP();
+    int64:DOWN       = raw ACT_CURSOR_DOWN();
+    int64:FWD        = raw ACT_CURSOR_FORWARD();
+    int64:BACK       = raw ACT_CURSOR_BACK();
+    int64:COL        = raw ACT_CURSOR_COL();
+    int64:ERASE_DISP = raw ACT_ERASE_DISPLAY();
+    int64:ERASE_LINE = raw ACT_ERASE_LINE();
+    int64:SCR_UP     = raw ACT_SCROLL_UP();
+    int64:SCR_REGION = raw ACT_SET_SCROLL_REGION();
+    int64:SAVE       = raw ACT_CURSOR_SAVE();
+    int64:RESTORE    = raw ACT_CURSOR_RESTORE();
+    int64:REV_INDEX  = raw ACT_REVERSE_INDEX();
+    int64:INDEX      = raw ACT_INDEX();
+    int64:NEXT_LN    = raw ACT_NEXT_LINE();
+    int64:INS_LINES  = raw ACT_INSERT_LINES();
+    int64:DEL_LINES  = raw ACT_DELETE_LINES();
+    int64:DEL_CHARS  = raw ACT_DELETE_CHARS();
+
+    // ── I01: ESC [ 10 ; 20 H → SetCursorPosition(10, 20) ────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x30i64));  // '10'
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x30i64));  // '20'
+    drop(parser_feed_byte(0x48i64));  // 'H'
+    int64:csi_evt = raw EVT_CSI();
+    int64:evt01 = raw parser_get_event_type();
+    drop(assert_eq("I01a parser → CSI event", evt01, csi_evt));
+    int64:n01 = raw parser_get_csi_param_count();
+    drop(dispatch_csi(raw parser_get_event_data(), n01));
+    drop(assert_eq("I01b CUP type", raw dispatch_get_action_type(), POS));
+    drop(assert_eq("I01c CUP row=10", raw dispatch_get_action_data1(), 10i64));
+    drop(assert_eq("I01d CUP col=20", raw dispatch_get_action_data2(), 20i64));
+
+    // ── I02: ESC [ 2 J → EraseDisplay(2) ────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64));  // '2'
+    drop(parser_feed_byte(0x4Ai64));  // 'J'
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I02a ED type", raw dispatch_get_action_type(), ERASE_DISP));
+    drop(assert_eq("I02b ED mode=2", raw dispatch_get_action_data1(), 2i64));
+
+    // ── I03: ESC [ 5 S → ScrollUp(5) ────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x35i64));  // '5'
+    drop(parser_feed_byte(0x53i64));  // 'S'
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I03a SU type", raw dispatch_get_action_type(), SCR_UP));
+    drop(assert_eq("I03b SU n=5", raw dispatch_get_action_data1(), 5i64));
+
+    // ── I04: ESC [ 1 ; 24 r → SetScrollRegion(1, 24) ────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64));  // '1'
+    drop(parser_feed_byte(0x3Bi64));  // ';'
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x34i64));  // '24'
+    drop(parser_feed_byte(0x72i64));  // 'r'
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I04a DECSTBM type", raw dispatch_get_action_type(), SCR_REGION));
+    drop(assert_eq("I04b top=1", raw dispatch_get_action_data1(), 1i64));
+    drop(assert_eq("I04c bottom=24", raw dispatch_get_action_data2(), 24i64));
+
+    // ── I05: vim startup sequence ────────────────────────────────────
+    // vim typically sends: ESC 7 (save), ESC[?1049h (alt screen),
+    //   ESC[r (reset region), ESC[H (cursor home), ESC[2J (clear)
+    // We test the parseable ones:
+
+    // ESC 7 → SaveCursor
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));  // ESC
+    drop(parser_feed_byte(0x37i64));  // '7'
+    int64:esc_evt = raw EVT_ESC();
+    drop(assert_eq("I05a vim: ESC7 = ESC event", raw parser_get_event_type(), esc_evt));
+    drop(dispatch_esc(raw parser_get_event_data()));
+    drop(assert_eq("I05b vim: ESC7 = save cursor", raw dispatch_get_action_type(), SAVE));
+
+    // ESC[r → DECSTBM reset (no params → 0,0)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x72i64));  // 'r'
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I05c vim: ESC[r = region reset", raw dispatch_get_action_type(), SCR_REGION));
+    drop(assert_eq("I05d vim: top=0", raw dispatch_get_action_data1(), 0i64));
+    drop(assert_eq("I05e vim: bottom=0", raw dispatch_get_action_data2(), 0i64));
+
+    // ESC[H → cursor home (1,1)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x48i64));  // 'H'
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I05f vim: ESC[H = cursor home", raw dispatch_get_action_type(), POS));
+    drop(assert_eq("I05g vim: row=1", raw dispatch_get_action_data1(), 1i64));
+    drop(assert_eq("I05h vim: col=1", raw dispatch_get_action_data2(), 1i64));
+
+    // ESC[2J → clear all
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64));
+    drop(parser_feed_byte(0x4Ai64));
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I05i vim: ESC[2J = erase all", raw dispatch_get_action_type(), ERASE_DISP));
+    drop(assert_eq("I05j vim: mode=2", raw dispatch_get_action_data1(), 2i64));
+
+    // ── I06: top-style cursor repositioning ─────────────────────────
+    // top sends: ESC[H (home), ESC[K (erase line), then ESC[2;1H etc.
+
+    // ESC[H → (1,1)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x48i64));
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I06a top: home pos", raw dispatch_get_action_type(), POS));
+
+    // ESC[K → erase to end of line
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x4Bi64));
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I06b top: EL type", raw dispatch_get_action_type(), ERASE_LINE));
+    drop(assert_eq("I06c top: EL mode=0", raw dispatch_get_action_data1(), 0i64));
+
+    // ESC[2;1H → row 2, col 1
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64));  // '2'
+    drop(parser_feed_byte(0x3Bi64));  // ';'
+    drop(parser_feed_byte(0x31i64));  // '1'
+    drop(parser_feed_byte(0x48i64));
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I06d top: row=2", raw dispatch_get_action_data1(), 2i64));
+    drop(assert_eq("I06e top: col=1", raw dispatch_get_action_data2(), 1i64));
+
+    // ── I07: ESC M → Reverse Index ───────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));  // ESC
+    drop(parser_feed_byte(0x4Di64));  // 'M'
+    drop(assert_eq("I07a RI = ESC event", raw parser_get_event_type(), esc_evt));
+    drop(dispatch_esc(raw parser_get_event_data()));
+    drop(assert_eq("I07b RI type", raw dispatch_get_action_type(), REV_INDEX));
+
+    // ── I08: ESC D → Index ───────────────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));  // ESC
+    drop(parser_feed_byte(0x44i64));  // 'D'
+    drop(dispatch_esc(raw parser_get_event_data()));
+    drop(assert_eq("I08 Index type", raw dispatch_get_action_type(), INDEX));
+
+    // ── I09: ESC E → Next Line ───────────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));  // ESC
+    drop(parser_feed_byte(0x45i64));  // 'E'
+    drop(dispatch_esc(raw parser_get_event_data()));
+    drop(assert_eq("I09 NextLine type", raw dispatch_get_action_type(), NEXT_LN));
+
+    // ── I10: Multi-sequence stream ───────────────────────────────────
+    // Simulate a stream: ESC 8 (restore), ESC[3A (up 3), ESC[K (erase)
+    // ESC 8
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x38i64));
+    drop(dispatch_esc(raw parser_get_event_data()));
+    drop(assert_eq("I10a stream: restore", raw dispatch_get_action_type(), RESTORE));
+
+    // ESC[3A
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64));
+    drop(parser_feed_byte(0x41i64));
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I10b stream: up type", raw dispatch_get_action_type(), UP));
+    drop(assert_eq("I10c stream: up n=3", raw dispatch_get_action_data1(), 3i64));
+
+    // ESC[K
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x4Bi64));
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I10d stream: erase line", raw dispatch_get_action_type(), ERASE_LINE));
+
+    // ── I11: IL/DL/DCH in sequence ──────────────────────────────────
+    // ESC[3L → insert 3 lines
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64));
+    drop(parser_feed_byte(0x4Ci64));
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I11a IL type", raw dispatch_get_action_type(), INS_LINES));
+    drop(assert_eq("I11b IL n=3", raw dispatch_get_action_data1(), 3i64));
+
+    // ESC[2M → delete 2 lines
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64));
+    drop(parser_feed_byte(0x4Di64));
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I11c DL type", raw dispatch_get_action_type(), DEL_LINES));
+    drop(assert_eq("I11d DL n=2", raw dispatch_get_action_data1(), 2i64));
+
+    // ESC[4P → delete 4 chars
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x34i64));
+    drop(parser_feed_byte(0x50i64));
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I11e DCH type", raw dispatch_get_action_type(), DEL_CHARS));
+    drop(assert_eq("I11f DCH n=4", raw dispatch_get_action_data1(), 4i64));
+
+    // ── I12: Cursor movement chain ───────────────────────────────────
+    // ESC[10C, ESC[5B, ESC[3D, ESC[1A
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x30i64));
+    drop(parser_feed_byte(0x43i64));
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I12a fwd 10", raw dispatch_get_action_data1(), 10i64));
+
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x35i64));
+    drop(parser_feed_byte(0x42i64));
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I12b down 5", raw dispatch_get_action_data1(), 5i64));
+
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64));
+    drop(parser_feed_byte(0x44i64));
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I12c back 3", raw dispatch_get_action_data1(), 3i64));
+
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x41i64));
+    drop(dispatch_csi(raw parser_get_event_data(), raw parser_get_csi_param_count()));
+    drop(assert_eq("I12d up 1 (default)", raw dispatch_get_action_data1(), 1i64));
+
+    // ── Summary ─────────────────────────────────────────────────────
+    if (fail_count == 0i64) {
+        drop(write_stdout("All CSI integration tests passed.\n"));
+        exit 0;
+    }
+    drop(write_stdout("SOME CSI INTEGRATION TESTS FAILED.\n"));
+    exit 1;
+};

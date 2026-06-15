@@ -140,3 +140,19 @@ deps = []
 flags = []
 link_libraries = []
 link_paths = []
+
+[target.test_csi_dispatch]
+type = "binary"
+sources = ["tests/test_csi_dispatch.npk"]
+deps = []
+flags = []
+link_libraries = []
+link_paths = []
+
+[target.test_csi_integration]
+type = "binary"
+sources = ["tests/test_csi_integration.npk"]
+deps = []
+flags = []
+link_libraries = []
+link_paths = []

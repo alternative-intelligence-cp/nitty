@@ -1,0 +1,68 @@
+// src/terminal/actions.npk — Terminal action type definitions
+//
+// v0.2.1: Defines the TerminalAction type system produced by CSI/ESC
+// dispatch. Each action represents one semantic terminal operation.
+//
+// Design: Actions use integer type tags + up to 2 data fields.
+// This avoids the need for a generic List<T> and allows the action
+// to be queried via the dispatch API after each dispatch call.
+//
+// The dispatch module stores the last action in module-level state.
+// Callers query it via dispatch_get_action_*() functions.
+
+func:failsafe = int32(tbb32:err) { exit 1; };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Action Type Tags
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:ACT_NONE                = int64() { pass(0i64); };
+
+// Cursor movement
+pub func:ACT_CURSOR_UP           = int64() { pass(1i64); };   // data1=n
+pub func:ACT_CURSOR_DOWN         = int64() { pass(2i64); };   // data1=n
+pub func:ACT_CURSOR_FORWARD      = int64() { pass(3i64); };   // data1=n
+pub func:ACT_CURSOR_BACK         = int64() { pass(4i64); };   // data1=n
+pub func:ACT_CURSOR_POS          = int64() { pass(5i64); };   // data1=row, data2=col (1-based)
+pub func:ACT_CURSOR_COL          = int64() { pass(6i64); };   // data1=col (1-based)
+pub func:ACT_CURSOR_ROW          = int64() { pass(7i64); };   // data1=row (1-based)
+pub func:ACT_CURSOR_NEXT_LINE    = int64() { pass(8i64); };   // data1=n (down n, col=1)
+pub func:ACT_CURSOR_PREV_LINE    = int64() { pass(9i64); };   // data1=n (up n, col=1)
+pub func:ACT_CURSOR_SAVE         = int64() { pass(10i64); };  // no data
+pub func:ACT_CURSOR_RESTORE      = int64() { pass(11i64); };  // no data
+
+// Erase operations
+pub func:ACT_ERASE_DISPLAY       = int64() { pass(12i64); };  // data1=mode (0/1/2/3)
+pub func:ACT_ERASE_LINE          = int64() { pass(13i64); };  // data1=mode (0/1/2)
+pub func:ACT_ERASE_CHARS         = int64() { pass(14i64); };  // data1=n
+
+// Line insertion/deletion
+pub func:ACT_INSERT_LINES        = int64() { pass(15i64); };  // data1=n
+pub func:ACT_DELETE_LINES        = int64() { pass(16i64); };  // data1=n
+pub func:ACT_INSERT_CHARS        = int64() { pass(17i64); };  // data1=n
+pub func:ACT_DELETE_CHARS        = int64() { pass(18i64); };  // data1=n
+
+// Scrolling
+pub func:ACT_SCROLL_UP           = int64() { pass(19i64); };  // data1=n
+pub func:ACT_SCROLL_DOWN         = int64() { pass(20i64); };  // data1=n
+pub func:ACT_SET_SCROLL_REGION   = int64() { pass(21i64); };  // data1=top, data2=bottom (1-based; 0,0=full screen)
+
+// Tab stops
+pub func:ACT_SET_TAB_STOP        = int64() { pass(22i64); };  // no data (at current col)
+pub func:ACT_CLEAR_TAB_STOP      = int64() { pass(23i64); };  // data1=mode (0=current, 3=all)
+pub func:ACT_CURSOR_FORWARD_TAB  = int64() { pass(24i64); };  // data1=n
+pub func:ACT_CURSOR_BACKWARD_TAB = int64() { pass(25i64); };  // data1=n
+
+// Index operations
+pub func:ACT_INDEX               = int64() { pass(26i64); };  // ESC D: move down (scroll if at bottom)
+pub func:ACT_REVERSE_INDEX       = int64() { pass(27i64); };  // ESC M: move up (scroll if at top)
+pub func:ACT_NEXT_LINE           = int64() { pass(28i64); };  // ESC E: CR + LF
+
+// ═══════════════════════════════════════════════════════════════════════
+// Erase Mode Constants
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:ERASE_TO_END            = int64() { pass(0i64); };   // ED/EL 0: erase from cursor to end
+pub func:ERASE_TO_BEGINNING      = int64() { pass(1i64); };   // ED/EL 1: erase from beginning to cursor
+pub func:ERASE_ALL               = int64() { pass(2i64); };   // ED/EL 2: erase entire screen/line
+pub func:ERASE_SCROLLBACK        = int64() { pass(3i64); };   // ED 3: erase scrollback buffer

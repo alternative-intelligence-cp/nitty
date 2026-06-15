@@ -1,0 +1,337 @@
+// src/terminal/csi_dispatch.npk — CSI and ESC sequence dispatcher
+//
+// v0.2.1: Takes parsed VtEvent data (CSI/ESC) from the v0.2.0 parser
+// and produces TerminalAction values. Called after parser_feed_byte()
+// emits a CSI or ESC event.
+//
+// Usage:
+//   drop(parser_feed_byte(byte));
+//   int64:evt = raw parser_get_event_type();
+//   if (evt == EVT_CSI) {
+//       int64:final = raw parser_get_event_data();
+//       int64:nparams = raw parser_get_csi_param_count();
+//       drop(dispatch_csi(final, nparams));
+//       int64:act = raw dispatch_get_action_type();
+//       // handle action...
+//   }
+//
+// Parameter semantics:
+//   - Parameters omitted (count < index+1) get their default value
+//   - Explicit 0 is treated same as omitted for MOST movement commands
+//     (per xterm: 0 and 1 both mean "1" for cursor movement)
+//   - Erase mode 0 is NOT defaulted — it's a valid explicit value (to-end)
+
+use "escape_types.npk".*;
+use "actions.npk".*;
+use "vt_parser.npk".*;
+
+func:failsafe = int32(tbb32:err) { exit 1; };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Action Output State
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:d_action_type  = 0i64;   // ACT_* tag
+int64:d_action_data1 = 0i64;   // Primary action parameter
+int64:d_action_data2 = 0i64;   // Secondary action parameter (for 2-param actions)
+
+// ═══════════════════════════════════════════════════════════════════════
+// Internal Helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+func:set_action = NIL(int64:act, int64:d1, int64:d2) {
+    d_action_type  = act;
+    d_action_data1 = d1;
+    d_action_data2 = d2;
+    pass(NIL);
+};
+
+// Extract CSI param at index. Returns default_val if not provided or if
+// the provided value is 0 and use_zero_default is true.
+// For cursor movement: 0 is treated as 1 (use_zero_default=true)
+// For erase mode: 0 is valid (use_zero_default=false)
+func:get_param = int64(int64:index, int64:default_val, int64:use_zero_default) {
+    int64:count = raw parser_get_csi_param_count();
+    if (index >= count) {
+        pass(default_val);
+    }
+    int64:val = raw parser_get_csi_param(index);
+    if (use_zero_default == 1i64) {
+        if (val == 0i64) {
+            pass(default_val);
+        }
+    }
+    pass(val);
+};
+
+// Movement param: 0 treated as 1
+func:mvparam = int64(int64:index) {
+    int64:v = raw get_param(index, 1i64, 1i64);
+    pass(v);
+};
+
+// Erase/mode param: 0 is a valid value
+func:eparam = int64(int64:index, int64:default_val) {
+    int64:v = raw get_param(index, default_val, 0i64);
+    pass(v);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// CSI Dispatch — Final Byte Router
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:dispatch_csi = NIL(int64:final_byte, int64:param_count) {
+    // Default: no action
+    d_action_type  = 0i64;
+    d_action_data1 = 0i64;
+    d_action_data2 = 0i64;
+
+    // ── Cursor Movement ─────────────────────────────────────────────
+
+    // A — CUU: Cursor Up
+    if (final_byte == 0x41i64) {
+        int64:n = raw mvparam(0i64);
+        drop(set_action(1i64, n, 0i64));   // ACT_CURSOR_UP
+        pass(NIL);
+    }
+
+    // B — CUD: Cursor Down
+    if (final_byte == 0x42i64) {
+        int64:n = raw mvparam(0i64);
+        drop(set_action(2i64, n, 0i64));   // ACT_CURSOR_DOWN
+        pass(NIL);
+    }
+
+    // C — CUF: Cursor Forward
+    if (final_byte == 0x43i64) {
+        int64:n = raw mvparam(0i64);
+        drop(set_action(3i64, n, 0i64));   // ACT_CURSOR_FORWARD
+        pass(NIL);
+    }
+
+    // D — CUB: Cursor Back
+    if (final_byte == 0x44i64) {
+        int64:n = raw mvparam(0i64);
+        drop(set_action(4i64, n, 0i64));   // ACT_CURSOR_BACK
+        pass(NIL);
+    }
+
+    // H — CUP: Cursor Position (also f/HVP)
+    // f — HVP: Horizontal and Vertical Position (same as CUP)
+    if (final_byte == 0x48i64) {
+        int64:row = raw mvparam(0i64);
+        int64:col = raw mvparam(1i64);
+        drop(set_action(5i64, row, col));  // ACT_CURSOR_POS
+        pass(NIL);
+    }
+    if (final_byte == 0x66i64) {
+        int64:row = raw mvparam(0i64);
+        int64:col = raw mvparam(1i64);
+        drop(set_action(5i64, row, col));  // ACT_CURSOR_POS
+        pass(NIL);
+    }
+
+    // G — CHA: Cursor Horizontal Absolute
+    if (final_byte == 0x47i64) {
+        int64:col = raw mvparam(0i64);
+        drop(set_action(6i64, col, 0i64)); // ACT_CURSOR_COL
+        pass(NIL);
+    }
+
+    // d — VPA: Vertical Position Absolute
+    if (final_byte == 0x64i64) {
+        int64:row = raw mvparam(0i64);
+        drop(set_action(7i64, row, 0i64)); // ACT_CURSOR_ROW
+        pass(NIL);
+    }
+
+    // E — CNL: Cursor Next Line
+    if (final_byte == 0x45i64) {
+        int64:n = raw mvparam(0i64);
+        drop(set_action(8i64, n, 0i64));   // ACT_CURSOR_NEXT_LINE
+        pass(NIL);
+    }
+
+    // F — CPL: Cursor Previous Line
+    if (final_byte == 0x46i64) {
+        int64:n = raw mvparam(0i64);
+        drop(set_action(9i64, n, 0i64));   // ACT_CURSOR_PREV_LINE
+        pass(NIL);
+    }
+
+    // ── Erase Operations ────────────────────────────────────────────
+
+    // J — ED: Erase in Display
+    if (final_byte == 0x4Ai64) {
+        int64:mode = raw eparam(0i64, 0i64);
+        drop(set_action(12i64, mode, 0i64)); // ACT_ERASE_DISPLAY
+        pass(NIL);
+    }
+
+    // K — EL: Erase in Line
+    if (final_byte == 0x4Bi64) {
+        int64:mode = raw eparam(0i64, 0i64);
+        drop(set_action(13i64, mode, 0i64)); // ACT_ERASE_LINE
+        pass(NIL);
+    }
+
+    // X — ECH: Erase Characters
+    if (final_byte == 0x58i64) {
+        int64:n = raw mvparam(0i64);
+        drop(set_action(14i64, n, 0i64));  // ACT_ERASE_CHARS
+        pass(NIL);
+    }
+
+    // ── Line Operations ─────────────────────────────────────────────
+
+    // L — IL: Insert Lines
+    if (final_byte == 0x4Ci64) {
+        int64:n = raw mvparam(0i64);
+        drop(set_action(15i64, n, 0i64));  // ACT_INSERT_LINES
+        pass(NIL);
+    }
+
+    // M — DL: Delete Lines
+    if (final_byte == 0x4Di64) {
+        int64:n = raw mvparam(0i64);
+        drop(set_action(16i64, n, 0i64));  // ACT_DELETE_LINES
+        pass(NIL);
+    }
+
+    // @ — ICH: Insert Characters (0x40)
+    if (final_byte == 0x40i64) {
+        int64:n = raw mvparam(0i64);
+        drop(set_action(17i64, n, 0i64));  // ACT_INSERT_CHARS
+        pass(NIL);
+    }
+
+    // P — DCH: Delete Characters
+    if (final_byte == 0x50i64) {
+        int64:n = raw mvparam(0i64);
+        drop(set_action(18i64, n, 0i64));  // ACT_DELETE_CHARS
+        pass(NIL);
+    }
+
+    // ── Scrolling ────────────────────────────────────────────────────
+
+    // S — SU: Scroll Up
+    if (final_byte == 0x53i64) {
+        int64:n = raw mvparam(0i64);
+        drop(set_action(19i64, n, 0i64));  // ACT_SCROLL_UP
+        pass(NIL);
+    }
+
+    // T — SD: Scroll Down
+    if (final_byte == 0x54i64) {
+        int64:n = raw mvparam(0i64);
+        drop(set_action(20i64, n, 0i64));  // ACT_SCROLL_DOWN
+        pass(NIL);
+    }
+
+    // r — DECSTBM: Set Top and Bottom Margins (Scroll Region)
+    // Params: top, bottom (both 1-based; 0 → use screen default)
+    if (final_byte == 0x72i64) {
+        int64:top    = raw eparam(0i64, 0i64);
+        int64:bottom = raw eparam(1i64, 0i64);
+        drop(set_action(21i64, top, bottom)); // ACT_SET_SCROLL_REGION
+        pass(NIL);
+    }
+
+    // ── Tab Stop Operations ──────────────────────────────────────────
+
+    // g — TBC: Tab Clear
+    // 0 = clear tab at current column, 3 = clear all tabs
+    if (final_byte == 0x67i64) {
+        int64:mode = raw eparam(0i64, 0i64);
+        drop(set_action(23i64, mode, 0i64)); // ACT_CLEAR_TAB_STOP
+        pass(NIL);
+    }
+
+    // I — CHT: Cursor Forward Tab (0x49)
+    if (final_byte == 0x49i64) {
+        int64:n = raw mvparam(0i64);
+        drop(set_action(24i64, n, 0i64));  // ACT_CURSOR_FORWARD_TAB
+        pass(NIL);
+    }
+
+    // Z — CBT: Cursor Backward Tab (0x5A)
+    if (final_byte == 0x5Ai64) {
+        int64:n = raw mvparam(0i64);
+        drop(set_action(25i64, n, 0i64));  // ACT_CURSOR_BACKWARD_TAB
+        pass(NIL);
+    }
+
+    // ── Private Mode (ESC [ ? ...) — store as NONE for now ──────────
+    // Future: v0.2.3 will handle ?25h/l (cursor visibility), ?1049h/l (alt screen)
+    // Detected via intermediate '?' byte in parser state
+    // For now, unrecognized sequences produce ACT_NONE (already set)
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// ESC Sequence Dispatch
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:dispatch_esc = NIL(int64:final_byte) {
+    d_action_type  = 0i64;
+    d_action_data1 = 0i64;
+    d_action_data2 = 0i64;
+
+    // ESC 7 — DECSC: Save Cursor Position
+    if (final_byte == 0x37i64) {
+        drop(set_action(10i64, 0i64, 0i64)); // ACT_CURSOR_SAVE
+        pass(NIL);
+    }
+
+    // ESC 8 — DECRC: Restore Cursor Position
+    if (final_byte == 0x38i64) {
+        drop(set_action(11i64, 0i64, 0i64)); // ACT_CURSOR_RESTORE
+        pass(NIL);
+    }
+
+    // ESC D — IND: Index (move cursor down, scroll if at bottom)
+    if (final_byte == 0x44i64) {
+        drop(set_action(26i64, 0i64, 0i64)); // ACT_INDEX
+        pass(NIL);
+    }
+
+    // ESC M — RI: Reverse Index (move cursor up, scroll if at top)
+    if (final_byte == 0x4Di64) {
+        drop(set_action(27i64, 0i64, 0i64)); // ACT_REVERSE_INDEX
+        pass(NIL);
+    }
+
+    // ESC E — NEL: Next Line (CR + LF)
+    if (final_byte == 0x45i64) {
+        drop(set_action(28i64, 0i64, 0i64)); // ACT_NEXT_LINE
+        pass(NIL);
+    }
+
+    // ESC H — HTS: Horizontal Tab Set
+    if (final_byte == 0x48i64) {
+        drop(set_action(22i64, 0i64, 0i64)); // ACT_SET_TAB_STOP
+        pass(NIL);
+    }
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Action Query API
+// ═══════════════════════════════════════════════════════════════════════
+
+// Get the type of the last dispatched action
+pub func:dispatch_get_action_type = int64() {
+    pass(d_action_type);
+};
+
+// Get primary data of the last action
+pub func:dispatch_get_action_data1 = int64() {
+    pass(d_action_data1);
+};
+
+// Get secondary data of the last action (used for 2-param actions)
+pub func:dispatch_get_action_data2 = int64() {
+    pass(d_action_data2);
+};

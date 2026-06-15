@@ -1,0 +1,451 @@
+// tests/test_csi_dispatch.npk — CSI dispatch unit tests
+//
+// v0.2.1: Tests each CSI and ESC handler for correct action output,
+// parameter extraction, and default value handling.
+//
+// Pattern: Set up parser state by feeding bytes through the parser,
+// then call dispatch_csi/dispatch_esc, then query the action.
+
+use "../src/terminal/escape_types.npk".*;
+use "../src/terminal/actions.npk".*;
+use "../src/terminal/vt_parser.npk".*;
+use "../src/terminal/csi_dispatch.npk".*;
+
+int64:STDOUT = 1i64;
+int64:pass_count = 0i64;
+int64:fail_count = 0i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:assert_eq = NIL(string:name, int64:actual, int64:expected) {
+    if (actual == expected) {
+        pass_count = pass_count + 1i64;
+        drop(write_stdout("[PASS] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    } else {
+        fail_count = fail_count + 1i64;
+        drop(write_stdout("[FAIL] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    }
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:err) {
+    drop(write_stdout("FAILSAFE\n"));
+    exit 1;
+};
+
+// Feed a CSI sequence and dispatch it. Returns action type.
+// Usage: feed_csi("..params..", final_byte)
+// Feeds: ESC [ <bytes> <final>
+func:run_csi = NIL(int64:final_byte) {
+    int64:evt = raw parser_get_event_type();
+    int64:nparams = raw parser_get_csi_param_count();
+    drop(dispatch_csi(final_byte, nparams));
+    pass(NIL);
+};
+
+func:main = int32() {
+    drop(write_stdout("=== CSI Dispatch Tests ===\n"));
+
+    // Cache action type constants
+    int64:NONE          = raw ACT_NONE();
+    int64:UP            = raw ACT_CURSOR_UP();
+    int64:DOWN          = raw ACT_CURSOR_DOWN();
+    int64:FWD           = raw ACT_CURSOR_FORWARD();
+    int64:BACK          = raw ACT_CURSOR_BACK();
+    int64:POS           = raw ACT_CURSOR_POS();
+    int64:COL           = raw ACT_CURSOR_COL();
+    int64:ROW           = raw ACT_CURSOR_ROW();
+    int64:NEXT_LINE     = raw ACT_CURSOR_NEXT_LINE();
+    int64:PREV_LINE     = raw ACT_CURSOR_PREV_LINE();
+    int64:SAVE          = raw ACT_CURSOR_SAVE();
+    int64:RESTORE       = raw ACT_CURSOR_RESTORE();
+    int64:ERASE_DISP    = raw ACT_ERASE_DISPLAY();
+    int64:ERASE_LINE    = raw ACT_ERASE_LINE();
+    int64:ERASE_CHARS   = raw ACT_ERASE_CHARS();
+    int64:INS_LINES     = raw ACT_INSERT_LINES();
+    int64:DEL_LINES     = raw ACT_DELETE_LINES();
+    int64:INS_CHARS     = raw ACT_INSERT_CHARS();
+    int64:DEL_CHARS     = raw ACT_DELETE_CHARS();
+    int64:SCR_UP        = raw ACT_SCROLL_UP();
+    int64:SCR_DOWN      = raw ACT_SCROLL_DOWN();
+    int64:SCR_REGION    = raw ACT_SET_SCROLL_REGION();
+    int64:TAB_SET       = raw ACT_SET_TAB_STOP();
+    int64:TAB_CLEAR     = raw ACT_CLEAR_TAB_STOP();
+    int64:TAB_FWD       = raw ACT_CURSOR_FORWARD_TAB();
+    int64:TAB_BACK      = raw ACT_CURSOR_BACKWARD_TAB();
+    int64:INDEX         = raw ACT_INDEX();
+    int64:REV_INDEX     = raw ACT_REVERSE_INDEX();
+    int64:NEXT_LN       = raw ACT_NEXT_LINE();
+
+    // ── T01: Cursor Up ───────────────────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));  // ESC
+    drop(parser_feed_byte(0x5Bi64));  // [
+    drop(parser_feed_byte(0x35i64));  // '5'
+    drop(parser_feed_byte(0x41i64));  // 'A' (CUU)
+    drop(run_csi(0x41i64));
+    int64:t01a = raw dispatch_get_action_type();
+    int64:t01d = raw dispatch_get_action_data1();
+    drop(assert_eq("T01a CUU type", t01a, UP));
+    drop(assert_eq("T01b CUU n=5", t01d, 5i64));
+
+    // T01c: CUU with no param → default 1
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x41i64));  // 'A' with no digits
+    drop(run_csi(0x41i64));
+    int64:t01e = raw dispatch_get_action_data1();
+    drop(assert_eq("T01c CUU default=1", t01e, 1i64));
+
+    // T01d: CUU with 0 → treated as 1
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x30i64));  // '0'
+    drop(parser_feed_byte(0x41i64));  // 'A'
+    drop(run_csi(0x41i64));
+    int64:t01f = raw dispatch_get_action_data1();
+    drop(assert_eq("T01d CUU 0→1", t01f, 1i64));
+
+    // ── T02: Cursor Down ─────────────────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64));  // '3'
+    drop(parser_feed_byte(0x42i64));  // 'B' (CUD)
+    drop(run_csi(0x42i64));
+    drop(assert_eq("T02a CUD type", raw dispatch_get_action_type(), DOWN));
+    drop(assert_eq("T02b CUD n=3", raw dispatch_get_action_data1(), 3i64));
+
+    // ── T03: Cursor Forward ──────────────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64));  // '1'
+    drop(parser_feed_byte(0x30i64));  // '0' → 10
+    drop(parser_feed_byte(0x43i64));  // 'C' (CUF)
+    drop(run_csi(0x43i64));
+    drop(assert_eq("T03a CUF type", raw dispatch_get_action_type(), FWD));
+    drop(assert_eq("T03b CUF n=10", raw dispatch_get_action_data1(), 10i64));
+
+    // ── T04: Cursor Back ─────────────────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x44i64));  // 'D' (CUB) — no param → default 1
+    drop(run_csi(0x44i64));
+    drop(assert_eq("T04a CUB type", raw dispatch_get_action_type(), BACK));
+    drop(assert_eq("T04b CUB default=1", raw dispatch_get_action_data1(), 1i64));
+
+    // ── T05: Cursor Position — ESC [ H (no params) ───────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x48i64));  // 'H' (CUP)
+    drop(run_csi(0x48i64));
+    drop(assert_eq("T05a CUP type", raw dispatch_get_action_type(), POS));
+    drop(assert_eq("T05b CUP row=1", raw dispatch_get_action_data1(), 1i64));
+    drop(assert_eq("T05c CUP col=1", raw dispatch_get_action_data2(), 1i64));
+
+    // T05d: CUP with params — ESC [ 10 ; 20 H
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x30i64));  // '10'
+    drop(parser_feed_byte(0x3Bi64));  // ';'
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x30i64));  // '20'
+    drop(parser_feed_byte(0x48i64));  // 'H'
+    drop(run_csi(0x48i64));
+    drop(assert_eq("T05d CUP row=10", raw dispatch_get_action_data1(), 10i64));
+    drop(assert_eq("T05e CUP col=20", raw dispatch_get_action_data2(), 20i64));
+
+    // T05f: CUP with one param — ESC [ 5 H (row=5, col=1)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x35i64));  // '5'
+    drop(parser_feed_byte(0x48i64));  // 'H'
+    drop(run_csi(0x48i64));
+    drop(assert_eq("T05f CUP row=5", raw dispatch_get_action_data1(), 5i64));
+    drop(assert_eq("T05g CUP col=1 (default)", raw dispatch_get_action_data2(), 1i64));
+
+    // ── T06: CHA — Cursor Horizontal Absolute ────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x35i64));  // '15'
+    drop(parser_feed_byte(0x47i64));  // 'G'
+    drop(run_csi(0x47i64));
+    drop(assert_eq("T06a CHA type", raw dispatch_get_action_type(), COL));
+    drop(assert_eq("T06b CHA col=15", raw dispatch_get_action_data1(), 15i64));
+
+    // ── T07: VPA — Vertical Position Absolute ───────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x38i64));  // '8'
+    drop(parser_feed_byte(0x64i64));  // 'd'
+    drop(run_csi(0x64i64));
+    drop(assert_eq("T07a VPA type", raw dispatch_get_action_type(), ROW));
+    drop(assert_eq("T07b VPA row=8", raw dispatch_get_action_data1(), 8i64));
+
+    // ── T08: CNL — Cursor Next Line ──────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64));  // '2'
+    drop(parser_feed_byte(0x45i64));  // 'E'
+    drop(run_csi(0x45i64));
+    drop(assert_eq("T08a CNL type", raw dispatch_get_action_type(), NEXT_LINE));
+    drop(assert_eq("T08b CNL n=2", raw dispatch_get_action_data1(), 2i64));
+
+    // ── T09: CPL — Cursor Previous Line ─────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x46i64));  // 'F' (no param → 1)
+    drop(run_csi(0x46i64));
+    drop(assert_eq("T09a CPL type", raw dispatch_get_action_type(), PREV_LINE));
+    drop(assert_eq("T09b CPL n=1", raw dispatch_get_action_data1(), 1i64));
+
+    // ── T10: HVP — same as CUP ──────────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x3Bi64));  // '3;'
+    drop(parser_feed_byte(0x34i64));  // '4'
+    drop(parser_feed_byte(0x66i64));  // 'f' (HVP)
+    drop(run_csi(0x66i64));
+    drop(assert_eq("T10a HVP type", raw dispatch_get_action_type(), POS));
+    drop(assert_eq("T10b HVP row=3", raw dispatch_get_action_data1(), 3i64));
+    drop(assert_eq("T10c HVP col=4", raw dispatch_get_action_data2(), 4i64));
+
+    // ── T11: ED — Erase Display ──────────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x4Ai64));  // 'J' (no param → mode 0)
+    drop(run_csi(0x4Ai64));
+    drop(assert_eq("T11a ED type", raw dispatch_get_action_type(), ERASE_DISP));
+    drop(assert_eq("T11b ED mode=0 (to-end)", raw dispatch_get_action_data1(), 0i64));
+
+    // T11c: ED 2 (erase all)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64));  // '2'
+    drop(parser_feed_byte(0x4Ai64));  // 'J'
+    drop(run_csi(0x4Ai64));
+    drop(assert_eq("T11c ED 2=all", raw dispatch_get_action_data1(), 2i64));
+
+    // T11d: ED 1 (erase above)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64));  // '1'
+    drop(parser_feed_byte(0x4Ai64));  // 'J'
+    drop(run_csi(0x4Ai64));
+    drop(assert_eq("T11d ED 1=above", raw dispatch_get_action_data1(), 1i64));
+
+    // T11e: ED 3 (erase scrollback)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64));  // '3'
+    drop(parser_feed_byte(0x4Ai64));  // 'J'
+    drop(run_csi(0x4Ai64));
+    drop(assert_eq("T11e ED 3=scrollback", raw dispatch_get_action_data1(), 3i64));
+
+    // ── T12: EL — Erase Line ─────────────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x4Bi64));  // 'K' (no param → mode 0)
+    drop(run_csi(0x4Bi64));
+    drop(assert_eq("T12a EL type", raw dispatch_get_action_type(), ERASE_LINE));
+    drop(assert_eq("T12b EL mode=0", raw dispatch_get_action_data1(), 0i64));
+
+    // T12c: EL 1 (left), EL 2 (all)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64));
+    drop(parser_feed_byte(0x4Bi64));  // 'K'
+    drop(run_csi(0x4Bi64));
+    drop(assert_eq("T12c EL 1=left", raw dispatch_get_action_data1(), 1i64));
+
+    // ── T13: ECH — Erase Characters ─────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x37i64));  // '7'
+    drop(parser_feed_byte(0x58i64));  // 'X'
+    drop(run_csi(0x58i64));
+    drop(assert_eq("T13a ECH type", raw dispatch_get_action_type(), ERASE_CHARS));
+    drop(assert_eq("T13b ECH n=7", raw dispatch_get_action_data1(), 7i64));
+
+    // ── T14: IL — Insert Lines ───────────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x34i64));  // '4'
+    drop(parser_feed_byte(0x4Ci64));  // 'L'
+    drop(run_csi(0x4Ci64));
+    drop(assert_eq("T14a IL type", raw dispatch_get_action_type(), INS_LINES));
+    drop(assert_eq("T14b IL n=4", raw dispatch_get_action_data1(), 4i64));
+
+    // ── T15: DL — Delete Lines ───────────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x4Di64));  // 'M' (no param → 1)
+    drop(run_csi(0x4Di64));
+    drop(assert_eq("T15a DL type", raw dispatch_get_action_type(), DEL_LINES));
+    drop(assert_eq("T15b DL n=1", raw dispatch_get_action_data1(), 1i64));
+
+    // ── T16: ICH — Insert Characters ────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64));  // '3'
+    drop(parser_feed_byte(0x40i64));  // '@'
+    drop(run_csi(0x40i64));
+    drop(assert_eq("T16a ICH type", raw dispatch_get_action_type(), INS_CHARS));
+    drop(assert_eq("T16b ICH n=3", raw dispatch_get_action_data1(), 3i64));
+
+    // ── T17: DCH — Delete Characters ────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64));  // '2'
+    drop(parser_feed_byte(0x50i64));  // 'P'
+    drop(run_csi(0x50i64));
+    drop(assert_eq("T17a DCH type", raw dispatch_get_action_type(), DEL_CHARS));
+    drop(assert_eq("T17b DCH n=2", raw dispatch_get_action_data1(), 2i64));
+
+    // ── T18: SU — Scroll Up ──────────────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x35i64));  // '5'
+    drop(parser_feed_byte(0x53i64));  // 'S'
+    drop(run_csi(0x53i64));
+    drop(assert_eq("T18a SU type", raw dispatch_get_action_type(), SCR_UP));
+    drop(assert_eq("T18b SU n=5", raw dispatch_get_action_data1(), 5i64));
+
+    // ── T19: SD — Scroll Down ────────────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x54i64));  // 'T' (no param → 1)
+    drop(run_csi(0x54i64));
+    drop(assert_eq("T19a SD type", raw dispatch_get_action_type(), SCR_DOWN));
+    drop(assert_eq("T19b SD n=1", raw dispatch_get_action_data1(), 1i64));
+
+    // ── T20: DECSTBM — Set Scroll Region ────────────────────────────
+    // ESC [ 1 ; 24 r
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64));  // '1'
+    drop(parser_feed_byte(0x3Bi64));  // ';'
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x34i64));  // '24'
+    drop(parser_feed_byte(0x72i64));  // 'r'
+    drop(run_csi(0x72i64));
+    drop(assert_eq("T20a DECSTBM type", raw dispatch_get_action_type(), SCR_REGION));
+    drop(assert_eq("T20b DECSTBM top=1", raw dispatch_get_action_data1(), 1i64));
+    drop(assert_eq("T20c DECSTBM bottom=24", raw dispatch_get_action_data2(), 24i64));
+
+    // T20d: DECSTBM no params → full screen reset (0,0)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x72i64));  // 'r'
+    drop(run_csi(0x72i64));
+    drop(assert_eq("T20d DECSTBM reset top=0", raw dispatch_get_action_data1(), 0i64));
+    drop(assert_eq("T20e DECSTBM reset bot=0", raw dispatch_get_action_data2(), 0i64));
+
+    // ── T21: TBC — Tab Clear ─────────────────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x67i64));  // 'g' (no param → mode 0)
+    drop(run_csi(0x67i64));
+    drop(assert_eq("T21a TBC type", raw dispatch_get_action_type(), TAB_CLEAR));
+    drop(assert_eq("T21b TBC mode=0", raw dispatch_get_action_data1(), 0i64));
+
+    // T21c: TBC 3 (clear all)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64));  // '3'
+    drop(parser_feed_byte(0x67i64));  // 'g'
+    drop(run_csi(0x67i64));
+    drop(assert_eq("T21c TBC 3=all", raw dispatch_get_action_data1(), 3i64));
+
+    // ── T22: CHT — Cursor Forward Tab ───────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64));  // '2'
+    drop(parser_feed_byte(0x49i64));  // 'I'
+    drop(run_csi(0x49i64));
+    drop(assert_eq("T22a CHT type", raw dispatch_get_action_type(), TAB_FWD));
+    drop(assert_eq("T22b CHT n=2", raw dispatch_get_action_data1(), 2i64));
+
+    // ── T23: CBT — Cursor Backward Tab ──────────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x5Ai64));  // 'Z' (no param → 1)
+    drop(run_csi(0x5Ai64));
+    drop(assert_eq("T23a CBT type", raw dispatch_get_action_type(), TAB_BACK));
+    drop(assert_eq("T23b CBT n=1", raw dispatch_get_action_data1(), 1i64));
+
+    // ── T24: ESC sequences ───────────────────────────────────────────
+    // ESC 7 — save cursor
+    drop(dispatch_esc(0x37i64));
+    drop(assert_eq("T24a ESC7 = save", raw dispatch_get_action_type(), SAVE));
+
+    // ESC 8 — restore cursor
+    drop(dispatch_esc(0x38i64));
+    drop(assert_eq("T24b ESC8 = restore", raw dispatch_get_action_type(), RESTORE));
+
+    // ESC D — Index
+    drop(dispatch_esc(0x44i64));
+    drop(assert_eq("T24c ESCD = index", raw dispatch_get_action_type(), INDEX));
+
+    // ESC M — Reverse Index
+    drop(dispatch_esc(0x4Di64));
+    drop(assert_eq("T24d ESCM = rev_index", raw dispatch_get_action_type(), REV_INDEX));
+
+    // ESC E — Next Line
+    drop(dispatch_esc(0x45i64));
+    drop(assert_eq("T24e ESCE = next_line", raw dispatch_get_action_type(), NEXT_LN));
+
+    // ESC H — HTS (Set Tab Stop)
+    drop(dispatch_esc(0x48i64));
+    drop(assert_eq("T24f ESCH = tab_set", raw dispatch_get_action_type(), TAB_SET));
+
+    // ── T25: Unknown sequence → NONE ─────────────────────────────────
+    drop(parser_init());
+    drop(dispatch_csi(0x7Ei64, 0i64));  // '~' — not a recognized final byte
+    drop(assert_eq("T25 unknown → NONE", raw dispatch_get_action_type(), NONE));
+
+    // ── Summary ─────────────────────────────────────────────────────
+    if (fail_count == 0i64) {
+        drop(write_stdout("All CSI dispatch tests passed.\n"));
+        exit 0;
+    }
+    drop(write_stdout("SOME CSI DISPATCH TESTS FAILED.\n"));
+    exit 1;
+};
