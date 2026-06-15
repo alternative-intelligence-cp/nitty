@@ -1,0 +1,270 @@
+// src/gui/input.npk — Keyboard and mouse input abstraction for Nitty
+//
+// v0.0.3: Wraps GTK4 event controller polling into a clean internal API.
+//
+// Key constants mirror GDK keyvals (returned by nitty_gdk_key_*).
+// Modifier constants mirror GDK modifier bitmask values.
+//
+// Input flow:
+//   1. Call input_init(da_ptr) before app_run() — enables controllers
+//   2. During GTK main loop, C callbacks capture events into static state
+//   3. After app_run() (or from a future idle callback), call:
+//        input_poll_key() — returns 1 if key event waiting
+//        input_get_key()  — returns translated internal key code
+//        input_get_modifiers() — returns modifier bitmask
+//
+// For v0.0.3, debug output is printed directly from C callbacks.
+// The poll API is present and correct for use in v0.1.x.
+
+use "gtk4_ffi.npk".*;
+
+// ── Key constants (backed by GDK keyval query functions) ──────────────────
+
+pub func:KEY_RETURN    = int64() { int64:v = nitty_gdk_key_return();    pass(v); };
+pub func:KEY_ESCAPE    = int64() { int64:v = nitty_gdk_key_escape();    pass(v); };
+pub func:KEY_BACKSPACE = int64() { int64:v = nitty_gdk_key_backspace(); pass(v); };
+pub func:KEY_TAB       = int64() { int64:v = nitty_gdk_key_tab();       pass(v); };
+pub func:KEY_SPACE     = int64() { int64:v = nitty_gdk_key_space();     pass(v); };
+pub func:KEY_UP        = int64() { int64:v = nitty_gdk_key_up();        pass(v); };
+pub func:KEY_DOWN      = int64() { int64:v = nitty_gdk_key_down();      pass(v); };
+pub func:KEY_LEFT      = int64() { int64:v = nitty_gdk_key_left();      pass(v); };
+pub func:KEY_RIGHT     = int64() { int64:v = nitty_gdk_key_right();     pass(v); };
+pub func:KEY_HOME      = int64() { int64:v = nitty_gdk_key_home();      pass(v); };
+pub func:KEY_END       = int64() { int64:v = nitty_gdk_key_end();       pass(v); };
+pub func:KEY_PAGE_UP   = int64() { int64:v = nitty_gdk_key_page_up();   pass(v); };
+pub func:KEY_PAGE_DOWN = int64() { int64:v = nitty_gdk_key_page_down(); pass(v); };
+pub func:KEY_INSERT    = int64() { int64:v = nitty_gdk_key_insert();    pass(v); };
+pub func:KEY_DELETE    = int64() { int64:v = nitty_gdk_key_delete();    pass(v); };
+pub func:KEY_F1        = int64() { int64:v = nitty_gdk_key_f1();        pass(v); };
+pub func:KEY_F2        = int64() { int64:v = nitty_gdk_key_f2();        pass(v); };
+pub func:KEY_F3        = int64() { int64:v = nitty_gdk_key_f3();        pass(v); };
+pub func:KEY_F4        = int64() { int64:v = nitty_gdk_key_f4();        pass(v); };
+pub func:KEY_F5        = int64() { int64:v = nitty_gdk_key_f5();        pass(v); };
+pub func:KEY_F6        = int64() { int64:v = nitty_gdk_key_f6();        pass(v); };
+pub func:KEY_F7        = int64() { int64:v = nitty_gdk_key_f7();        pass(v); };
+pub func:KEY_F8        = int64() { int64:v = nitty_gdk_key_f8();        pass(v); };
+pub func:KEY_F9        = int64() { int64:v = nitty_gdk_key_f9();        pass(v); };
+pub func:KEY_F10       = int64() { int64:v = nitty_gdk_key_f10();       pass(v); };
+pub func:KEY_F11       = int64() { int64:v = nitty_gdk_key_f11();       pass(v); };
+pub func:KEY_F12       = int64() { int64:v = nitty_gdk_key_f12();       pass(v); };
+
+// Unknown key sentinel: keys not in the above list pass through their GDK keyval
+pub func:KEY_UNKNOWN   = int64() { pass(0i64); };
+
+// ── Modifier constants (backed by GDK modifier query functions) ───────────
+
+pub func:MOD_SHIFT = int64() { int64:v = nitty_gdk_mod_shift(); pass(v); };
+pub func:MOD_CTRL  = int64() { int64:v = nitty_gdk_mod_ctrl();  pass(v); };
+pub func:MOD_ALT   = int64() { int64:v = nitty_gdk_mod_alt();   pass(v); };
+pub func:MOD_SUPER = int64() { int64:v = nitty_gdk_mod_super(); pass(v); };
+
+// ── Input initialization ──────────────────────────────────────────────────
+
+// Enable input controllers. Call before app_run().
+// Controllers are attached to the window and DrawingArea in on_activate.
+pub func:input_init = NIL() {
+    nitty_gtk4_input_enable();
+    pass(NIL);
+};
+
+// ── Keyboard polling ──────────────────────────────────────────────────────
+
+// Return 1 if a key event is pending, 0 otherwise. Clears the pending flag.
+pub func:input_poll_key = int64() {
+    int64:pending = nitty_gtk4_key_poll();
+    pass(pending);
+};
+
+// Return the GDK keyval of the last key press (raw).
+pub func:input_get_raw_keyval = int64() {
+    int64:kv = nitty_gtk4_key_get_keyval();
+    pass(kv);
+};
+
+// Return the modifier bitmask of the last key event.
+pub func:input_get_modifiers = int64() {
+    int64:mods = nitty_gtk4_key_get_modifiers();
+    pass(mods);
+};
+
+// Return 1 if the last key event was a press, 2 if release.
+pub func:input_key_type = int64() {
+    int64:t = nitty_gtk4_key_get_type();
+    pass(t);
+};
+
+// Return 1 if the last key event was a key press.
+pub func:input_is_key_press = int64() {
+    int64:t = nitty_gtk4_key_get_type();
+    if (t == 1i64) { pass(1i64); }
+    pass(0i64);
+};
+
+// ── Key translation ────────────────────────────────────────────────────────
+
+// Translate a raw GDK keyval to our internal key code.
+// Printable ASCII (0x20-0x7E) passes through unchanged.
+// Special keys map to named constants.
+// Unknown keys return KEY_UNKNOWN (0).
+pub func:input_translate_key = int64(int64:gdk_keyval) {
+
+    Result<int64>:ret_r = KEY_RETURN();
+    int64:ret = ret_r ? 0i64;
+    if (gdk_keyval == ret) { pass(gdk_keyval); }
+
+    Result<int64>:esc_r = KEY_ESCAPE();
+    int64:esc = esc_r ? 0i64;
+    if (gdk_keyval == esc) { pass(gdk_keyval); }
+
+    Result<int64>:bs_r = KEY_BACKSPACE();
+    int64:bs = bs_r ? 0i64;
+    if (gdk_keyval == bs) { pass(gdk_keyval); }
+
+    Result<int64>:tab_r = KEY_TAB();
+    int64:tab = tab_r ? 0i64;
+    if (gdk_keyval == tab) { pass(gdk_keyval); }
+
+    Result<int64>:up_r = KEY_UP();
+    int64:up = up_r ? 0i64;
+    if (gdk_keyval == up) { pass(gdk_keyval); }
+
+    Result<int64>:dn_r = KEY_DOWN();
+    int64:dn = dn_r ? 0i64;
+    if (gdk_keyval == dn) { pass(gdk_keyval); }
+
+    Result<int64>:lt_r = KEY_LEFT();
+    int64:lt = lt_r ? 0i64;
+    if (gdk_keyval == lt) { pass(gdk_keyval); }
+
+    Result<int64>:rt_r = KEY_RIGHT();
+    int64:rt = rt_r ? 0i64;
+    if (gdk_keyval == rt) { pass(gdk_keyval); }
+
+    Result<int64>:home_r = KEY_HOME();
+    int64:home = home_r ? 0i64;
+    if (gdk_keyval == home) { pass(gdk_keyval); }
+
+    Result<int64>:end_r = KEY_END();
+    int64:end_val = end_r ? 0i64;
+    if (gdk_keyval == end_val) { pass(gdk_keyval); }
+
+    Result<int64>:pgup_r = KEY_PAGE_UP();
+    int64:pgup = pgup_r ? 0i64;
+    if (gdk_keyval == pgup) { pass(gdk_keyval); }
+
+    Result<int64>:pgdn_r = KEY_PAGE_DOWN();
+    int64:pgdn = pgdn_r ? 0i64;
+    if (gdk_keyval == pgdn) { pass(gdk_keyval); }
+
+    Result<int64>:ins_r = KEY_INSERT();
+    int64:ins = ins_r ? 0i64;
+    if (gdk_keyval == ins) { pass(gdk_keyval); }
+
+    Result<int64>:del_r = KEY_DELETE();
+    int64:del = del_r ? 0i64;
+    if (gdk_keyval == del) { pass(gdk_keyval); }
+
+    // F1-F12
+    Result<int64>:f1_r = KEY_F1();   int64:f1  = f1_r  ? 0i64;
+    Result<int64>:f12_r = KEY_F12(); int64:f12 = f12_r ? 0i64;
+    if (gdk_keyval >= f1 && gdk_keyval <= f12) { pass(gdk_keyval); }
+
+    // Printable ASCII: 0x0020 (space) through 0x007E (~)
+    if (gdk_keyval >= 0x0020i64 && gdk_keyval <= 0x007Ei64) { pass(gdk_keyval); }
+
+    // Unknown
+    pass(0i64);
+};
+
+// Translate GDK modifier state to our internal modifier bitmask.
+pub func:input_translate_modifiers = int64(int64:gdk_state) {
+    int64:result = 0i64;
+
+    Result<int64>:sm_r = MOD_SHIFT(); int64:sm = sm_r ? 0i64;
+    Result<int64>:cm_r = MOD_CTRL();  int64:cm = cm_r ? 0i64;
+    Result<int64>:am_r = MOD_ALT();   int64:am = am_r ? 0i64;
+    Result<int64>:sup_r = MOD_SUPER(); int64:supm = sup_r ? 0i64;
+
+    // Use bitwise AND: if the GDK bit is set, include our bit
+    int64:has_shift = gdk_state & sm;
+    int64:has_ctrl  = gdk_state & cm;
+    int64:has_alt   = gdk_state & am;
+    int64:has_super = gdk_state & supm;
+
+    if (has_shift != 0i64) { result = result | 1i64; }
+    if (has_ctrl  != 0i64) { result = result | 2i64; }
+    if (has_alt   != 0i64) { result = result | 4i64; }
+    if (has_super != 0i64) { result = result | 8i64; }
+
+    pass(result);
+};
+
+// ── Compound key helpers ──────────────────────────────────────────────────
+
+// Return 1 if the last key press was Ctrl+C (keyval 0x63 = 'c', Ctrl mod set).
+pub func:input_is_ctrl_c = int64() {
+    int64:kv   = nitty_gtk4_key_get_keyval();
+    int64:mods = nitty_gtk4_key_get_modifiers();
+    int64:t    = nitty_gtk4_key_get_type();
+    Result<int64>:cm_r = MOD_CTRL(); int64:cm = cm_r ? 0i64;
+    int64:has_ctrl = mods & cm;
+    if (t == 1i64 && has_ctrl != 0i64 && (kv == 0x63i64 || kv == 0x43i64)) {
+        pass(1i64);
+    }
+    pass(0i64);
+};
+
+// Return 1 if the last key press was Ctrl+D.
+pub func:input_is_ctrl_d = int64() {
+    int64:kv   = nitty_gtk4_key_get_keyval();
+    int64:mods = nitty_gtk4_key_get_modifiers();
+    int64:t    = nitty_gtk4_key_get_type();
+    Result<int64>:cm_r = MOD_CTRL(); int64:cm = cm_r ? 0i64;
+    int64:has_ctrl = mods & cm;
+    if (t == 1i64 && has_ctrl != 0i64 && (kv == 0x64i64 || kv == 0x44i64)) {
+        pass(1i64);
+    }
+    pass(0i64);
+};
+
+// ── Mouse polling ──────────────────────────────────────────────────────────
+
+// Return 1 if a mouse event is pending, 0 otherwise. Clears the pending flag.
+pub func:input_poll_mouse = int64() {
+    int64:pending = nitty_gtk4_mouse_poll();
+    pass(pending);
+};
+
+// Return mouse event type: 1=click, 2=release, 3=scroll, 4=motion.
+pub func:input_get_mouse_type = int64() {
+    int64:t = nitty_gtk4_mouse_get_type();
+    pass(t);
+};
+
+// Return mouse X position (fixed-point × 1000 → divide by 1000 for pixels).
+pub func:input_get_mouse_x = int64() {
+    int64:x = nitty_gtk4_mouse_get_x();
+    pass(x);
+};
+
+// Return mouse Y position (fixed-point × 1000).
+pub func:input_get_mouse_y = int64() {
+    int64:y = nitty_gtk4_mouse_get_y();
+    pass(y);
+};
+
+// Return mouse button number (1=left, 2=middle, 3=right).
+pub func:input_get_mouse_button = int64() {
+    int64:b = nitty_gtk4_mouse_get_button();
+    pass(b);
+};
+
+// Return scroll deltas (fixed-point × 1000).
+pub func:input_get_scroll_dx = int64() {
+    int64:dx = nitty_gtk4_mouse_get_scroll_dx();
+    pass(dx);
+};
+pub func:input_get_scroll_dy = int64() {
+    int64:dy = nitty_gtk4_mouse_get_scroll_dy();
+    pass(dy);
+};

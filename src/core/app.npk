@@ -1,19 +1,17 @@
 // src/core/app.npk — Application lifecycle for Nitty
 //
-// v0.0.2: app_run() now creates a DrawingArea with a monospace text grid.
-//         The grid displays "Hello from Nitty! " repeated across 80×24 cells
-//         with white text on a black background (classic terminal look).
+// v0.0.3: Added keyboard and mouse input handling.
+//         Key/mouse events are printed to stdout via C callbacks.
+//         Input controllers are attached to the window/DrawingArea.
 //
 // Architecture:
 //   1. app_init()  — print startup banner
-//   2. app_run()   — configure renderer, create DrawingArea, run GTK loop
+//   2. app_run()   — configure renderer, enable input, run GTK loop
 //   3. app_shutdown() — clean up
-//
-// The C draw callback (on_draw_func) calls nitty_render_frame() which
-// paints the grid using the pre-configured font, colors, and cell content.
 
 use "../gui/window.npk".*;
 use "../gui/text_renderer.npk".*;
+use "../gui/input.npk".*;
 
 // fd 1 = stdout
 int64:STDOUT = 1i64;
@@ -25,7 +23,7 @@ func:write_stdout = NIL(string:msg) {
 };
 
 pub func:app_init = NIL() {
-    drop(write_stdout("Nitty v0.0.2 initializing...\n"));
+    drop(write_stdout("Nitty v0.0.3 initializing...\n"));
     pass(NIL);
 };
 
@@ -33,30 +31,28 @@ pub func:app_run = NIL() {
     drop(write_stdout("Nitty: configuring terminal renderer\n"));
 
     // ── Configure the text renderer ─────────────────────────────────────
-    // Font: monospace, 12pt
     drop(renderer_set_font("Monospace 12"));
-
-    // Colors: white text on black background (classic terminal)
-    // Fixed-point × 1000: 0=0.0 (black), 1000=1.0 (white)
     drop(renderer_set_colors(1000i64, 1000i64, 1000i64,
                               30i64,   30i64,   30i64));
-
-    // Fill the grid: 80 columns × 24 rows with demo text
     drop(renderer_fill("Hello from Nitty! ", 80i64, 24i64));
 
     // ── Create the DrawingArea ──────────────────────────────────────────
-    // This creates the widget and registers the draw callback.
-    // When the GTK main loop runs, on_activate will set it as the
-    // window's child (via the g_drawing_area static in the C shim).
     Result<int64>:da_r = renderer_init_drawing_area();
     int64:da = da_r ? 0i64;
-
     if (da == 0i64) {
         drop(write_stdout("Nitty: ERROR — failed to create DrawingArea\n"));
     }
 
+    // ── Enable input ────────────────────────────────────────────────────
+    // Controllers are attached in on_activate when GTK is initialized.
+    // Key events: printed to stdout by C callback.
+    // Mouse events: click and scroll printed to stdout by C callback.
+    drop(write_stdout("Nitty: enabling keyboard and mouse input\n"));
+    drop(input_init());
+
     // ── Configure and run the GTK window ────────────────────────────────
     drop(write_stdout("Nitty: starting GTK4 main loop\n"));
+    drop(write_stdout("Nitty: press keys or click/scroll in the window\n"));
     drop(window_configure("Nitty Terminal", 1024i64, 768i64));
 
     Result<int64>:app_r = window_app_create("com.altintel.nitty");
@@ -82,5 +78,5 @@ pub func:app_shutdown = NIL() {
 };
 
 pub func:app_version = string() {
-    pass("0.0.2");
+    pass("0.0.3");
 };

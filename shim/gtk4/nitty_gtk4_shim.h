@@ -46,6 +46,26 @@ int64_t nitty_gtk4_window_get_height(int64_t win_ptr);
 void nitty_gtk4_set_activate_callback(int64_t app_ptr, void (*callback)(int64_t));
 
 /* ═══════════════════════════════════════════════════════════════════════
+ * v0.0.3: Input enable (flag — actual controller creation in on_activate)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Enable keyboard and mouse input controllers.
+ * Must be called before nitty_gtk4_app_run().
+ * Controllers are created inside on_activate when GTK is initialized.
+ */
+void nitty_gtk4_input_enable(void);
+
+/**
+ * Process one pending GTK event (non-blocking).
+ * Returns 1 if there are more events pending, 0 if queue is empty.
+ * Used by Nitpick to drive event processing between iterations.
+ * Note: Not needed when nitty is in normal GTK main loop mode —
+ *       this is for the debug/input-test loop in v0.0.3.
+ */
+int64_t nitty_gtk4_iteration(void);
+
+/* ═══════════════════════════════════════════════════════════════════════
  * v0.0.2: DrawingArea, Cairo, Pango, Scale Factor
  * ═══════════════════════════════════════════════════════════════════════ */
 

@@ -1,0 +1,192 @@
+// tests/test_input.npk — Input module unit tests for Nitty v0.0.3
+//
+// Tests the input abstraction without GTK main loop (no display needed).
+//
+// T01: KEY constants are non-zero
+// T02: KEY constants are unique (Return ≠ Escape ≠ Backspace etc.)
+// T03: MOD constants are non-zero and non-overlapping
+// T04: input_translate_key passes through known GDK keyvals
+// T05: input_translate_key passes printable ASCII unchanged
+// T06: input_translate_key returns 0 for unknown keyval
+// T07: input_translate_modifiers extracts Ctrl correctly
+// T08: input_translate_modifiers extracts Shift correctly
+// T09: input_translate_modifiers extracts combined Ctrl+Shift
+
+use "../src/gui/input.npk".*;
+
+int64:STDOUT = 1i64;
+
+func:print_line = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+func:main = int32() {
+
+    // T01: KEY constants are non-zero
+    Result<int64>:ret_r = KEY_RETURN();     int64:ret = ret_r ? 0i64;
+    Result<int64>:esc_r = KEY_ESCAPE();     int64:esc = esc_r ? 0i64;
+    Result<int64>:bs_r  = KEY_BACKSPACE();  int64:bs  = bs_r  ? 0i64;
+    Result<int64>:tab_r = KEY_TAB();        int64:tab = tab_r ? 0i64;
+    Result<int64>:up_r  = KEY_UP();         int64:up  = up_r  ? 0i64;
+    Result<int64>:dn_r  = KEY_DOWN();       int64:dn  = dn_r  ? 0i64;
+    Result<int64>:lt_r  = KEY_LEFT();       int64:lt  = lt_r  ? 0i64;
+    Result<int64>:rt_r  = KEY_RIGHT();      int64:rt  = rt_r  ? 0i64;
+    Result<int64>:f1_r  = KEY_F1();         int64:f1  = f1_r  ? 0i64;
+    Result<int64>:f12_r = KEY_F12();        int64:f12 = f12_r ? 0i64;
+
+    if (ret != 0i64 && esc != 0i64 && bs != 0i64 && tab != 0i64) {
+        drop(print_line("[PASS] T01a KEY_RETURN/ESCAPE/BACKSPACE/TAB non-zero\n"));
+    }
+    if (ret == 0i64 || esc == 0i64 || bs == 0i64 || tab == 0i64) {
+        drop(print_line("[FAIL] T01a KEY constants should be non-zero\n"));
+        exit 1i32;
+    }
+    if (up != 0i64 && dn != 0i64 && lt != 0i64 && rt != 0i64) {
+        drop(print_line("[PASS] T01b Arrow keys non-zero\n"));
+    }
+    if (f1 != 0i64 && f12 != 0i64) {
+        drop(print_line("[PASS] T01c F1 and F12 non-zero\n"));
+    }
+    if (f1 == 0i64 || f12 == 0i64) {
+        drop(print_line("[FAIL] T01c F1/F12 should be non-zero\n"));
+        exit 1i32;
+    }
+
+    // T02: KEY constants are unique
+    if (ret != esc && ret != bs && esc != bs && up != dn && lt != rt) {
+        drop(print_line("[PASS] T02 KEY constants are unique\n"));
+    }
+    if (ret == esc || ret == bs || esc == bs || up == dn || lt == rt) {
+        drop(print_line("[FAIL] T02 KEY constants should be unique\n"));
+        exit 2i32;
+    }
+
+    // T03: MOD constants are non-zero and non-overlapping
+    Result<int64>:ms_r  = MOD_SHIFT(); int64:ms  = ms_r  ? 0i64;
+    Result<int64>:mc_r  = MOD_CTRL();  int64:mc  = mc_r  ? 0i64;
+    Result<int64>:ma_r  = MOD_ALT();   int64:ma  = ma_r  ? 0i64;
+    Result<int64>:msu_r = MOD_SUPER(); int64:msu = msu_r ? 0i64;
+
+    if (ms != 0i64 && mc != 0i64 && ma != 0i64 && msu != 0i64) {
+        drop(print_line("[PASS] T03a MOD constants non-zero\n"));
+    }
+    if (ms == 0i64 || mc == 0i64 || ma == 0i64 || msu == 0i64) {
+        drop(print_line("[FAIL] T03a MOD constants should be non-zero\n"));
+        exit 3i32;
+    }
+    // Bitwise AND of different modifier masks should be 0
+    int64:sc_overlap  = ms & mc;
+    int64:sa_overlap  = ms & ma;
+    int64:ca_overlap  = mc & ma;
+    if (sc_overlap == 0i64 && sa_overlap == 0i64 && ca_overlap == 0i64) {
+        drop(print_line("[PASS] T03b MOD constants don't overlap\n"));
+    }
+    if (sc_overlap != 0i64 || sa_overlap != 0i64 || ca_overlap != 0i64) {
+        drop(print_line("[FAIL] T03b MOD constants overlap\n"));
+        exit 3i32;
+    }
+
+    // T04: input_translate_key passes through known GDK keyvals
+    Result<int64>:tk_ret_r = input_translate_key(ret);
+    int64:tk_ret = tk_ret_r ? 0i64;
+    if (tk_ret == ret) {
+        drop(print_line("[PASS] T04a translate_key(KEY_RETURN) = KEY_RETURN\n"));
+    }
+    if (tk_ret != ret) {
+        drop(print_line("[FAIL] T04a translate_key(KEY_RETURN) wrong\n"));
+        exit 4i32;
+    }
+
+    Result<int64>:tk_esc_r = input_translate_key(esc);
+    int64:tk_esc = tk_esc_r ? 0i64;
+    if (tk_esc == esc) {
+        drop(print_line("[PASS] T04b translate_key(KEY_ESCAPE) = KEY_ESCAPE\n"));
+    }
+    if (tk_esc != esc) {
+        drop(print_line("[FAIL] T04b translate_key(KEY_ESCAPE) wrong\n"));
+        exit 4i32;
+    }
+
+    // T05: input_translate_key passes printable ASCII unchanged
+    // 'A' = 0x41, 'z' = 0x7A, ' ' = 0x20
+    Result<int64>:tk_A_r = input_translate_key(0x41i64);
+    int64:tk_A = tk_A_r ? 0i64;
+    if (tk_A == 0x41i64) {
+        drop(print_line("[PASS] T05a translate_key('A') = 0x41\n"));
+    }
+    if (tk_A != 0x41i64) {
+        drop(print_line("[FAIL] T05a translate_key('A') wrong\n"));
+        exit 5i32;
+    }
+
+    Result<int64>:tk_sp_r = input_translate_key(0x20i64);
+    int64:tk_sp = tk_sp_r ? 0i64;
+    if (tk_sp == 0x20i64) {
+        drop(print_line("[PASS] T05b translate_key(SPACE) = 0x20\n"));
+    }
+    if (tk_sp != 0x20i64) {
+        drop(print_line("[FAIL] T05b translate_key(SPACE) wrong\n"));
+        exit 5i32;
+    }
+
+    // T06: input_translate_key returns 0 for unknown keyval
+    // 0x1FFFFF is above all valid Unicode + GDK keyvals
+    Result<int64>:tk_unk_r = input_translate_key(0x1FFFFFi64);
+    int64:tk_unk = tk_unk_r ? 1i64;
+    if (tk_unk == 0i64) {
+        drop(print_line("[PASS] T06 translate_key(unknown) = 0\n"));
+    }
+    if (tk_unk != 0i64) {
+        drop(print_line("[FAIL] T06 translate_key(unknown) should return 0\n"));
+        exit 6i32;
+    }
+
+    // T07: input_translate_modifiers extracts Ctrl
+    // mc is the GDK Ctrl mask value — pass it directly as if it came from GTK
+    Result<int64>:tm_ctrl_r = input_translate_modifiers(mc);
+    int64:tm_ctrl = tm_ctrl_r ? 0i64;
+    // Our internal Ctrl bit is bit 1 (value 2)
+    int64:our_ctrl = tm_ctrl & 2i64;
+    if (our_ctrl == 2i64) {
+        drop(print_line("[PASS] T07 translate_modifiers extracts Ctrl\n"));
+    }
+    if (our_ctrl != 2i64) {
+        drop(print_line("[FAIL] T07 translate_modifiers Ctrl extraction wrong\n"));
+        exit 7i32;
+    }
+
+    // T08: input_translate_modifiers extracts Shift
+    Result<int64>:tm_shift_r = input_translate_modifiers(ms);
+    int64:tm_shift = tm_shift_r ? 0i64;
+    // Our internal Shift bit is bit 0 (value 1)
+    int64:our_shift = tm_shift & 1i64;
+    if (our_shift == 1i64) {
+        drop(print_line("[PASS] T08 translate_modifiers extracts Shift\n"));
+    }
+    if (our_shift != 1i64) {
+        drop(print_line("[FAIL] T08 translate_modifiers Shift extraction wrong\n"));
+        exit 8i32;
+    }
+
+    // T09: input_translate_modifiers Ctrl+Shift combined
+    int64:ctrl_shift = mc | ms;
+    Result<int64>:tm_cs_r = input_translate_modifiers(ctrl_shift);
+    int64:tm_cs = tm_cs_r ? 0i64;
+    // Both bits 0 (Shift) and 1 (Ctrl) should be set
+    int64:shift_bit = tm_cs & 1i64;
+    int64:ctrl_bit  = tm_cs & 2i64;
+    if (shift_bit == 1i64 && ctrl_bit == 2i64) {
+        drop(print_line("[PASS] T09 translate_modifiers Ctrl+Shift combined\n"));
+    }
+    if (shift_bit != 1i64 || ctrl_bit != 2i64) {
+        drop(print_line("[FAIL] T09 translate_modifiers Ctrl+Shift wrong\n"));
+        exit 9i32;
+    }
+
+    drop(print_line("All input tests passed.\n"));
+    exit 0i32;
+};

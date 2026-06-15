@@ -86,4 +86,76 @@ extern "nitty_gtk4_shim" {
     // ═══════════════════════════════════════════════════════════════════
 
     func:nitty_gtk4_widget_get_scale_factor = int64(int64:widget_ptr);
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.0.3: Input enable + GTK iteration
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_gtk4_input_enable = NIL();
+    func:nitty_gtk4_iteration    = int64();
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.0.3: Keyboard event polling
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_gtk4_key_controller_new = int64(int64:widget_ptr);
+    func:nitty_gtk4_key_poll           = int64();
+    func:nitty_gtk4_key_get_keyval     = int64();
+    func:nitty_gtk4_key_get_keycode    = int64();
+    func:nitty_gtk4_key_get_modifiers  = int64();
+    func:nitty_gtk4_key_get_type       = int64();
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.0.3: GDK keyval constants
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_gdk_key_return    = int64();
+    func:nitty_gdk_key_escape    = int64();
+    func:nitty_gdk_key_backspace = int64();
+    func:nitty_gdk_key_tab       = int64();
+    func:nitty_gdk_key_space     = int64();
+    func:nitty_gdk_key_up        = int64();
+    func:nitty_gdk_key_down      = int64();
+    func:nitty_gdk_key_left      = int64();
+    func:nitty_gdk_key_right     = int64();
+    func:nitty_gdk_key_home      = int64();
+    func:nitty_gdk_key_end       = int64();
+    func:nitty_gdk_key_page_up   = int64();
+    func:nitty_gdk_key_page_down = int64();
+    func:nitty_gdk_key_insert    = int64();
+    func:nitty_gdk_key_delete    = int64();
+    func:nitty_gdk_key_f1        = int64();
+    func:nitty_gdk_key_f2        = int64();
+    func:nitty_gdk_key_f3        = int64();
+    func:nitty_gdk_key_f4        = int64();
+    func:nitty_gdk_key_f5        = int64();
+    func:nitty_gdk_key_f6        = int64();
+    func:nitty_gdk_key_f7        = int64();
+    func:nitty_gdk_key_f8        = int64();
+    func:nitty_gdk_key_f9        = int64();
+    func:nitty_gdk_key_f10       = int64();
+    func:nitty_gdk_key_f11       = int64();
+    func:nitty_gdk_key_f12       = int64();
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.0.3: GDK modifier constants
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_gdk_mod_shift = int64();
+    func:nitty_gdk_mod_ctrl  = int64();
+    func:nitty_gdk_mod_alt   = int64();
+    func:nitty_gdk_mod_super = int64();
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.0.3: Mouse event polling
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_gtk4_mouse_controllers_new = int64(int64:widget_ptr);
+    func:nitty_gtk4_mouse_poll            = int64();
+    func:nitty_gtk4_mouse_get_type        = int64();
+    func:nitty_gtk4_mouse_get_x           = int64();
+    func:nitty_gtk4_mouse_get_y           = int64();
+    func:nitty_gtk4_mouse_get_button      = int64();
+    func:nitty_gtk4_mouse_get_scroll_dx   = int64();
+    func:nitty_gtk4_mouse_get_scroll_dy   = int64();
 }

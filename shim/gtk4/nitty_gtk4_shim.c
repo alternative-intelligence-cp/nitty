@@ -17,6 +17,7 @@
 
 #include "nitty_gtk4_shim.h"
 #include "nitty_render.h"
+#include "nitty_input.h"
 #include <gtk/gtk.h>
 #include <pango/pangocairo.h>
 #include <stdint.h>
@@ -38,6 +39,7 @@ static GtkWidget *g_main_window  = NULL;
 /* DrawingArea for the terminal grid */
 static GtkWidget *g_drawing_area   = NULL;
 static int        g_use_drawing_area = 0;  /* Set to 1 by nitty_gtk4_drawing_area_new */
+static int        g_use_input        = 0;  /* Set to 1 by nitty_gtk4_input_enable */
 
 /* Forward declaration of on_draw_func */
 static void on_draw_func(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer user_data);
@@ -68,6 +70,15 @@ static void on_activate(GtkApplication *app, gpointer user_data)
             gtk_window_set_child(GTK_WINDOW(window), da);
             g_drawing_area = da;
         }
+    }
+
+    /* Attach input controllers to the window */
+    if (g_use_input) {
+        /* Key controller on window so it receives focus events */
+        nitty_gtk4_key_controller_new((int64_t)(uintptr_t)window);
+        /* Mouse controllers on DrawingArea if available, else window */
+        GtkWidget *input_target = (g_drawing_area != NULL) ? g_drawing_area : window;
+        nitty_gtk4_mouse_controllers_new((int64_t)(uintptr_t)input_target);
     }
 
     gtk_window_present(GTK_WINDOW(window));
@@ -187,6 +198,22 @@ void nitty_gtk4_set_activate_callback(int64_t app_ptr, void (*callback)(int64_t)
 {
     (void)app_ptr;
     (void)callback;
+}
+
+/* ── Input enable ─────────────────────────────────────────────────────── */
+
+void nitty_gtk4_input_enable(void)
+{
+    g_use_input = 1;
+}
+
+/* ── GTK main loop iteration (non-blocking) ───────────────────────────── */
+
+int64_t nitty_gtk4_iteration(void)
+{
+    /* Process one pending event; return 1 if more events are pending */
+    gboolean more = g_main_context_iteration(NULL, FALSE);
+    return more ? 1 : 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
