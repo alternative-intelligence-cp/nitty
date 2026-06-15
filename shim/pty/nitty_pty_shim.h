@@ -2,17 +2,22 @@
  * nitty_pty_shim.h — PTY (pseudo-terminal) C shim for Nitty
  *
  * v0.1.0: PTY allocation, slave access, and configuration.
+ * v0.1.1: Session management, environment, shell spawning.
  *
  * Provides a thin C wrapper around POSIX PTY functions so that
  * Nitpick can call them via FFI. All functions use int64_t for
  * compatibility with Nitpick's int64 type.
  *
  * PTY allocation sequence:
- *   1. nitty_pty_openpt()          → master fd
- *   2. nitty_pty_grantpt(fd)       → 0 on success
- *   3. nitty_pty_unlockpt(fd)      → 0 on success
- *   4. nitty_pty_get_slave_path(fd, buf) → path length
- *   5. nitty_pty_open_slave(path)  → slave fd
+ *   1. nitty_pty_openpt()          -> master fd
+ *   2. nitty_pty_grantpt(fd)       -> 0 on success
+ *   3. nitty_pty_unlockpt(fd)      -> 0 on success
+ *   4. nitty_pty_get_slave_path(fd, buf) -> path length
+ *   5. nitty_pty_open_slave(path)  -> slave fd
+ *
+ * Shell spawning (v0.1.1):
+ *   nitty_pty_spawn_shell(master_fd, rows, cols) -> child PID
+ *     Internally: open slave, fork, setsid, dup2, execve
  *
  * All functions return -1 on error.
  */
@@ -27,83 +32,88 @@ extern "C" {
 #endif
 
 /* ═══════════════════════════════════════════════════════════════════════
- * PTY allocation
+ * PTY allocation (v0.1.0)
  * ═══════════════════════════════════════════════════════════════════════ */
 
-/**
- * Open a new pseudo-terminal master device.
- * Calls posix_openpt(O_RDWR | O_NOCTTY).
- * Returns master fd on success, -1 on error.
- */
 int64_t nitty_pty_openpt(void);
-
-/**
- * Change ownership and permissions of the slave PTY device.
- * Must be called after openpt, before unlockpt.
- * Returns 0 on success, -1 on error.
- */
 int64_t nitty_pty_grantpt(int64_t master_fd);
-
-/**
- * Unlock the slave PTY device for opening.
- * Must be called after grantpt.
- * Returns 0 on success, -1 on error.
- */
 int64_t nitty_pty_unlockpt(int64_t master_fd);
-
-/**
- * Get the slave device path for a master PTY fd.
- * Writes the null-terminated path into the buffer at buf_ptr.
- * buf_ptr must point to at least 256 bytes of writable memory.
- * Returns the path length (excluding null) on success, -1 on error.
- */
 int64_t nitty_pty_get_slave_path(int64_t master_fd, int64_t buf_ptr);
-
-/**
- * Open the slave PTY device by path.
- * path_ptr points to a null-terminated path string.
- * Returns slave fd on success, -1 on error.
- */
 int64_t nitty_pty_open_slave(int64_t path_ptr);
+const char *nitty_pty_get_slave_path_str(int64_t master_fd);
 
 /* ═══════════════════════════════════════════════════════════════════════
- * PTY configuration
+ * PTY configuration (v0.1.0)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+int64_t nitty_pty_set_nonblock(int64_t fd);
+int64_t nitty_pty_set_winsize(int64_t fd, int64_t rows, int64_t cols,
+                               int64_t xpixel, int64_t ypixel);
+int64_t nitty_pty_get_winsize(int64_t fd);
+int64_t nitty_pty_close(int64_t fd);
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Session management (v0.1.1)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/** Create a new session. Returns new session ID or -1. */
+int64_t nitty_pty_setsid(void);
+
+/** Set controlling terminal. Returns 0 or -1. */
+int64_t nitty_pty_set_ctty(int64_t slave_fd);
+
+/** Close all fds in [first_fd, last_fd]. Ignores EBADF. */
+void nitty_pty_close_range(int64_t first_fd, int64_t last_fd);
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Environment helpers (v0.1.1)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/** Set an environment variable. Returns 0 or -1. */
+int64_t nitty_pty_setenv(const char *name, const char *value);
+
+/** Get environment variable. Returns value string or NULL. */
+const char *nitty_pty_getenv_str(const char *name);
+
+/** Get user's default shell. Checks $SHELL, /bin/bash, /bin/sh. */
+const char *nitty_pty_get_default_shell(void);
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Shell spawning (v0.1.1)
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /**
- * Set O_NONBLOCK flag on a file descriptor.
- * Returns 0 on success, -1 on error.
+ * Spawn a shell on the given PTY master.
+ * Full fork/exec: open slave, fork, setsid, ctty, dup2, env, execve.
+ * Returns child PID (> 0) on success, -1 on error.
  */
-int64_t nitty_pty_set_nonblock(int64_t fd);
+int64_t nitty_pty_spawn_shell(int64_t master_fd, int64_t rows, int64_t cols);
 
-/**
- * Set the terminal window size on a PTY master fd.
- * rows/cols set ws_row/ws_col; xpixel/ypixel set ws_xpixel/ws_ypixel.
- * Calls ioctl(fd, TIOCSWINSZ, &ws).
- * Returns 0 on success, -1 on error.
- */
-int64_t nitty_pty_set_winsize(int64_t fd, int64_t rows, int64_t cols,
-                               int64_t xpixel, int64_t ypixel);
+/** Check if child is alive. Returns 1=alive, 0=exited, -1=error. */
+int64_t nitty_pty_child_alive(int64_t pid);
 
-/**
- * Get the terminal window size from a PTY fd.
- * Returns encoded value: (rows << 48) | (cols << 32) | (xpixel << 16) | ypixel
- * Returns -1 on error.
- */
-int64_t nitty_pty_get_winsize(int64_t fd);
+/** Blocking wait for child exit. Returns raw wait status or -1. */
+int64_t nitty_pty_wait_child(int64_t pid);
 
-/**
- * Close a file descriptor.
- * Returns 0 on success, -1 on error.
- */
-int64_t nitty_pty_close(int64_t fd);
+/** Non-blocking wait. Returns status if exited, 0 if running, -1 error. */
+int64_t nitty_pty_wait_child_nonblock(int64_t pid);
 
-/**
- * Get the slave path as a null-terminated string.
- * Returns pointer to internal static buffer.
- * Valid until next call to nitty_pty_get_slave_path.
- */
-const char *nitty_pty_get_slave_path_str(int64_t master_fd);
+/** Extract exit code from wait status. */
+int64_t nitty_pty_exit_code(int64_t status);
+
+/** Check if child was killed by signal. Returns 1 or 0. */
+int64_t nitty_pty_was_signaled(int64_t status);
+
+/** Get signal that killed child. */
+int64_t nitty_pty_term_signal(int64_t status);
+
+/** Send signal to child. Returns 0 or -1. */
+int64_t nitty_pty_kill(int64_t pid, int64_t sig);
+
+/** Signal constants. */
+int64_t nitty_pty_SIGTERM(void);
+int64_t nitty_pty_SIGKILL(void);
+int64_t nitty_pty_SIGHUP(void);
 
 #ifdef __cplusplus
 }

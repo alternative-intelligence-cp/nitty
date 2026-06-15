@@ -1,6 +1,7 @@
 // src/terminal/pty_ffi.npk — Nitpick-side extern declarations for PTY C shim
 //
 // v0.1.0: PTY allocation, slave access, winsize, and configuration.
+// v0.1.1: Session management, environment, shell spawning.
 //
 // Matches shim/pty/nitty_pty_shim.h signatures exactly.
 // All PTY pointers and fds are opaque int64.
@@ -8,7 +9,7 @@
 extern "nitty_pty_shim" {
 
     // ═══════════════════════════════════════════════════════════════════
-    // PTY allocation
+    // PTY allocation (v0.1.0)
     // ═══════════════════════════════════════════════════════════════════
 
     func:nitty_pty_openpt    = int64();
@@ -19,11 +20,49 @@ extern "nitty_pty_shim" {
     func:nitty_pty_get_slave_path_str = string(int64:master_fd);
 
     // ═══════════════════════════════════════════════════════════════════
-    // PTY configuration
+    // PTY configuration (v0.1.0)
     // ═══════════════════════════════════════════════════════════════════
 
     func:nitty_pty_set_nonblock  = int64(int64:fd);
     func:nitty_pty_set_winsize   = int64(int64:fd, int64:rows, int64:cols, int64:xpixel, int64:ypixel);
     func:nitty_pty_get_winsize   = int64(int64:fd);
     func:nitty_pty_close         = int64(int64:fd);
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Session management (v0.1.1)
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_pty_setsid        = int64();
+    func:nitty_pty_set_ctty      = int64(int64:slave_fd);
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Environment helpers (v0.1.1)
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_pty_setenv            = int64(string:name, string:value);
+    func:nitty_pty_getenv_str        = string(string:name);
+    func:nitty_pty_get_default_shell = string();
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Shell spawning (v0.1.1)
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_pty_spawn_shell       = int64(int64:master_fd, int64:rows, int64:cols);
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Child process management (v0.1.1)
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_pty_child_alive       = int64(int64:pid);
+    func:nitty_pty_wait_child        = int64(int64:pid);
+    func:nitty_pty_wait_child_nonblock = int64(int64:pid);
+    func:nitty_pty_exit_code         = int64(int64:status);
+    func:nitty_pty_was_signaled      = int64(int64:status);
+    func:nitty_pty_term_signal       = int64(int64:status);
+    func:nitty_pty_kill              = int64(int64:pid, int64:sig);
+
+    // Signal constants
+    func:nitty_pty_SIGTERM           = int64();
+    func:nitty_pty_SIGKILL           = int64();
+    func:nitty_pty_SIGHUP            = int64();
 }

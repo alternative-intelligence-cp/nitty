@@ -2,6 +2,7 @@
  * nitty_pty_shim.c — PTY (pseudo-terminal) C shim implementation
  *
  * v0.1.0: PTY allocation, slave access, winsize, and configuration.
+ * v0.1.1: Session management, environment, shell spawning.
  *
  * This shim wraps POSIX PTY functions for Nitpick FFI access.
  * All pointer parameters are passed as int64_t and cast internally.
@@ -20,6 +21,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/ioctl.h>
+#include <sys/wait.h>
+#include <signal.h>
 #include <stdio.h>
 
 /* Static buffer for slave path (ptsname_r needs a buffer).
@@ -182,3 +185,267 @@ int64_t nitty_pty_close(int64_t fd)
     }
     return 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Session management (v0.1.1)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+int64_t nitty_pty_setsid(void)
+{
+    pid_t sid = setsid();
+    if (sid < 0) {
+        fprintf(stderr, "PTY: setsid failed: %s\n", strerror(errno));
+        return -1;
+    }
+    return (int64_t)sid;
+}
+
+int64_t nitty_pty_set_ctty(int64_t slave_fd)
+{
+    /* TIOCSCTTY with arg=0: set controlling terminal */
+    int result = ioctl((int)slave_fd, TIOCSCTTY, 0);
+    if (result < 0) {
+        fprintf(stderr, "PTY: ioctl TIOCSCTTY(%d) failed: %s\n",
+                (int)slave_fd, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+void nitty_pty_close_range(int64_t first_fd, int64_t last_fd)
+{
+    for (int fd = (int)first_fd; fd <= (int)last_fd; fd++) {
+        close(fd);  /* silently ignore EBADF */
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Environment helpers (v0.1.1)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+int64_t nitty_pty_setenv(const char *name, const char *value)
+{
+    int result = setenv(name, value, 1);  /* 1 = overwrite */
+    if (result != 0) {
+        fprintf(stderr, "PTY: setenv(%s=%s) failed: %s\n",
+                name, value, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+const char *nitty_pty_getenv_str(const char *name)
+{
+    return getenv(name);
+}
+
+static char g_shell_path_buf[256];
+
+const char *nitty_pty_get_default_shell(void)
+{
+    /* Try $SHELL first */
+    const char *shell = getenv("SHELL");
+    if (shell && shell[0] != '\0') {
+        if (access(shell, X_OK) == 0) {
+            snprintf(g_shell_path_buf, sizeof(g_shell_path_buf), "%s", shell);
+            return g_shell_path_buf;
+        }
+    }
+
+    /* Fall back to /bin/bash */
+    if (access("/bin/bash", X_OK) == 0) {
+        snprintf(g_shell_path_buf, sizeof(g_shell_path_buf), "/bin/bash");
+        return g_shell_path_buf;
+    }
+
+    /* Last resort: /bin/sh */
+    snprintf(g_shell_path_buf, sizeof(g_shell_path_buf), "/bin/sh");
+    return g_shell_path_buf;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Shell spawning (v0.1.1)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+int64_t nitty_pty_spawn_shell(int64_t master_fd, int64_t rows, int64_t cols)
+{
+    /* Step 1: Get slave path */
+    char slave_path[256];
+    int pr = ptsname_r((int)master_fd, slave_path, sizeof(slave_path));
+    if (pr != 0) {
+        fprintf(stderr, "PTY: spawn: ptsname_r failed: %s\n", strerror(errno));
+        return -1;
+    }
+
+    /* Step 2: Set initial terminal size */
+    nitty_pty_set_winsize(master_fd, rows, cols, 0, 0);
+
+    /* Step 3: Open slave fd */
+    int slave_fd = open(slave_path, O_RDWR);
+    if (slave_fd < 0) {
+        fprintf(stderr, "PTY: spawn: open slave(%s) failed: %s\n",
+                slave_path, strerror(errno));
+        return -1;
+    }
+
+    /* Step 4: Fork */
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        /* Error */
+        fprintf(stderr, "PTY: spawn: fork failed: %s\n", strerror(errno));
+        close(slave_fd);
+        return -1;
+    }
+
+    if (pid == 0) {
+        /* ────── Child process ────── */
+
+        /* Close master fd — only the parent uses it */
+        close((int)master_fd);
+
+        /* Create new session (detach from parent's controlling terminal) */
+        if (setsid() < 0) {
+            fprintf(stderr, "PTY: child: setsid failed: %s\n", strerror(errno));
+            _exit(126);
+        }
+
+        /* Set slave as controlling terminal */
+        if (ioctl(slave_fd, TIOCSCTTY, 0) < 0) {
+            fprintf(stderr, "PTY: child: TIOCSCTTY failed: %s\n", strerror(errno));
+            _exit(126);
+        }
+
+        /* Redirect stdin/stdout/stderr to slave */
+        if (dup2(slave_fd, STDIN_FILENO) < 0 ||
+            dup2(slave_fd, STDOUT_FILENO) < 0 ||
+            dup2(slave_fd, STDERR_FILENO) < 0) {
+            fprintf(stderr, "PTY: child: dup2 failed: %s\n", strerror(errno));
+            _exit(126);
+        }
+
+        /* Close original slave fd if it's not 0, 1, or 2 */
+        if (slave_fd > STDERR_FILENO) {
+            close(slave_fd);
+        }
+
+        /* Close any leaked fds above stderr */
+        for (int fd = STDERR_FILENO + 1; fd < 1024; fd++) {
+            close(fd);
+        }
+
+        /* Set environment variables */
+        setenv("TERM", "xterm-256color", 1);
+        setenv("COLORTERM", "truecolor", 1);
+        setenv("TERM_PROGRAM", "nitty", 1);
+        setenv("TERM_PROGRAM_VERSION", "0.1.1", 1);
+
+        /* Resolve shell path */
+        const char *shell = nitty_pty_get_default_shell();
+
+        /* Build argv: [shell, "-l", NULL] (login shell) */
+        char *argv[] = { (char *)shell, (char *)"-l", NULL };
+
+        /* Exec the shell (inherits current environment) */
+        execv(shell, argv);
+
+        /* If we get here, exec failed */
+        fprintf(stderr, "PTY: child: execv(%s) failed: %s\n",
+                shell, strerror(errno));
+        _exit(127);
+    }
+
+    /* ────── Parent process ────── */
+
+    /* Close slave fd — only the child uses it */
+    close(slave_fd);
+
+    /* Set master to non-blocking for async I/O */
+    nitty_pty_set_nonblock(master_fd);
+
+    fprintf(stderr, "PTY: spawned shell PID %d on %s\n",
+            (int)pid, slave_path);
+
+    return (int64_t)pid;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Child process management (v0.1.1)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+int64_t nitty_pty_child_alive(int64_t pid)
+{
+    int status = 0;
+    pid_t result = waitpid((pid_t)pid, &status, WNOHANG);
+    if (result == 0) {
+        return 1;  /* still running */
+    }
+    if (result == (pid_t)pid) {
+        return 0;  /* exited */
+    }
+    return -1;  /* error */
+}
+
+int64_t nitty_pty_wait_child(int64_t pid)
+{
+    int status = 0;
+    pid_t result = waitpid((pid_t)pid, &status, 0);
+    if (result < 0) {
+        fprintf(stderr, "PTY: waitpid(%d) failed: %s\n",
+                (int)pid, strerror(errno));
+        return -1;
+    }
+    return (int64_t)status;
+}
+
+int64_t nitty_pty_wait_child_nonblock(int64_t pid)
+{
+    int status = 0;
+    pid_t result = waitpid((pid_t)pid, &status, WNOHANG);
+    if (result == 0) {
+        return 0;  /* still running */
+    }
+    if (result == (pid_t)pid) {
+        return (int64_t)status;
+    }
+    return -1;
+}
+
+int64_t nitty_pty_exit_code(int64_t status)
+{
+    int s = (int)status;
+    if (WIFEXITED(s)) {
+        return (int64_t)WEXITSTATUS(s);
+    }
+    return -1;
+}
+
+int64_t nitty_pty_was_signaled(int64_t status)
+{
+    int s = (int)status;
+    return WIFSIGNALED(s) ? 1 : 0;
+}
+
+int64_t nitty_pty_term_signal(int64_t status)
+{
+    int s = (int)status;
+    if (WIFSIGNALED(s)) {
+        return (int64_t)WTERMSIG(s);
+    }
+    return -1;
+}
+
+int64_t nitty_pty_kill(int64_t pid, int64_t sig)
+{
+    int result = kill((pid_t)pid, (int)sig);
+    if (result < 0) {
+        fprintf(stderr, "PTY: kill(%d, %d) failed: %s\n",
+                (int)pid, (int)sig, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+int64_t nitty_pty_SIGTERM(void) { return (int64_t)SIGTERM; }
+int64_t nitty_pty_SIGKILL(void) { return (int64_t)SIGKILL; }
+int64_t nitty_pty_SIGHUP(void)  { return (int64_t)SIGHUP;  }

@@ -1,0 +1,168 @@
+// src/terminal/shell.npk — Shell process spawning and management
+//
+// v0.1.1: Fork/exec shell, child lifecycle, signal handling.
+//
+// Uses the C-side PTY shim for the actual fork/exec sequence
+// since it requires setsid/dup2/execve which are inherently
+// unsafe operations best handled in C.
+//
+// Shell lifecycle:
+//   1. shell_spawn(rows, cols)  → allocates PTY + forks shell
+//   2. shell_alive()            → check if child is running
+//   3. shell_wait()             → blocking wait for exit
+//   4. shell_destroy()          → kill child, close PTY, cleanup
+
+use "pty_ffi.npk".*;
+use "pty.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════
+// Module state
+// ═══════════════════════════════════════════════════════════════════
+
+int64:g_child_pid = -1i64;
+int64:g_shell_master_fd = -1i64;
+
+// ═══════════════════════════════════════════════════════════════════
+// Shell spawning
+// ═══════════════════════════════════════════════════════════════════
+
+/// Spawn a new shell process on a fresh PTY.
+/// rows/cols set the initial terminal dimensions.
+/// Returns child PID (> 0) on success, -1 on failure.
+pub func:shell_spawn = int64(int64:rows, int64:cols) {
+    // Allocate a PTY pair
+    Result<int64>:alloc_r = pty_allocate();
+    int64:master = alloc_r ? -1i64;
+    if (master < 0i64) {
+        pass(-1i64);
+    }
+
+    // Spawn the shell via the C shim
+    int64:pid = nitty_pty_spawn_shell(master, rows, cols);
+    if (pid < 0i64) {
+        // Cleanup on failure
+        drop(pty_close());
+        pass(-1i64);
+    }
+
+    // Store state
+    g_child_pid = pid;
+    g_shell_master_fd = master;
+
+    pass(pid);
+};
+
+/// Get the master fd for I/O with the shell.
+/// Returns -1 if no shell is spawned.
+pub func:shell_get_master_fd = int64() {
+    pass(g_shell_master_fd);
+};
+
+/// Get the PID of the spawned shell process.
+/// Returns -1 if no shell is spawned.
+pub func:shell_get_pid = int64() {
+    pass(g_child_pid);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Child lifecycle
+// ═══════════════════════════════════════════════════════════════════
+
+/// Check if the shell process is still alive.
+/// Returns 1 if alive, 0 if exited, -1 on error.
+pub func:shell_alive = int64() {
+    if (g_child_pid < 0i64) { pass(0i64); }
+    int64:result = nitty_pty_child_alive(g_child_pid);
+    pass(result);
+};
+
+/// Wait for the shell to exit (blocking).
+/// Returns the raw wait status, or -1 on error.
+pub func:shell_wait = int64() {
+    if (g_child_pid < 0i64) { pass(-1i64); }
+    int64:status = nitty_pty_wait_child(g_child_pid);
+    g_child_pid = -1i64;
+    pass(status);
+};
+
+/// Non-blocking wait. Returns status if exited, 0 if running, -1 error.
+pub func:shell_wait_nonblock = int64() {
+    if (g_child_pid < 0i64) { pass(-1i64); }
+    int64:status = nitty_pty_wait_child_nonblock(g_child_pid);
+    // If child exited (status != 0), clear pid
+    if (status != 0i64) {
+        g_child_pid = -1i64;
+    }
+    pass(status);
+};
+
+/// Extract exit code from wait status.
+pub func:shell_exit_code = int64(int64:status) {
+    int64:code = nitty_pty_exit_code(status);
+    pass(code);
+};
+
+/// Check if child was killed by signal.
+pub func:shell_was_signaled = int64(int64:status) {
+    int64:sig = nitty_pty_was_signaled(status);
+    pass(sig);
+};
+
+/// Get the signal that killed the child.
+pub func:shell_term_signal = int64(int64:status) {
+    int64:sig = nitty_pty_term_signal(status);
+    pass(sig);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Signal sending
+// ═══════════════════════════════════════════════════════════════════
+
+/// Send a signal to the shell process.
+/// Returns 0 on success, -1 on error.
+pub func:shell_kill = int64(int64:sig) {
+    if (g_child_pid < 0i64) { pass(-1i64); }
+    int64:result = nitty_pty_kill(g_child_pid, sig);
+    pass(result);
+};
+
+/// Signal constants.
+pub func:SIG_TERM = int64() { int64:v = nitty_pty_SIGTERM(); pass(v); };
+pub func:SIG_KILL = int64() { int64:v = nitty_pty_SIGKILL(); pass(v); };
+pub func:SIG_HUP  = int64() { int64:v = nitty_pty_SIGHUP();  pass(v); };
+
+// ═══════════════════════════════════════════════════════════════════
+// Cleanup
+// ═══════════════════════════════════════════════════════════════════
+
+/// Full cleanup: kill child if alive, wait, close PTY.
+/// Safe to call multiple times.
+pub func:shell_destroy = int64() {
+    // If child is still alive, try SIGTERM then SIGKILL
+    if (g_child_pid > 0i64) {
+        int64:alive = nitty_pty_child_alive(g_child_pid);
+        if (alive == 1i64) {
+            // Send SIGTERM
+            int64:sigterm = nitty_pty_SIGTERM();
+            nitty_pty_kill(g_child_pid, sigterm);
+            // Give it a moment then check again
+            int64:still_alive = nitty_pty_child_alive(g_child_pid);
+            if (still_alive == 1i64) {
+                // Force kill
+                int64:sigkill = nitty_pty_SIGKILL();
+                nitty_pty_kill(g_child_pid, sigkill);
+            }
+            // Reap the child
+            nitty_pty_wait_child(g_child_pid);
+        }
+        g_child_pid = -1i64;
+    }
+
+    // Close PTY
+    if (g_shell_master_fd >= 0i64) {
+        drop(pty_close());
+        g_shell_master_fd = -1i64;
+    }
+
+    pass(0i64);
+};
