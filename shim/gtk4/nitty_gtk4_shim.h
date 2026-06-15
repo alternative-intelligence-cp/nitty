@@ -236,6 +236,30 @@ int64_t nitty_gtk4_pty_bytes_available(void);
  */
 int64_t nitty_gtk4_pty_poll_byte(void);
 
+/**
+ * v0.3.3: Write one byte to the PTY master fd.
+ * Used by Nitpick pipeline for responses (DECSET 1004 focus reporting, etc.).
+ * Returns 1 on success, -1 if no PTY is active.
+ */
+int64_t nitty_gtk4_pty_write_byte(int64_t byte_val);
+
+/* =======================================================================
+ * v0.3.3: Focus controller
+ * ======================================================================= */
+
+/**
+ * Enable focus tracking on the DrawingArea.
+ * Call once after nitty_gtk4_window_show() so the drawing area exists.
+ * Registers enter/leave callbacks on a GtkEventControllerFocus.
+ */
+void nitty_gtk4_focus_enable(void);
+
+/**
+ * Return 1 if the terminal drawing area currently has keyboard focus,
+ * 0 if it is unfocused. Used by renderer.npk to draw hollow cursor.
+ */
+int64_t nitty_gtk4_get_focused(void);
+
 #ifdef __cplusplus
 }
 #endif

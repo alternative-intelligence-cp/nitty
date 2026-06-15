@@ -1,4 +1,4 @@
-// src/gui/renderer.npk — Terminal cell grid renderer (v0.3.2)
+// src/gui/renderer.npk — Terminal cell grid renderer (v0.3.3)
 //
 // The sync layer between the Nitpick-side terminal state (terminal_state.npk,
 // grid.npk) and the C-side Cairo/Pango paint engine (nitty_render.c).
@@ -13,6 +13,7 @@
 //   - v0.3.1: also pushes per-cell fg/bg colors via nitty_render_set_cell_fg/bg().
 //   - v0.3.2: also pushes per-cell attribute flags via nitty_render_set_cell_flags()
 //     for bold/italic fonts, underline styles, strikethrough, overline, blink.
+//   - v0.3.3: pushes cursor state via nitty_render_set_cursor() each frame.
 //   - renderer_sync_frame() is called from the idle/draw callback.
 //
 // Coordinate system:
@@ -29,9 +30,12 @@
 //   3. Each frame: renderer_sync_frame() → GTK draw callback paints
 
 use "gtk4_ffi.npk".*;
+use "cursor.npk".*;
+use "viewport.npk".*;
 use "../terminal/terminal_state.npk".*;
 use "../terminal/grid.npk".*;
 use "../terminal/cell.npk".*;
+use "../terminal/scrollback.npk".*;
 use "color_scheme.npk".*;
 use "color_resolve.npk".*;
 
@@ -118,25 +122,15 @@ pub func:renderer_get_rows = int64() { pass(g_rend_rows); };
 // ═══════════════════════════════════════════════════════════════════════
 
 /// Sync the terminal grid state to the C render grid.
-/// Steps:
-///   1. Clear all C-side grid cells (blank slate).
-///   2. Query TerminalState for rows and cols.
-///   3. For each cell: read codepoint, attrs (fg/bg), flags (bold/inverse/etc.)
-///      and push to C renderer with per-cell color and attribute overrides.
+/// v0.3.4: viewport-aware. When scroll_offset > 0, renders rows from
+/// scrollback history instead of (or in addition to) the active grid.
 ///
-/// v0.3.1 color integration:
-///   - Reads grid_get_attrs(r,c) and grid_get_flags(r,c) per cell.
-///   - Resolves fg/bg colors via color_resolve.npk (bold-bright, dim, inverse, etc.)
-///   - Skips bg call for cells with default background (optimization).
-///   - Screen-wide reverse video (DECSCNM) queried each frame.
+/// Display row `r` sources:
+///   sb_idx = offset - 1 - r  (>=0 means from scrollback, newest at top)
+///   active_row = r - offset  (>=0 means from active grid)
 ///
-/// v0.3.2 attribute flag integration:
-///   - Pushes flags to nitty_render_set_cell_flags() for all cells with non-zero
-///     flags, so the C renderer can apply bold/italic fonts, draw underline
-///     (all 5 styles), strikethrough, overline, and manage blink suppression.
-///
-/// Called from the GTK idle/draw callback before nitty_render_frame()
-/// is invoked internally by the C draw callback.
+/// v0.3.3: hides cursor when scrolled up (cursor is on live output).
+/// v0.3.4: calls nitty_render_set_scroll_info for C-side scrollbar.
 pub func:renderer_sync_frame = NIL() {
     // Blank the C grid — prevents stale chars from prior frames
     nitty_render_clear_grid();
@@ -148,15 +142,42 @@ pub func:renderer_sync_frame = NIL() {
     int64:rows = raw ts_get_rows();
     int64:cols = raw ts_get_cols();
 
+    // v0.3.4: scroll offset and scrollback length
+    int64:offset = raw viewport_get_offset();
+    int64:sb_len = raw scrollback_len();
+
     int64:r = 0i64;
     while (r < rows) {
+        // Determine source for this display row
+        int64:sb_idx    = offset - 1i64 - r;  // >=0: pull from scrollback
+        int64:active_row = r - offset;         // >=0: pull from active grid
+
         int64:c = 0i64;
         while (c < cols) {
-            int64:cp    = raw grid_get_cp(r, c);
-            int64:attrs = raw grid_get_attrs(r, c);
-            int64:flags = raw grid_get_flags(r, c);
+            int64:cp    = 0x20i64;
+            int64:attrs = 0i64;
+            int64:flags = 0i64;
 
-            // Background: paint if non-default (skip default = C renderer's bg fill)
+            if (sb_idx >= 0i64) {
+                if (sb_idx < sb_len) {
+                    // Row comes from scrollback
+                    cp    = raw scrollback_get_cp(sb_idx, c);
+                    attrs = raw scrollback_get_attrs(sb_idx, c);
+                    flags = raw scrollback_get_flags(sb_idx, c);
+                }
+            }
+            if (sb_idx < 0i64) {
+                if (active_row >= 0i64) {
+                    if (active_row < rows) {
+                        // Row comes from active grid
+                        cp    = raw grid_get_cp(active_row, c);
+                        attrs = raw grid_get_attrs(active_row, c);
+                        flags = raw grid_get_flags(active_row, c);
+                    }
+                }
+            }
+
+            // Background: paint if non-default
             if (raw bg_is_default(attrs, flags) == 0i64) {
                 int64:bg_r = raw resolve_bg_r(attrs, flags);
                 int64:bg_g = raw resolve_bg_g(attrs, flags);
@@ -164,17 +185,15 @@ pub func:renderer_sync_frame = NIL() {
                 nitty_render_set_cell_bg(c, r, bg_r, bg_g, bg_b);
             }
 
-            // Codepoint + fg color: only for non-space, non-NUL cells
+            // Codepoint + fg color
             if (cp != 0x20i64) {
                 if (cp != 0i64) {
-                    // Set per-cell fg color if non-default attrs
                     if (attrs != 0i64) {
                         int64:fg_r = raw resolve_fg_r(attrs, flags);
                         int64:fg_g = raw resolve_fg_g(attrs, flags);
                         int64:fg_b = raw resolve_fg_b(attrs, flags);
                         nitty_render_set_cell_fg(c, r, fg_r, fg_g, fg_b);
                     }
-                    // Also check flags (inverse/dim/hidden with default attrs)
                     if (attrs == 0i64) {
                         if (flags != 0i64) {
                             int64:fg_r = raw resolve_fg_r(attrs, flags);
@@ -186,8 +205,7 @@ pub func:renderer_sync_frame = NIL() {
                     nitty_render_set_cell_cp(c, r, cp);
                 }
             }
-            // v0.3.2: Push attribute flags for decoration rendering
-            // (includes space cells — underlined/overlined spaces need decorations)
+            // v0.3.2: Push attribute flags
             if (flags != 0i64) {
                 nitty_render_set_cell_flags(c, r, flags);
             }
@@ -195,5 +213,30 @@ pub func:renderer_sync_frame = NIL() {
         }
         r = r + 1i64;
     }
+
+    // v0.3.3: Push cursor state — hidden when scrolled up
+    if (offset == 0i64) {
+        int64:cur_row   = raw ts_get_cursor_row();
+        int64:cur_col   = raw ts_get_cursor_col();
+        int64:cur_shape = raw ts_get_cursor_shape();
+        int64:cur_blink = raw ts_get_cursor_blink_enabled();
+        int64:dectcem  = raw ts_get_mode_cursor_visible();
+        int64:blink_ph = nitty_render_get_cursor_blink_phase();
+        int64:cur_vis = 0i64;
+        if (dectcem != 0i64) {
+            if (cur_blink == 0i64) { cur_vis = 1i64; }
+            if (cur_blink != 0i64) { cur_vis = blink_ph; }
+        }
+        int64:focused = nitty_gtk4_get_focused();
+        nitty_render_set_cursor(cur_col, cur_row, cur_shape, cur_vis, focused);
+    }
+    if (offset != 0i64) {
+        // Hide cursor when scrolled into history
+        nitty_render_set_cursor(0i64, 0i64, 0i64, 0i64, 0i64);
+    }
+
+    // v0.3.4: Send scroll info to C for scrollbar drawing
+    int64:total = sb_len + rows;
+    nitty_render_set_scroll_info(offset, total, rows);
     pass(NIL);
 };

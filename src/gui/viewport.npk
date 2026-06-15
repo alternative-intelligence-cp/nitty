@@ -1,0 +1,80 @@
+// src/gui/viewport.npk — Scroll viewport state (v0.3.4)
+//
+// Tracks the user's scroll position within the combined scrollback + active
+// grid view. A scroll_offset of 0 means "at the bottom" (showing live output).
+// A positive offset means the user has scrolled up into scrollback history.
+//
+// The viewport does NOT own any cell data — it only manages the offset integer.
+// The renderer queries viewport_get_offset() each frame to determine which
+// rows to render from scrollback vs. the active grid.
+//
+// At-bottom tracking:
+//   g_vp_at_bottom = 1 when offset == 0 (auto-tracking live output)
+//   g_vp_at_bottom = 0 when user has manually scrolled up
+//   Auto-scrolls are only performed when at_bottom is true.
+//
+// Public API:
+//   viewport_scroll_up(lines, max)  — scroll toward older history
+//   viewport_scroll_down(lines)     — scroll toward live output
+//   viewport_scroll_to_bottom()     — jump to live output (offset=0)
+//   viewport_scroll_to_top(sb_len)  — jump to oldest scrollback line
+//   viewport_get_offset()           — current scroll offset (rows from bottom)
+//   viewport_is_at_bottom()         — 1 if at bottom
+
+// ═══════════════════════════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:g_vp_offset    = 0i64;   // rows scrolled up from bottom (0 = live)
+int64:g_vp_at_bottom = 1i64;   // 1 = auto-tracking live output
+
+// ═══════════════════════════════════════════════════════════════════════
+// Accessors
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Current scroll offset (0 = at bottom, N = N rows scrolled up).
+pub func:viewport_get_offset = int64() { pass(g_vp_offset); };
+
+/// Returns 1 if the viewport is at the bottom (tracking live output).
+pub func:viewport_is_at_bottom = int64() { pass(g_vp_at_bottom); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Scroll Operations
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Scroll up (toward older history) by `lines` rows.
+/// `max` = maximum allowed offset (typically scrollback_len()).
+/// Clamps so offset never exceeds max. Sets at_bottom=0.
+pub func:viewport_scroll_up = NIL(int64:lines, int64:max) {
+    int64:new_off = g_vp_offset + lines;
+    if (new_off > max) { new_off = max; }
+    if (new_off < 0i64) { new_off = 0i64; }
+    g_vp_offset    = new_off;
+    if (new_off > 0i64) { g_vp_at_bottom = 0i64; }
+    pass(NIL);
+};
+
+/// Scroll down (toward live output) by `lines` rows.
+/// Clamps at 0. Sets at_bottom=1 when reaching bottom.
+pub func:viewport_scroll_down = NIL(int64:lines) {
+    int64:new_off = g_vp_offset - lines;
+    if (new_off < 0i64) { new_off = 0i64; }
+    g_vp_offset = new_off;
+    if (new_off == 0i64) { g_vp_at_bottom = 1i64; }
+    pass(NIL);
+};
+
+/// Jump to live output (offset=0). Resets at_bottom flag.
+pub func:viewport_scroll_to_bottom = NIL() {
+    g_vp_offset    = 0i64;
+    g_vp_at_bottom = 1i64;
+    pass(NIL);
+};
+
+/// Jump to the oldest scrollback line (offset=sb_len).
+/// `sb_len` = current scrollback_len().
+pub func:viewport_scroll_to_top = NIL(int64:sb_len) {
+    g_vp_offset    = sb_len;
+    g_vp_at_bottom = 0i64;
+    pass(NIL);
+};

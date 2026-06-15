@@ -1,7 +1,7 @@
 // src/terminal/terminal_state_apply.npk — Action application layer
 //
+// v0.3.3: Adds DECSET 1004 (focus events) and ACT_SET_CURSOR_STYLE (DECSCUSR).
 // v0.2.5: Applies TerminalAction events to the ts_* state.
-// All state reads/writes go through the ts_get_*/ts_set_* API since
 // module-level variables from imported modules are not directly
 // accessible in Nitpick — only functions are exported.
 //
@@ -20,6 +20,7 @@ use "cell.npk".*;
 use "attributes.npk".*;
 use "modes.npk".*;
 use "actions.npk".*;
+use "scrollback.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Auto-Wrap Helper
@@ -38,6 +39,14 @@ func:ts_do_wrap = NIL() {
         pass(NIL);
     }
     // At bottom of scroll region — scroll up, keep cursor on last row
+    // v0.3.4: capture displaced row into scrollback if full-screen primary scroll
+    if (raw ts_get_scroll_top() == 0i64) {
+        if (sbot == raw ts_get_rows() - 1i64) {
+            if (raw grid_get_active() == 0i64) {
+                drop(scrollback_push_row(0i64));
+            }
+        }
+    }
     drop(grid_scroll_up(raw ts_get_scroll_top(), sbot, 1i64));
     pass(NIL);
 };
@@ -103,6 +112,14 @@ pub func:ts_apply_lf = NIL() {
     if (row < sbot) {
         drop(ts_set_cursor_row(row + 1i64));
         pass(NIL);
+    }
+    // v0.3.4: capture displaced row into scrollback if full-screen primary scroll
+    if (raw ts_get_scroll_top() == 0i64) {
+        if (sbot == raw ts_get_rows() - 1i64) {
+            if (raw grid_get_active() == 0i64) {
+                drop(scrollback_push_row(0i64));
+            }
+        }
     }
     drop(grid_scroll_up(raw ts_get_scroll_top(), sbot, 1i64));
     pass(NIL);
@@ -201,6 +218,10 @@ func:ts_erase_display = NIL(int64:mode) {
         drop(grid_clear_region(row, 0i64, row, col));
         pass(NIL);
     }
+    // mode 3: ED 3 — erase scrollback buffer (v0.3.4), then erase screen
+    if (mode == 3i64) {
+        drop(scrollback_clear());
+    }
     // mode 2 or 3: erase entire visible screen
     drop(grid_clear_region(0i64, 0i64, rows - 1i64, cols - 1i64));
     pass(NIL);
@@ -248,6 +269,7 @@ func:ts_apply_dec_mode = NIL(int64:idx, int64:enabled) {
     if (idx == 1000i64) { drop(ts_set_mode_mouse_button(enabled));   pass(NIL); }
     if (idx == 1002i64) { drop(ts_set_mode_mouse_drag(enabled));     pass(NIL); }
     if (idx == 1003i64) { drop(ts_set_mode_mouse_all(enabled));      pass(NIL); }
+    if (idx == 1004i64) { drop(ts_set_mode_focus_events(enabled));   pass(NIL); }
     if (idx == 1006i64) { drop(ts_set_mode_mouse_sgr(enabled));      pass(NIL); }
     if (idx == 1049i64) { drop(ts_switch_screen_1049(enabled));      pass(NIL); }
     if (idx == 2004i64) { drop(ts_set_mode_bracketed_paste(enabled)); pass(NIL); }
@@ -645,6 +667,14 @@ pub func:ts_apply_action = NIL(int64:type, int64:data1, int64:data2) {
     }
     // ── ACT_PRIMARY_DA (58) ───────────────────────────────
     if (type == 58i64) { drop(ts_primary_da_response()); pass(NIL); }
+
+    // ── ACT_SET_CURSOR_STYLE (60) — DECSCUSR ──────────────
+    // data1=shape (0=Block, 1=Underline, 2=Bar), data2=blink_enabled
+    if (type == 60i64) {
+        drop(ts_set_cursor_shape(data1));
+        drop(ts_set_cursor_blink_enabled(data2));
+        pass(NIL);
+    }
 
     // All other action types: silently ignored.
     pass(NIL);

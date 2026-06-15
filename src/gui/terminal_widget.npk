@@ -1,24 +1,30 @@
 // src/gui/terminal_widget.npk — Terminal widget: pipeline + renderer + GTK4
 //
+// v0.3.4: Adds scroll viewport handling (scroll wheel, Shift+PgUp/PgDn,
+//   auto-scroll to bottom on new output). Viewport state in viewport.npk.
+// v0.3.3: Adds focus controller registration (tw_focus_enable) and DECSET 1004
+//   focus-in/out reporting (ESC[I / ESC[O written to PTY master).
 // v0.3.0: Composites the Nitpick-side terminal pipeline (terminal_pipeline.npk)
 // with the cell grid renderer (renderer.npk) and the GTK4 draw/resize lifecycle.
 //
 // Architecture:
-//   - tw_init()           : pipeline_init + renderer_init (call before app_run)
-//   - tw_on_draw()        : drain PTY queue → pipeline_feed; renderer_sync_frame
-//                           (called from app's render callback / idle hook)
-//   - tw_on_resize(w, h)  : renderer_resize → ts_resize (call on GTK resize event)
-//   - tw_queue_redraw()   : nitty_gtk4_queue_redraw (call after PTY output)
-//   - tw_get_rows/cols()  : grid dimensions for PTY winsize negotiation
+//   - tw_init()         : pipeline_init + renderer_init (call before app_run)
+//   - tw_focus_enable() : register focus controller after window is shown
+//   - tw_on_draw()      : drain PTY queue → pipeline_feed; renderer_sync_frame
+//                         (also handles focus-change reporting via DECSET 1004)
+//   - tw_on_resize(w,h) : renderer_resize → ts_resize (call on GTK resize event)
+//   - tw_queue_redraw() : nitty_gtk4_queue_redraw (call after PTY output)
+//   - tw_get_rows/cols(): grid dimensions for PTY winsize negotiation
 //
 // Draw flow (each GTK frame):
 //   1. C idle callback fires → nitty_terminal_poll_output reads PTY bytes
 //      → enqueues to g_pty_queue AND feeds nitty_grid_process_output (C path)
 //   2. GTK draw callback fires → on_draw_func calls g_render_callback
 //   3. g_render_callback → tw_on_draw():
-//      a. Drain g_pty_queue byte-by-byte through pipeline_feed
-//      b. renderer_sync_frame() → push TS state to C render grid
-//      c. nitty_render_frame() then paints via Cairo/Pango (called by C shim)
+//      a. Check focus change → emit ESC[I/ESC[O if DECSET 1004 active
+//      b. Drain g_pty_queue byte-by-byte through pipeline_feed
+//      c. renderer_sync_frame() → push TS state to C render grid
+//      d. nitty_render_frame() then paints via Cairo/Pango (called by C shim)
 //
 // Resize flow:
 //   GTK resize signal → tw_on_resize(w_px, h_px)
@@ -27,8 +33,10 @@
 
 use "gtk4_ffi.npk".*;
 use "renderer.npk".*;
+use "viewport.npk".*;
 use "../terminal/terminal_pipeline.npk".*;
 use "../terminal/terminal_state.npk".*;
+use "../terminal/scrollback.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Module state
@@ -36,6 +44,8 @@ use "../terminal/terminal_state.npk".*;
 
 int64:g_tw_rows = 24i64;
 int64:g_tw_cols = 80i64;
+// v0.3.3: track focus state to detect transitions for DECSET 1004 reporting
+int64:g_tw_last_focused = 1i64;  // assume focused at startup
 
 // ═══════════════════════════════════════════════════════════════════════
 // Initialization
@@ -74,12 +84,61 @@ pub func:tw_get_cols = int64() { pass(g_tw_cols); };
 /// This is registered as the GTK draw-frame handler. The C shim calls
 /// it (via the render callback) before invoking nitty_render_frame().
 ///
+/// Step 0: Focus change detection — if DECSET 1004 enabled and focus changed,
+///   write ESC[I (focus in) or ESC[O (focus out) to PTY master.
 /// Step 1: Drain the PTY byte queue (filled by nitty_terminal_poll_output).
 ///   Each byte goes through pipeline_feed → parser → dispatch → ts_apply.
 /// Step 2: Sync TerminalState cells → C render grid (clear + push non-space).
 pub func:tw_on_draw = NIL() {
+    // Step 0: Focus change reporting (DECSET 1004)
+    int64:cur_focused = nitty_gtk4_get_focused();
+    if (cur_focused != g_tw_last_focused) {
+        if (raw ts_get_mode_focus_events() != 0i64) {
+            if (cur_focused != 0i64) {
+                // Focus in: ESC [ I  (0x1B 0x5B 0x49)
+                drop(nitty_gtk4_pty_write_byte(0x1Bi64));
+                drop(nitty_gtk4_pty_write_byte(0x5Bi64));
+                drop(nitty_gtk4_pty_write_byte(0x49i64));
+            }
+            if (cur_focused == 0i64) {
+                // Focus out: ESC [ O  (0x1B 0x5B 0x4F)
+                drop(nitty_gtk4_pty_write_byte(0x1Bi64));
+                drop(nitty_gtk4_pty_write_byte(0x5Bi64));
+                drop(nitty_gtk4_pty_write_byte(0x4Fi64));
+            }
+        }
+        g_tw_last_focused = cur_focused;
+    }
+
+    // v0.3.4 Step 0b: Poll scroll keyboard shortcuts
+    // (Shift+PgUp=1, Shift+PgDn=2, Shift+Home=3, Shift+End=4)
+    int64:sb_len = raw scrollback_len();
+    int64:vis_rows = g_tw_rows;
+    int64:sev = nitty_gtk4_scroll_event_poll();
+    if (sev == 1i64) { drop(viewport_scroll_up(vis_rows, sb_len)); }
+    if (sev == 2i64) { drop(viewport_scroll_down(vis_rows)); }
+    if (sev == 3i64) { drop(viewport_scroll_to_top(sb_len)); }
+    if (sev == 4i64) { drop(viewport_scroll_to_bottom()); }
+
+    // v0.3.4 Step 0c: Poll scroll wheel (mouse type 3, dy > 0 = down, dy < 0 = up)
+    int64:mev = nitty_gtk4_mouse_poll();
+    if (mev != 0i64) {
+        int64:mtype = nitty_gtk4_mouse_get_type();
+        if (mtype == 3i64) {
+            int64:dy = nitty_gtk4_mouse_get_scroll_dy();
+            if (dy > 0i64) { drop(viewport_scroll_down(3i64)); }
+            if (dy < 0i64) { drop(viewport_scroll_up(3i64, sb_len)); }
+        }
+    }
+
     // Step 1: Drain PTY byte queue through Nitpick pipeline
     int64:available = nitty_gtk4_pty_bytes_available();
+    // v0.3.4: new output → auto-scroll to bottom (user returns to live view)
+    if (available > 0i64) {
+        if (raw viewport_is_at_bottom() == 0i64) {
+            drop(viewport_scroll_to_bottom());
+        }
+    }
     while (available > 0i64) {
         int64:b = nitty_gtk4_pty_poll_byte();
         if (b >= 0i64) {
@@ -126,5 +185,18 @@ pub func:tw_on_resize = NIL(int64:w_px, int64:h_px) {
 /// Request a GTK frame repaint. Called after PTY output is processed.
 pub func:tw_queue_redraw = NIL() {
     nitty_gtk4_queue_redraw();
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// v0.3.3: Focus
+// ═══════════════════════════════════════════════════════════════════
+
+/// Register the focus controller on the DrawingArea.
+/// Call once after nitty_gtk4_window_show() — the drawing area must exist.
+/// On focus-in: cursor switches to filled, blink resets to visible phase.
+/// On focus-out: cursor switches to hollow outline.
+pub func:tw_focus_enable = NIL() {
+    nitty_gtk4_focus_enable();
     pass(NIL);
 };

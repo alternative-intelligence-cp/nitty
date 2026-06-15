@@ -123,6 +123,11 @@ pub func:ACT_DEVICE_STATUS       = int64() { pass(57i64); };
 pub func:ACT_PRIMARY_DA          = int64() { pass(58i64); };  // CSI c  — primary device attributes
 pub func:ACT_SECONDARY_DA        = int64() { pass(59i64); };  // CSI > c — secondary device attributes
 
+// Cursor style (v0.3.3)
+// data1 = shape (0=Block, 1=Underline, 2=Bar — see cursor.npk)
+// data2 = blink_enabled (1=blink, 0=steady)
+pub func:ACT_SET_CURSOR_STYLE    = int64() { pass(60i64); };  // DECSCUSR (CSI Ps SP q)
+
 // ═══════════════════════════════════════════════════════════════════════
 // Erase Mode Constants
 // ═══════════════════════════════════════════════════════════════════════

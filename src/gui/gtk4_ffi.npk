@@ -99,6 +99,19 @@ extern "nitty_gtk4_shim" {
     func:nitty_render_set_cell_flags = NIL(int64:col, int64:row, int64:flags);
 
     // ═══════════════════════════════════════════════════════════════════
+    // v0.3.3: Cursor rendering + focus state
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Push cursor state for the next frame (call from renderer_sync_frame)
+    func:nitty_render_set_cursor = NIL(int64:col, int64:row, int64:shape, int64:visible, int64:focused);
+    // Cursor blink phase (1=visible, 0=hidden) — read by renderer, toggled by 530ms timer
+    func:nitty_render_get_cursor_blink_phase = int64();
+    func:nitty_render_set_cursor_blink_phase = NIL(int64:phase);
+    // Register focus controller on drawing area; query current focus state
+    func:nitty_gtk4_focus_enable = NIL();
+    func:nitty_gtk4_get_focused  = int64();
+
+    // ═══════════════════════════════════════════════════════════════════
     // v0.0.2: Scale factor (HiDPI)
     // ═══════════════════════════════════════════════════════════════════
 
@@ -235,4 +248,17 @@ extern "nitty_gtk4_shim" {
 
     func:nitty_gtk4_pty_bytes_available = int64();
     func:nitty_gtk4_pty_poll_byte       = int64();
+    // v0.3.3: Write one byte to the PTY master (for focus reporting, etc.)
+    func:nitty_gtk4_pty_write_byte      = int64(int64:byte_val);
+
+    // ===================================================================
+    // v0.3.4: Scrollback / viewport support
+    // ===================================================================
+
+    // Push scroll info to C renderer each frame (for scrollbar overlay)
+    func:nitty_render_set_scroll_info   = NIL(int64:offset, int64:total, int64:visible);
+
+    // Poll for a scroll shortcut key event (Shift+PgUp/PgDn/Home/End)
+    // Returns: 0=none, 1=pgup, 2=pgdown, 3=top, 4=bottom
+    func:nitty_gtk4_scroll_event_poll   = int64();
 }

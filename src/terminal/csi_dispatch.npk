@@ -333,6 +333,28 @@ pub func:dispatch_csi = NIL(int64:final_byte, int64:param_count) {
         }
     }
 
+    // q — DECSCUSR: Set Cursor Style (CSI Ps SP q — intermediate byte = 0x20 ' ')
+    // Ps 0,1 = blinking block (default); 2 = steady block
+    // Ps 3 = blinking underline; 4 = steady underline
+    // Ps 5 = blinking bar; 6 = steady bar
+    if (final_byte == 0x71i64) {
+        if (raw parser_get_intermediate_count() != 0i64) {
+            if (raw parser_get_intermediate(0i64) == 0x20i64) {
+                int64:ps = raw eparam(0i64, 1i64);
+                // Default to blinking block
+                int64:shape = 0i64;
+                int64:blink = 1i64;
+                if (ps == 2i64) { shape = 0i64; blink = 0i64; }  // steady block
+                if (ps == 3i64) { shape = 1i64; blink = 1i64; }  // blinking underline
+                if (ps == 4i64) { shape = 1i64; blink = 0i64; }  // steady underline
+                if (ps == 5i64) { shape = 2i64; blink = 1i64; }  // blinking bar
+                if (ps == 6i64) { shape = 2i64; blink = 0i64; }  // steady bar
+                drop(set_action(60i64, shape, blink));             // ACT_SET_CURSOR_STYLE
+                pass(NIL);
+            }
+        }
+    }
+
     pass(NIL);
 };
 

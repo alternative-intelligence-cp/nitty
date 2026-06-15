@@ -66,6 +66,7 @@ extern int64_t nitty_pty_set_winsize(int64_t fd, int64_t rows, int64_t cols,
 extern int64_t nitty_pty_read_raw(int64_t fd, int64_t buf_ptr, int64_t max_len);
 extern int64_t nitty_pty_child_alive(int64_t pid);
 extern int64_t nitty_pty_close(int64_t fd);
+extern int64_t nitty_pty_write_byte(int64_t fd, int64_t byte_val); /* v0.3.3 */
 
 /* Input terminal mode */
 extern void nitty_input_set_terminal_mode(int64_t master_fd);
@@ -84,11 +85,13 @@ static void on_draw_func(GtkDrawingArea *area, cairo_t *cr, int width, int heigh
 /* Forward declaration of terminal output polling (v0.1.4) */
 static void nitty_terminal_poll_output(void);
 
-/* Cursor blink timer callback */
+/* Cursor blink timer callback — toggles cursor blink phase each 530ms */
 static gboolean on_cursor_blink(gpointer user_data)
 {
     (void)user_data;
-    nitty_grid_toggle_cursor_blink();
+    /* v0.3.3: toggle the render-side cursor blink phase */
+    int64_t phase = nitty_render_get_cursor_blink_phase();
+    nitty_render_set_cursor_blink_phase(phase ? 0 : 1);
     if (g_drawing_area != NULL) {
         gtk_widget_queue_draw(g_drawing_area);
     }
@@ -403,6 +406,17 @@ int64_t nitty_gtk4_pty_poll_byte(void)
     unsigned char b = g_pty_queue[g_pty_queue_read];
     g_pty_queue_read = (g_pty_queue_read + 1) % NITTY_PTY_QUEUE_SIZE;
     return (int64_t)b;
+}
+
+/**
+ * v0.3.3: Write one byte to the PTY master fd.
+ * Used by Nitpick pipeline for responses (e.g., DECSET 1004 focus reporting).
+ * Returns the number of bytes written (1), or -1 on error/no fd.
+ */
+int64_t nitty_gtk4_pty_write_byte(int64_t byte_val)
+{
+    if (g_terminal_master_fd < 0) return -1;
+    return nitty_pty_write_byte(g_terminal_master_fd, byte_val);
 }
 
 static void nitty_terminal_poll_output(void)
@@ -850,7 +864,7 @@ void nitty_gtk4_queue_redraw(void)
     }
 }
 
-/* v0.3.2: Text blink timer callback — fires every 500ms */
+/* v0.3.3: Text blink timer callback — fires every 500ms */
 static gboolean on_blink_tick(gpointer user_data)
 {
     (void)user_data;
@@ -864,4 +878,45 @@ static gboolean on_blink_tick(gpointer user_data)
         return G_SOURCE_REMOVE;
     }
     return G_SOURCE_CONTINUE;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.3.3: Focus controller
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static int g_terminal_focused = 1; /* assume focused at startup */
+
+static void on_focus_in(GtkEventControllerFocus *ctrl, gpointer user_data)
+{
+    (void)ctrl;
+    (void)user_data;
+    g_terminal_focused = 1;
+    /* Reset cursor blink to visible phase on focus gain */
+    nitty_render_set_cursor_blink_phase(1);
+    nitty_gtk4_queue_redraw();
+}
+
+static void on_focus_out(GtkEventControllerFocus *ctrl, gpointer user_data)
+{
+    (void)ctrl;
+    (void)user_data;
+    g_terminal_focused = 0;
+    /* Show cursor as hollow outline while unfocused — force visible */
+    nitty_render_set_cursor_blink_phase(1);
+    nitty_gtk4_queue_redraw();
+}
+
+void nitty_gtk4_focus_enable(void)
+{
+    GtkWidget *target = (g_drawing_area != NULL) ? g_drawing_area : NULL;
+    if (target == NULL) return;
+    GtkEventController *focus_ctrl = gtk_event_controller_focus_new();
+    g_signal_connect(focus_ctrl, "enter", G_CALLBACK(on_focus_in),  NULL);
+    g_signal_connect(focus_ctrl, "leave", G_CALLBACK(on_focus_out), NULL);
+    gtk_widget_add_controller(target, focus_ctrl);
+}
+
+int64_t nitty_gtk4_get_focused(void)
+{
+    return (int64_t)g_terminal_focused;
 }

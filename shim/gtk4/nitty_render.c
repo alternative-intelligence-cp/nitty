@@ -98,6 +98,22 @@ static PangoFontDescription *g_cached_font = NULL;
 static int g_blink_visible   = 1; /* 1=show blinking cells, 0=hide them */
 static int g_has_blink_cells = 0; /* updated each frame */
 
+/* v0.3.3: Cursor state — updated each frame by nitty_render_set_cursor() */
+static int g_cursor_col     = 0;
+static int g_cursor_row     = 0;
+static int g_cursor_shape   = 0; /* 0=Block, 1=Underline, 2=Bar */
+static int g_cursor_visible = 1; /* accounts for DECTCEM + blink phase */
+static int g_cursor_focused = 1; /* 1=focused (filled), 0=unfocused (hollow) */
+static int g_cursor_blink_phase = 1; /* 1=visible, 0=hidden — toggled by 530ms timer */
+
+/* v0.3.4: Scrollbar state — updated each frame by nitty_render_set_scroll_info() */
+static int64_t g_scroll_offset  = 0;   /* rows scrolled up from bottom */
+static int64_t g_scroll_total   = 0;   /* total rows (scrollback + visible) */
+static int64_t g_scroll_visible = 0;   /* visible rows on screen */
+
+/* Forward declaration for draw_scrollbar */
+static void draw_scrollbar(cairo_t *cr, int width, int height);
+
 /* ── Helper: free all font variants ───────────────────────────────────── */
 
 static void free_font_variants(void)
@@ -184,6 +200,9 @@ static PangoFontDescription *select_font(int flags)
     if (italic)         return g_font_italic      ? g_font_italic      : g_font_regular;
     return g_font_regular;
 }
+
+/* ── Forward declarations ──────────────────────────────────────────────── */
+static void draw_cursor(cairo_t *cr); /* defined after nitty_render_frame */
 
 /* ── Helper: draw a horizontal decoration line ────────────────────────── */
 
@@ -388,6 +407,29 @@ int64_t nitty_render_has_blink_cells(void)
     return (int64_t)g_has_blink_cells;
 }
 
+/* v0.3.3: Cursor API */
+
+void nitty_render_set_cursor(int64_t col, int64_t row,
+                              int64_t shape, int64_t visible,
+                              int64_t focused)
+{
+    g_cursor_col     = (int)col;
+    g_cursor_row     = (int)row;
+    g_cursor_shape   = (int)shape;
+    g_cursor_visible = (visible != 0) ? 1 : 0;
+    g_cursor_focused = (focused != 0) ? 1 : 0;
+}
+
+int64_t nitty_render_get_cursor_blink_phase(void)
+{
+    return (int64_t)g_cursor_blink_phase;
+}
+
+void nitty_render_set_cursor_blink_phase(int64_t phase)
+{
+    g_cursor_blink_phase = (phase != 0) ? 1 : 0;
+}
+
 void nitty_render_fill_text(const char *text, int64_t cols, int64_t rows)
 {
     if (text == NULL || cols <= 0 || rows <= 0) return;
@@ -578,4 +620,127 @@ void nitty_render_frame(void *cr_ptr, int width, int height)
 
     /* Reset dash in case it was left set */
     cairo_set_dash(cr, NULL, 0, 0.0);
+
+    /* 5. Draw cursor on top of all cell content */
+    draw_cursor(cr);
+
+    /* 6. Draw scrollbar overlay (v0.3.4) */
+    draw_scrollbar(cr, width, height);
+}
+
+/* v0.3.3: Cursor drawing — called at end of nitty_render_frame() */
+static void draw_cursor(cairo_t *cr)
+{
+    if (!g_cursor_visible) return;
+    if (g_cell_width <= 0 || g_cell_height <= 0) return;
+    if (g_cursor_col < 0 || g_cursor_row < 0) return;
+
+    double x  = (double)(g_cursor_col * g_cell_width);
+    double y  = (double)(g_cursor_row * g_cell_height);
+    double cw = (double)g_cell_width;
+    double ch = (double)g_cell_height;
+
+    /* Cursor color: use default foreground */
+    double cur_r = (double)g_fg_r / 1000.0;
+    double cur_g = (double)g_fg_g / 1000.0;
+    double cur_b = (double)g_fg_b / 1000.0;
+
+    if (g_cursor_shape == 0) {
+        /* ── Block cursor ── */
+        if (g_cursor_focused) {
+            /* Filled block */
+            cairo_set_source_rgb(cr, cur_r, cur_g, cur_b);
+            cairo_rectangle(cr, x, y, cw, ch);
+            cairo_fill(cr);
+            /* Redraw character with inverted color (bg color on cursor) */
+            if (g_cursor_row < NITTY_MAX_ROWS && g_cursor_col < NITTY_MAX_COLS) {
+                GridCell *cell = &g_grid[g_cursor_row][g_cursor_col];
+                if (cell->ch[0] != '\0' && cell->ch[0] != ' ') {
+                    PangoLayout *lo = pango_cairo_create_layout(cr);
+                    pango_layout_set_font_description(lo, select_font(cell->flags));
+                    pango_layout_set_text(lo, cell->ch, -1);
+                    /* Draw in background color */
+                    cairo_set_source_rgb(cr,
+                        (double)g_bg_r / 1000.0,
+                        (double)g_bg_g / 1000.0,
+                        (double)g_bg_b / 1000.0);
+                    cairo_move_to(cr, x, y);
+                    pango_cairo_show_layout(cr, lo);
+                    g_object_unref(lo);
+                }
+            }
+        } else {
+            /* Hollow block outline */
+            cairo_set_source_rgb(cr, cur_r, cur_g, cur_b);
+            cairo_set_line_width(cr, 1.0);
+            cairo_rectangle(cr, x + 0.5, y + 0.5, cw - 1.0, ch - 1.0);
+            cairo_stroke(cr);
+        }
+    } else if (g_cursor_shape == 1) {
+        /* ── Underline cursor: 2px bar at cell bottom ── */
+        cairo_set_source_rgb(cr, cur_r, cur_g, cur_b);
+        if (g_cursor_focused) {
+            cairo_rectangle(cr, x, y + ch - 2.0, cw, 2.0);
+            cairo_fill(cr);
+        } else {
+            cairo_set_line_width(cr, 1.0);
+            cairo_rectangle(cr, x + 0.5, y + ch - 2.5, cw - 1.0, 1.0);
+            cairo_stroke(cr);
+        }
+    } else {
+        /* ── Bar (I-beam) cursor: 2px bar at cell left ── */
+        cairo_set_source_rgb(cr, cur_r, cur_g, cur_b);
+        if (g_cursor_focused) {
+            cairo_rectangle(cr, x, y, 2.0, ch);
+            cairo_fill(cr);
+        } else {
+            cairo_set_line_width(cr, 1.0);
+            cairo_rectangle(cr, x + 0.5, y + 0.5, 1.0, ch - 1.0);
+            cairo_stroke(cr);
+        }
+    }
+}
+
+/* ── v0.3.4: Scroll info ──────────────────────────────────────────────── */
+
+void nitty_render_set_scroll_info(int64_t offset, int64_t total, int64_t visible)
+{
+    g_scroll_offset  = offset;
+    g_scroll_total   = total;
+    g_scroll_visible = visible;
+}
+
+/* ── v0.3.4: Scrollbar overlay ────────────────────────────────────────── */
+
+static void draw_scrollbar(cairo_t *cr, int width, int height)
+{
+    /* Only show when user has scrolled up */
+    if (g_scroll_offset <= 0) return;
+    if (g_scroll_total <= g_scroll_visible) return;
+    if (height <= 0) return;
+
+    /* ── Track: right 8px, full height, semi-transparent dark ── */
+    cairo_set_source_rgba(cr, 0.15, 0.15, 0.15, 0.45);
+    cairo_rectangle(cr, (double)(width - 8), 0.0, 8.0, (double)height);
+    cairo_fill(cr);
+
+    /* ── Handle: proportional position within track ── */
+    double frac_vis = (double)g_scroll_visible / (double)g_scroll_total;
+    double frac_pos = 1.0 - (double)g_scroll_offset /
+                             (double)(g_scroll_total - g_scroll_visible);
+
+    /* Clamp to [0..1] */
+    if (frac_vis < 0.02) frac_vis = 0.02;
+    if (frac_vis > 1.0)  frac_vis = 1.0;
+    if (frac_pos < 0.0)  frac_pos = 0.0;
+    if (frac_pos > 1.0)  frac_pos = 1.0;
+
+    double handle_h = frac_vis * (double)height;
+    if (handle_h < 8.0) handle_h = 8.0;
+
+    double handle_y = frac_pos * ((double)height - handle_h);
+
+    cairo_set_source_rgba(cr, 0.75, 0.75, 0.75, 0.70);
+    cairo_rectangle(cr, (double)(width - 7), handle_y + 1.0, 6.0, handle_h - 2.0);
+    cairo_fill(cr);
 }

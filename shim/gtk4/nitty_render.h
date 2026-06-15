@@ -140,6 +140,46 @@ int64_t nitty_render_has_blink_cells(void);
  */
 void nitty_render_frame(void *cr, int width, int height);
 
+/* ── v0.3.3: Cursor rendering ─────────────────────────────────────────── */
+
+/**
+ * Push cursor state for the next frame.
+ * Called from renderer_sync_frame() every draw cycle.
+ *
+ * @param col      Cursor column (0-based).
+ * @param row      Cursor row (0-based).
+ * @param shape    0=Block, 1=Underline, 2=Bar.
+ * @param visible  1 if cursor should be drawn this frame (accounts for
+ *                 DECTCEM and the blink phase).
+ * @param focused  1 if terminal has focus (filled), 0 = hollow outline.
+ */
+void nitty_render_set_cursor(int64_t col, int64_t row,
+                              int64_t shape, int64_t visible,
+                              int64_t focused);
+
+/**
+ * Get current cursor blink phase.
+ * @return 1 = visible phase, 0 = hidden phase.
+ * Read by renderer.npk each frame to compute cursor visibility.
+ */
+int64_t nitty_render_get_cursor_blink_phase(void);
+
+/**
+ * Set cursor blink phase.
+ * @param phase  1 = visible, 0 = hidden.
+ * Called by the 530ms cursor blink timer in nitty_gtk4_shim.c.
+ */
+void nitty_render_set_cursor_blink_phase(int64_t phase);
+
+/**
+ * Set scrollback scroll info for overlay scrollbar rendering (v0.3.4).
+ * @param offset   Current scroll offset (rows from bottom; 0 = at bottom).
+ * @param total    Total rows: scrollback_len + visible_rows.
+ * @param visible  Visible rows on screen.
+ * Called by renderer.npk each frame.
+ */
+void nitty_render_set_scroll_info(int64_t offset, int64_t total, int64_t visible);
+
 #ifdef __cplusplus
 }
 #endif

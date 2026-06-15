@@ -54,6 +54,9 @@ static int    g_mouse_button    = 0;
 static double g_mouse_scroll_dx = 0.0;
 static double g_mouse_scroll_dy = 0.0;
 
+/* v0.3.4: Scroll shortcut event: 0=none 1=pgup 2=pgdown 3=top 4=bottom */
+static int g_scroll_event = 0;
+
 /* ── Keyboard callbacks ───────────────────────────────────────────────── */
 
 static gboolean on_key_pressed(GtkEventControllerKey *controller,
@@ -70,6 +73,17 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
     g_key_modifiers = (guint)state;
     g_key_type      = 1;
     g_key_pending   = 1;
+
+    /* v0.3.4: Intercept Shift+scroll-navigation shortcuts before PTY routing */
+    if (state & GDK_SHIFT_MASK) {
+        switch (keyval) {
+            case GDK_KEY_Page_Up:   g_scroll_event = 1; return TRUE;
+            case GDK_KEY_Page_Down: g_scroll_event = 2; return TRUE;
+            case GDK_KEY_Home:      g_scroll_event = 3; return TRUE;
+            case GDK_KEY_End:       g_scroll_event = 4; return TRUE;
+            default: break;
+        }
+    }
 
     /* Debug: print key event to stdout (only in non-terminal mode) */
     if (!g_terminal_mode) {
@@ -403,4 +417,16 @@ void nitty_input_clear_terminal_mode(void)
 {
     g_terminal_mode   = 0;
     g_pty_master_fd   = -1;
+}
+
+/* ── v0.3.4: Scroll shortcut polling ─────────────────────────────────── */
+
+int64_t nitty_gtk4_scroll_event_poll(void)
+{
+    if (g_scroll_event != 0) {
+        int64_t ev = (int64_t)g_scroll_event;
+        g_scroll_event = 0;
+        return ev;
+    }
+    return 0;
 }

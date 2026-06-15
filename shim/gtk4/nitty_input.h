@@ -121,6 +121,16 @@ void nitty_input_set_terminal_mode(int64_t master_fd);
 /** Disable terminal mode: key events route back to grid. */
 void nitty_input_clear_terminal_mode(void);
 
+/* ── Scroll key shortcuts (v0.3.4) ───────────────────────────────────── */
+
+/**
+ * Poll for a pending scroll shortcut event.
+ * Returns: 0=none, 1=page_up, 2=page_down, 3=top, 4=bottom.
+ * Clears the event after returning it.
+ * Shift+PageUp/PageDown/Home/End are consumed before PTY routing.
+ */
+int64_t nitty_gtk4_scroll_event_poll(void);
+
 #ifdef __cplusplus
 }
 #endif

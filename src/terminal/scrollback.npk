@@ -1,0 +1,185 @@
+// src/terminal/scrollback.npk — Scrollback ring buffer (v0.3.4)
+//
+// Stores terminal rows that have scrolled off the top of the active screen.
+// Implemented as three parallel flat int64 ring-buffer arrays (cp, attrs, flags),
+// matching the layout of grid.npk but as a standalone module to avoid IR size
+// issues from combining large arrays.
+//
+// Ring buffer semantics:
+//   - sb_head: next write slot (advances on push, wraps at SB_MAX_LINES)
+//   - sb_count: number of rows currently stored (0..SB_MAX_LINES)
+//   - Index 0 = most recently pushed row
+//   - Index (sb_count-1) = oldest row
+//
+// Index mapping for get(idx):
+//   slot = (sb_head - 1 - idx + SB_MAX_LINES) % SB_MAX_LINES
+//   array index = slot * SB_MAX_COLS + col
+//
+// Column layout:
+//   sb_cols: active column count (set by scrollback_init / scrollback_set_cols)
+//   Only [0..sb_cols-1] cells are valid per row; remaining slots are wasted.
+//
+// Constraints:
+//   SB_MAX_LINES = 3000  (ring buffer capacity)
+//   SB_MAX_COLS  = 200   (matches grid.npk MAX_COLS)
+//   Storage: 3000 * 200 * 3 = 1,800,000 int64s (~14 MB)
+//
+// Dependencies: grid.npk (reads grid cells via grid_get_cp/attrs/flags)
+
+use "grid.npk".*;
+use "cell.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Constants
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:SB_MAX_LINES = int64() { pass(3000i64); };
+pub func:SB_MAX_COLS  = int64() { pass(200i64); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Storage — three parallel ring-buffer arrays
+// ═══════════════════════════════════════════════════════════════════════
+
+int64[600000]:sb_cp;     // codepoints:  [slot * SB_MAX_COLS + col]
+int64[600000]:sb_attrs;  // color attrs: [slot * SB_MAX_COLS + col]
+int64[600000]:sb_flags;  // style flags: [slot * SB_MAX_COLS + col]
+
+// ═══════════════════════════════════════════════════════════════════════
+// Ring buffer state
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:sb_head  = 0i64;   // next write slot (0..SB_MAX_LINES-1)
+int64:sb_count = 0i64;   // rows stored (0..SB_MAX_LINES)
+int64:sb_cols  = 80i64;  // current display column count
+
+// ═══════════════════════════════════════════════════════════════════════
+// Internal helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+// Map logical scrollback index (0=newest) → ring-buffer slot index.
+func:sb_slot = int64(int64:idx) {
+    int64:max = raw SB_MAX_LINES();
+    int64:slot = sb_head - 1i64 - idx + max;
+    // Modulo: slot % max (slot is always < 2*max so one subtraction suffices)
+    if (slot >= max) { slot = slot - max; }
+    pass(slot);
+};
+
+// Raw array index for (slot, col).
+func:sb_idx = int64(int64:slot, int64:col) {
+    pass(slot * raw SB_MAX_COLS() + col);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Initialization
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Initialize (or re-initialize) the scrollback buffer.
+/// cols: current display column count (must be 1..SB_MAX_COLS).
+/// Clears all stored rows.
+pub func:scrollback_init = NIL(int64:cols) {
+    int64:c = cols;
+    if (c < 1i64)                   { c = 1i64; }
+    if (c > raw SB_MAX_COLS())      { c = raw SB_MAX_COLS(); }
+    sb_cols  = c;
+    sb_head  = 0i64;
+    sb_count = 0i64;
+    pass(NIL);
+};
+
+/// Update the column count (called on terminal resize). Clears scrollback.
+pub func:scrollback_set_cols = NIL(int64:cols) {
+    drop(scrollback_init(cols));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Push (capture a grid row into scrollback)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Push grid row `grid_row` into the scrollback ring buffer.
+/// This copies the row's cp/attrs/flags from the active grid.
+/// The pushed row becomes index 0 (most recent).
+/// Oldest row is dropped if buffer is full.
+pub func:scrollback_push_row = NIL(int64:grid_row) {
+    int64:max  = raw SB_MAX_LINES();
+    int64:slot = sb_head;
+    int64:base = slot * raw SB_MAX_COLS();
+    // Copy all columns from active grid into the slot
+    int64:c = 0i64;
+    while (c < sb_cols) {
+        int64:i = base + c;
+        sb_cp[i]    = raw grid_get_cp(grid_row, c);
+        sb_attrs[i] = raw grid_get_attrs(grid_row, c);
+        sb_flags[i] = raw grid_get_flags(grid_row, c);
+        c = c + 1i64;
+    }
+    // Fill remainder with defaults (keeps stale data from wider sessions out)
+    while (c < raw SB_MAX_COLS()) {
+        int64:i = base + c;
+        sb_cp[i]    = raw CELL_DEFAULT_CP();
+        sb_attrs[i] = 0i64;
+        sb_flags[i] = 0i64;
+        c = c + 1i64;
+    }
+    // Advance ring buffer head
+    sb_head = sb_head + 1i64;
+    if (sb_head >= max) { sb_head = 0i64; }
+    // Grow count (cap at max)
+    if (sb_count < max) { sb_count = sb_count + 1i64; }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Accessors
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Number of rows currently in the scrollback buffer.
+pub func:scrollback_len = int64() { pass(sb_count); };
+
+/// Get codepoint at scrollback row `idx`, column `col`.
+/// idx=0 is the most recently pushed row; idx=(len-1) is oldest.
+/// Returns CELL_DEFAULT_CP if out of bounds.
+pub func:scrollback_get_cp = int64(int64:idx, int64:col) {
+    if (idx < 0i64)          { pass(raw CELL_DEFAULT_CP()); }
+    if (idx >= sb_count)     { pass(raw CELL_DEFAULT_CP()); }
+    if (col < 0i64)          { pass(raw CELL_DEFAULT_CP()); }
+    if (col >= sb_cols)      { pass(raw CELL_DEFAULT_CP()); }
+    int64:slot = raw sb_slot(idx);
+    int64:i    = raw sb_idx(slot, col);
+    pass(sb_cp[i]);
+};
+
+/// Get color attrs at scrollback row `idx`, column `col`.
+pub func:scrollback_get_attrs = int64(int64:idx, int64:col) {
+    if (idx < 0i64)     { pass(0i64); }
+    if (idx >= sb_count){ pass(0i64); }
+    if (col < 0i64)     { pass(0i64); }
+    if (col >= sb_cols) { pass(0i64); }
+    int64:slot = raw sb_slot(idx);
+    int64:i    = raw sb_idx(slot, col);
+    pass(sb_attrs[i]);
+};
+
+/// Get style flags at scrollback row `idx`, column `col`.
+pub func:scrollback_get_flags = int64(int64:idx, int64:col) {
+    if (idx < 0i64)     { pass(0i64); }
+    if (idx >= sb_count){ pass(0i64); }
+    if (col < 0i64)     { pass(0i64); }
+    if (col >= sb_cols) { pass(0i64); }
+    int64:slot = raw sb_slot(idx);
+    int64:i    = raw sb_idx(slot, col);
+    pass(sb_flags[i]);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Clear
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Clear the scrollback buffer (ED 3 / DECSET 47 alternate screen switch etc.)
+/// Does not zero the arrays — just resets head and count.
+pub func:scrollback_clear = NIL() {
+    sb_head  = 0i64;
+    sb_count = 0i64;
+    pass(NIL);
+};

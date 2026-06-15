@@ -1,0 +1,204 @@
+// tests/test_cursor.npk — Unit tests for v0.3.3 cursor rendering
+//
+// Tests the following without requiring GTK:
+//   - cursor.npk shape constant values
+//   - ACT_SET_CURSOR_STYLE action constant value
+//   - terminal_state cursor shape/blink getters and setters (round-trip)
+//   - Default cursor state after ts_reset_cursor (shape=Block, blink=1)
+//   - DECSCUSR Ps → (shape, blink_enabled) mapping logic
+//   - ts_apply_action for ACT_SET_CURSOR_STYLE
+//   - DECSET 1004 mode flag (ts_set/get_mode_focus_events)
+
+use "../src/terminal/terminal_state.npk".*;
+use "../src/terminal/actions.npk".*;
+use "../src/terminal/terminal_state_apply.npk".*;
+use "../src/gui/cursor.npk".*;
+
+func:failsafe = int32(tbb32:_e) { exit 1i32; };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Test helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:assert_eq = NIL(int64:got, int64:expected, int64:test_id) {
+    if (got == expected) {
+        g_pass = g_pass + 1i64;
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// cursor.npk shape constant values
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_cursor_constants = NIL() {
+    // CURSOR_BLOCK == 0
+    drop(assert_eq(raw CURSOR_BLOCK(), 0i64, 1i64));
+    // CURSOR_UNDERLINE == 1
+    drop(assert_eq(raw CURSOR_UNDERLINE(), 1i64, 2i64));
+    // CURSOR_BAR == 2
+    drop(assert_eq(raw CURSOR_BAR(), 2i64, 3i64));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// actions.npk ACT_SET_CURSOR_STYLE
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_action_constant = NIL() {
+    // ACT_SET_CURSOR_STYLE == 60
+    drop(assert_eq(raw ACT_SET_CURSOR_STYLE(), 60i64, 10i64));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Default cursor state (after init)
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_default_cursor_state = NIL() {
+    // After ts_init, cursor should be Block (0) and blink enabled (1)
+    drop(ts_init(24i64, 80i64));
+    drop(assert_eq(raw ts_get_cursor_shape(), 0i64, 20i64));         // Block
+    drop(assert_eq(raw ts_get_cursor_blink_enabled(), 1i64, 21i64)); // blink on
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Getter/setter round-trips
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_cursor_shape_roundtrip = NIL() {
+    drop(ts_set_cursor_shape(0i64));
+    drop(assert_eq(raw ts_get_cursor_shape(), 0i64, 30i64));  // Block
+    drop(ts_set_cursor_shape(1i64));
+    drop(assert_eq(raw ts_get_cursor_shape(), 1i64, 31i64));  // Underline
+    drop(ts_set_cursor_shape(2i64));
+    drop(assert_eq(raw ts_get_cursor_shape(), 2i64, 32i64));  // Bar
+    pass(NIL);
+};
+
+func:test_cursor_blink_roundtrip = NIL() {
+    drop(ts_set_cursor_blink_enabled(1i64));
+    drop(assert_eq(raw ts_get_cursor_blink_enabled(), 1i64, 40i64));
+    drop(ts_set_cursor_blink_enabled(0i64));
+    drop(assert_eq(raw ts_get_cursor_blink_enabled(), 0i64, 41i64));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// DECSCUSR Ps → (shape, blink) mapping
+//   Ps 0,1 → Block, blink=1
+//   Ps 2   → Block, blink=0
+//   Ps 3   → Underline, blink=1
+//   Ps 4   → Underline, blink=0
+//   Ps 5   → Bar, blink=1
+//   Ps 6   → Bar, blink=0
+// ═══════════════════════════════════════════════════════════════════════
+
+// Simulate DECSCUSR decoding (same logic as csi_dispatch.npk handler)
+func:decscusr_shape = int64(int64:ps) {
+    int64:shape = 0i64;
+    if (ps == 2i64) { shape = 0i64; }
+    if (ps == 3i64) { shape = 1i64; }
+    if (ps == 4i64) { shape = 1i64; }
+    if (ps == 5i64) { shape = 2i64; }
+    if (ps == 6i64) { shape = 2i64; }
+    pass(shape);
+};
+
+func:decscusr_blink = int64(int64:ps) {
+    int64:blink = 1i64;
+    if (ps == 2i64) { blink = 0i64; }
+    if (ps == 4i64) { blink = 0i64; }
+    if (ps == 6i64) { blink = 0i64; }
+    pass(blink);
+};
+
+func:test_decscusr_mapping = NIL() {
+    // Ps=1 (default blinking block)
+    drop(assert_eq(raw decscusr_shape(1i64), 0i64, 50i64));  // Block
+    drop(assert_eq(raw decscusr_blink(1i64), 1i64, 51i64));  // blink
+    // Ps=2 (steady block)
+    drop(assert_eq(raw decscusr_shape(2i64), 0i64, 52i64));  // Block
+    drop(assert_eq(raw decscusr_blink(2i64), 0i64, 53i64));  // steady
+    // Ps=3 (blinking underline)
+    drop(assert_eq(raw decscusr_shape(3i64), 1i64, 54i64));  // Underline
+    drop(assert_eq(raw decscusr_blink(3i64), 1i64, 55i64));  // blink
+    // Ps=4 (steady underline)
+    drop(assert_eq(raw decscusr_shape(4i64), 1i64, 56i64));  // Underline
+    drop(assert_eq(raw decscusr_blink(4i64), 0i64, 57i64));  // steady
+    // Ps=5 (blinking bar)
+    drop(assert_eq(raw decscusr_shape(5i64), 2i64, 58i64));  // Bar
+    drop(assert_eq(raw decscusr_blink(5i64), 1i64, 59i64));  // blink
+    // Ps=6 (steady bar)
+    drop(assert_eq(raw decscusr_shape(6i64), 2i64, 60i64));  // Bar
+    drop(assert_eq(raw decscusr_blink(6i64), 0i64, 61i64));  // steady
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// ts_apply_action for ACT_SET_CURSOR_STYLE
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_apply_cursor_style = NIL() {
+    // Apply: shape=Bar(2), blink=0 (steady)
+    drop(ts_apply_action(60i64, 2i64, 0i64));
+    drop(assert_eq(raw ts_get_cursor_shape(), 2i64, 70i64));          // Bar
+    drop(assert_eq(raw ts_get_cursor_blink_enabled(), 0i64, 71i64));  // steady
+
+    // Apply: shape=Underline(1), blink=1
+    drop(ts_apply_action(60i64, 1i64, 1i64));
+    drop(assert_eq(raw ts_get_cursor_shape(), 1i64, 72i64));          // Underline
+    drop(assert_eq(raw ts_get_cursor_blink_enabled(), 1i64, 73i64));  // blink
+
+    // Apply: shape=Block(0), blink=0
+    drop(ts_apply_action(60i64, 0i64, 0i64));
+    drop(assert_eq(raw ts_get_cursor_shape(), 0i64, 74i64));          // Block
+    drop(assert_eq(raw ts_get_cursor_blink_enabled(), 0i64, 75i64));  // steady
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// DECSET 1004 focus events mode
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_focus_events_mode = NIL() {
+    // Default: off (0)
+    drop(ts_init(24i64, 80i64));
+    drop(assert_eq(raw ts_get_mode_focus_events(), 0i64, 80i64));
+    // Set on
+    drop(ts_set_mode_focus_events(1i64));
+    drop(assert_eq(raw ts_get_mode_focus_events(), 1i64, 81i64));
+    // Set off
+    drop(ts_set_mode_focus_events(0i64));
+    drop(assert_eq(raw ts_get_mode_focus_events(), 0i64, 82i64));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Main
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:main = int32() {
+    drop(ts_init(24i64, 80i64));
+
+    drop(test_cursor_constants());
+    drop(test_action_constant());
+    drop(test_default_cursor_state());
+    drop(test_cursor_shape_roundtrip());
+    drop(test_cursor_blink_roundtrip());
+    drop(test_decscusr_mapping());
+    drop(test_apply_cursor_style());
+    drop(test_focus_events_mode());
+
+    // Results: exit 0 if all passed, exit 1 if any failed
+    if (g_fail == 0i64) {
+        exit 0i32;
+    }
+    exit 1i32;
+};

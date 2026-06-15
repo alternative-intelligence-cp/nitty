@@ -19,6 +19,7 @@ use "grid_resize.npk".*;
 use "cell.npk".*;
 use "attributes.npk".*;
 use "modes.npk".*;
+use "scrollback.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Terminal Dimensions
@@ -31,9 +32,11 @@ int64:ts_cols = 80i64;
 // Cursor State
 // ═══════════════════════════════════════════════════════════════════════
 
-int64:ts_cursor_row = 0i64;
-int64:ts_cursor_col = 0i64;
-int64:ts_pending_wrap = 0i64;   // 1 = wrap pending at right margin
+int64:ts_cursor_row          = 0i64;
+int64:ts_cursor_col          = 0i64;
+int64:ts_pending_wrap        = 0i64;   // 1 = wrap pending at right margin
+int64:ts_cursor_shape        = 0i64;   // 0=Block, 1=Underline, 2=Bar (DECSCUSR)
+int64:ts_cursor_blink_enabled = 1i64;  // 1=blink, 0=steady (DECSCUSR)
 
 // ═══════════════════════════════════════════════════════════════════════
 // Saved Cursor (DECSC/DECRC)
@@ -97,6 +100,7 @@ int64:ts_mode_bracketed_paste = 0i64;  // bracketed paste
 // ANSI Standard Modes
 int64:ts_mode_insert         = 0i64;   // IRM (mode 4)
 int64:ts_mode_newline        = 0i64;   // LNM (mode 20)
+int64:ts_mode_focus_events   = 0i64;   // DECSET 1004 — focus in/out reporting
 
 // ═══════════════════════════════════════════════════════════════════════
 // Character Sets (G0–G3)
@@ -274,9 +278,11 @@ func:ts_reset_charsets = NIL() {
 
 // Reset cursor and wrap state.
 func:ts_reset_cursor = NIL() {
-    ts_cursor_row    = 0i64;
-    ts_cursor_col    = 0i64;
-    ts_pending_wrap  = 0i64;
+    ts_cursor_row         = 0i64;
+    ts_cursor_col         = 0i64;
+    ts_pending_wrap       = 0i64;
+    ts_cursor_shape       = 0i64;  // Block
+    ts_cursor_blink_enabled = 1i64; // blink on
     pass(NIL);
 };
 
@@ -344,6 +350,7 @@ pub func:ts_init = NIL(int64:rows, int64:cols) {
     ts_rows = r;
     ts_cols = c;
     drop(ts_reset_hard());
+    drop(scrollback_init(c));  // v0.3.4: init scrollback with current cols
     pass(NIL);
 };
 
@@ -390,6 +397,7 @@ pub func:ts_resize = NIL(int64:new_rows, int64:new_cols) {
         drop(ts_tab_clear(c));
         c = c + 1i64;
     }
+    drop(scrollback_set_cols(nc));  // v0.3.4: clear scrollback (col count changed)
     pass(NIL);
 };
 
@@ -539,6 +547,10 @@ pub func:ts_get_mode_alt_screen_full = int64() { pass(ts_mode_alt_screen_full); 
 pub func:ts_get_mode_mouse_button    = int64() { pass(ts_mode_mouse_button); };
 pub func:ts_get_mode_mouse_sgr       = int64() { pass(ts_mode_mouse_sgr); };
 pub func:ts_get_mode_bracketed_paste = int64() { pass(ts_mode_bracketed_paste); };
+pub func:ts_get_mode_focus_events    = int64() { pass(ts_mode_focus_events); };
+// v0.3.3: cursor style
+pub func:ts_get_cursor_shape         = int64() { pass(ts_cursor_shape); };
+pub func:ts_get_cursor_blink_enabled = int64() { pass(ts_cursor_blink_enabled); };
 
 // ═══════════════════════════════════════════════════════════════════════
 // State Setters — for terminal_state_apply.npk
@@ -574,3 +586,7 @@ pub func:ts_set_mode_alt_screen_full = NIL(int64:v) { ts_mode_alt_screen_full = 
 pub func:ts_set_mode_bracketed_paste = NIL(int64:v) { ts_mode_bracketed_paste = v; pass(NIL); };
 pub func:ts_set_mode_insert          = NIL(int64:v) { ts_mode_insert          = v; pass(NIL); };
 pub func:ts_set_mode_newline         = NIL(int64:v) { ts_mode_newline         = v; pass(NIL); };
+pub func:ts_set_mode_focus_events    = NIL(int64:v) { ts_mode_focus_events    = v; pass(NIL); };
+// v0.3.3: cursor style setters
+pub func:ts_set_cursor_shape         = NIL(int64:v) { ts_cursor_shape          = v; pass(NIL); };
+pub func:ts_set_cursor_blink_enabled = NIL(int64:v) { ts_cursor_blink_enabled  = v; pass(NIL); };

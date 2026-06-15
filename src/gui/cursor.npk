@@ -1,0 +1,34 @@
+// src/gui/cursor.npk — Cursor shape constants for Nitty v0.3.3
+//
+// Defines the three standard terminal cursor shapes.
+// Used by terminal_state.npk (stores current shape), renderer.npk
+// (reads shape each frame), and nitty_render.c (draws the shape).
+//
+// Shape encoding matches the DECSCUSR parameter groups:
+//   0/1 (blinking block)  → CURSOR_BLOCK     (0)
+//   2   (steady block)    → CURSOR_BLOCK     (0)
+//   3   (blinking ul)     → CURSOR_UNDERLINE (1)
+//   4   (steady ul)       → CURSOR_UNDERLINE (1)
+//   5   (blinking bar)    → CURSOR_BAR       (2)
+//   6   (steady bar)      → CURSOR_BAR       (2)
+
+func:failsafe = int32(tbb32:_e) { pass(1i32); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cursor Shape Constants
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Block cursor — fills the entire cell rectangle.
+/// Focused: filled rect + character redrawn with inverted color.
+/// Unfocused: hollow 1px outline rect.
+pub func:CURSOR_BLOCK     = int64() { pass(0i64); };
+
+/// Underline cursor — 2px bar at the bottom of the cell.
+/// Focused: solid filled bar.
+/// Unfocused: 1px outline bar.
+pub func:CURSOR_UNDERLINE = int64() { pass(1i64); };
+
+/// Bar cursor (I-beam) — 2px bar at the left edge of the cell.
+/// Focused: solid filled bar.
+/// Unfocused: 1px outline bar.
+pub func:CURSOR_BAR       = int64() { pass(2i64); };
