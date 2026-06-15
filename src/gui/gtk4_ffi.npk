@@ -219,4 +219,11 @@ extern "nitty_gtk4_shim" {
     // v0.1.4: Terminal mode (keys → PTY)
     func:nitty_input_set_terminal_mode   = NIL(int64:master_fd);
     func:nitty_input_clear_terminal_mode = NIL();
+
+    // ===================================================================
+    // v0.3.0: PTY byte queue (for Nitpick pipeline consumption)
+    // ===================================================================
+
+    func:nitty_gtk4_pty_bytes_available = int64();
+    func:nitty_gtk4_pty_poll_byte       = int64();
 }

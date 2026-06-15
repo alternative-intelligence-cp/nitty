@@ -355,6 +355,51 @@ void nitty_gtk4_terminal_enable(void)
 /* PTY output polling — called every ~16ms from idle callback */
 static char g_poll_buf[16384];
 
+/* -- PTY byte queue (for Nitpick pipeline consumption) -------------------
+ * The C-side nitty_grid_process_output is the legacy renderer path.
+ * In parallel, raw PTY bytes are enqueued here so the Nitpick-side
+ * pipeline (terminal_pipeline.npk) can process them each draw frame.
+ *
+ * Circular buffer: 65536 bytes. On overflow, oldest bytes are dropped
+ * (should never happen at normal terminal speeds).
+ */
+#define NITTY_PTY_QUEUE_SIZE 65536
+static unsigned char g_pty_queue[NITTY_PTY_QUEUE_SIZE];
+static int           g_pty_queue_write = 0;
+static int           g_pty_queue_read  = 0;
+
+static void pty_queue_push(const char *buf, int64_t len)
+{
+    for (int64_t i = 0; i < len; i++) {
+        int next_write = (g_pty_queue_write + 1) % NITTY_PTY_QUEUE_SIZE;
+        if (next_write == g_pty_queue_read) {
+            /* Queue full -- drop oldest byte */
+            g_pty_queue_read = (g_pty_queue_read + 1) % NITTY_PTY_QUEUE_SIZE;
+        }
+        g_pty_queue[g_pty_queue_write] = (unsigned char)buf[i];
+        g_pty_queue_write = next_write;
+    }
+}
+
+/** How many bytes are pending in the PTY queue. */
+int64_t nitty_gtk4_pty_bytes_available(void)
+{
+    int avail = (g_pty_queue_write - g_pty_queue_read + NITTY_PTY_QUEUE_SIZE) % NITTY_PTY_QUEUE_SIZE;
+    return (int64_t)avail;
+}
+
+/**
+ * Dequeue one byte from the PTY output queue.
+ * Returns the byte value [0..255], or -1 if the queue is empty.
+ */
+int64_t nitty_gtk4_pty_poll_byte(void)
+{
+    if (g_pty_queue_read == g_pty_queue_write) return -1;
+    unsigned char b = g_pty_queue[g_pty_queue_read];
+    g_pty_queue_read = (g_pty_queue_read + 1) % NITTY_PTY_QUEUE_SIZE;
+    return (int64_t)b;
+}
+
 static void nitty_terminal_poll_output(void)
 {
     if (g_terminal_master_fd < 0 || g_terminal_shell_dead) return;
@@ -370,6 +415,7 @@ static void nitty_terminal_poll_output(void)
             if (n > 0) {
                 g_poll_buf[n] = '\0';
                 nitty_grid_process_output(g_poll_buf, n);
+                pty_queue_push(g_poll_buf, n);
             }
         } while (n > 0);
 
@@ -390,6 +436,7 @@ static void nitty_terminal_poll_output(void)
         if (n > 0) {
             g_poll_buf[n] = '\0';
             nitty_grid_process_output(g_poll_buf, n);
+            pty_queue_push(g_poll_buf, n);
             chunks++;
         }
     } while (n > 0 && chunks < 8);  /* Max 8 chunks per tick (128KB) */

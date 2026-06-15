@@ -218,6 +218,24 @@ void nitty_gtk4_terminal_enable(void);
 /** Request a redraw of the DrawingArea. */
 void nitty_gtk4_queue_redraw(void);
 
+/* =======================================================================
+ * v0.3.0: PTY byte queue (for Nitpick pipeline)
+ * ======================================================================= */
+
+/**
+ * How many raw PTY bytes are pending in the Nitpick byte queue.
+ * These are the same bytes that were also sent to nitty_grid_process_output.
+ * Nitpick calls this each render frame to decide if the pipeline needs feeding.
+ */
+int64_t nitty_gtk4_pty_bytes_available(void);
+
+/**
+ * Dequeue one byte from the PTY output queue.
+ * Returns [0..255] for a valid byte, or -1 if the queue is empty.
+ * Call in a loop until -1 to drain all pending bytes each frame.
+ */
+int64_t nitty_gtk4_pty_poll_byte(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,0 +1,132 @@
+// src/gui/terminal_widget.npk — Terminal widget: pipeline + renderer + GTK4
+//
+// v0.3.0: Composites the Nitpick-side terminal pipeline (terminal_pipeline.npk)
+// with the cell grid renderer (renderer.npk) and the GTK4 draw/resize lifecycle.
+//
+// Architecture:
+//   - tw_init()           : pipeline_init + renderer_init (call before app_run)
+//   - tw_on_draw()        : drain PTY queue → pipeline_feed; renderer_sync_frame
+//                           (called from app's render callback / idle hook)
+//   - tw_on_resize(w, h)  : renderer_resize → ts_resize (call on GTK resize event)
+//   - tw_queue_redraw()   : nitty_gtk4_queue_redraw (call after PTY output)
+//   - tw_get_rows/cols()  : grid dimensions for PTY winsize negotiation
+//
+// Draw flow (each GTK frame):
+//   1. C idle callback fires → nitty_terminal_poll_output reads PTY bytes
+//      → enqueues to g_pty_queue AND feeds nitty_grid_process_output (C path)
+//   2. GTK draw callback fires → on_draw_func calls g_render_callback
+//   3. g_render_callback → tw_on_draw():
+//      a. Drain g_pty_queue byte-by-byte through pipeline_feed
+//      b. renderer_sync_frame() → push TS state to C render grid
+//      c. nitty_render_frame() then paints via Cairo/Pango (called by C shim)
+//
+// Resize flow:
+//   GTK resize signal → tw_on_resize(w_px, h_px)
+//   → renderer_resize(w, h) → new (rows, cols)
+//   → ts_resize(rows, cols) + pipeline update
+
+use "gtk4_ffi.npk".*;
+use "renderer.npk".*;
+use "../terminal/terminal_pipeline.npk".*;
+use "../terminal/terminal_state.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Module state
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:g_tw_rows = 24i64;
+int64:g_tw_cols = 80i64;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Initialization
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Initialize the terminal widget.
+/// rows/cols: initial grid dimensions (before first resize).
+/// font_desc: Pango font description e.g. "Monospace 12"
+pub func:tw_init = NIL(int64:rows, int64:cols, string:font_desc) {
+    g_tw_rows = rows;
+    g_tw_cols = cols;
+    // Initialize the Nitpick terminal pipeline (parser → dispatch → state)
+    drop(pipeline_init(rows, cols));
+    // Initialize the renderer (font + default colors)
+    drop(renderer_init(font_desc));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Dimension Accessors
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Grid row count (for PTY winsize negotiation).
+pub func:tw_get_rows = int64() { pass(g_tw_rows); };
+
+/// Grid column count (for PTY winsize negotiation).
+pub func:tw_get_cols = int64() { pass(g_tw_cols); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Draw Callback (called each GTK frame from render callback)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Process pending PTY bytes through the Nitpick pipeline, then sync
+/// the terminal state to the C render grid.
+///
+/// This is registered as the GTK draw-frame handler. The C shim calls
+/// it (via the render callback) before invoking nitty_render_frame().
+///
+/// Step 1: Drain the PTY byte queue (filled by nitty_terminal_poll_output).
+///   Each byte goes through pipeline_feed → parser → dispatch → ts_apply.
+/// Step 2: Sync TerminalState cells → C render grid (clear + push non-space).
+pub func:tw_on_draw = NIL() {
+    // Step 1: Drain PTY byte queue through Nitpick pipeline
+    int64:available = nitty_gtk4_pty_bytes_available();
+    while (available > 0i64) {
+        int64:b = nitty_gtk4_pty_poll_byte();
+        if (b >= 0i64) {
+            drop(pipeline_feed(b));
+        }
+        available = available - 1i64;
+    }
+
+    // Step 2: Sync terminal state to C render grid
+    drop(renderer_sync_frame());
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Resize Handling
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Handle a GTK widget resize event.
+/// w_px/h_px: new DrawingArea pixel dimensions.
+/// Recalculates (rows, cols) from font metrics and updates pipeline state.
+/// Caller should update PTY winsize after this call using tw_get_rows/cols.
+pub func:tw_on_resize = NIL(int64:w_px, int64:h_px) {
+    // Recompute dimensions from pixel size
+    drop(renderer_resize(w_px, h_px));
+
+    Result<int64>:rr = renderer_get_rows();
+    int64:new_rows = rr ? g_tw_rows;
+    Result<int64>:rc = renderer_get_cols();
+    int64:new_cols = rc ? g_tw_cols;
+
+    // Update stored dimensions
+    g_tw_rows = new_rows;
+    g_tw_cols = new_cols;
+
+    // Resize the terminal state (pipeline's TS module)
+    drop(ts_resize(new_rows, new_cols));
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Redraw Request
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Request a GTK frame repaint. Called after PTY output is processed.
+pub func:tw_queue_redraw = NIL() {
+    nitty_gtk4_queue_redraw();
+    pass(NIL);
+};
