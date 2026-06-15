@@ -2,19 +2,23 @@
 //
 // Provides the three lifecycle functions called by src/main.npk:
 //   app_init()     — initialize application state, print startup banner
-//   app_run()      — enter the application main loop (stub for now)
+//   app_run()      — open GTK4 window and enter the main loop
 //   app_shutdown() — clean up and print shutdown message
 //   app_version()  — return the version string
 //
-// Output goes to stdout (fd 1) via sys(WRITE).
-// Dependencies: none (uses sys() directly to avoid circular imports at this stage)
+// v0.0.1: app_run() creates a GtkApplication and opens the main window.
+//         Window title and size are configured before running the GTK loop.
+//
+// Call patterns in Nitpick:
+//   extern fn calls → return raw value directly (no Result<T>)
+//   pub func calls  → return Result<T>; use drop() for NIL, raw/? for values
+
+use "../gui/window.npk".*;
 
 // fd 1 = stdout
 int64:STDOUT = 1i64;
 
 // Write a string to stdout via sys(WRITE).
-// sys(WRITE, fd, data, len) — pure kernel call, no libc required.
-// drop() discards the Result<int64> from sys(WRITE).
 func:write_stdout = NIL(string:msg) {
     int64:len = string_length(msg);
     drop(sys(WRITE, STDOUT, msg, len));
@@ -22,12 +26,34 @@ func:write_stdout = NIL(string:msg) {
 };
 
 pub func:app_init = NIL() {
-    drop(write_stdout("Nitty v0.0.0 initializing...\n"));
+    drop(write_stdout("Nitty v0.0.1 initializing...\n"));
     pass(NIL);
 };
 
 pub func:app_run = NIL() {
-    drop(write_stdout("Nitty running (no GUI yet)\n"));
+    drop(write_stdout("Nitty: starting GTK4 main loop\n"));
+
+    // Configure the window title and size before running.
+    // window_configure is a pub func — use drop() for NIL result.
+    drop(window_configure("Nitty Terminal", 1024i64, 768i64));
+
+    // Create the GtkApplication. pub func returns Result<int64>.
+    Result<int64>:app_r = window_app_create("com.altintel.nitty");
+    int64:app = app_r ? 0i64;
+
+    if (app != 0i64) {
+        // Run the GTK main loop (blocks). pub func returns Result<int64>.
+        Result<int64>:status_r = window_app_run(app);
+        int64:_status = status_r ? 1i64;
+        drop(write_stdout("Nitty: GTK4 main loop exited\n"));
+        // Release the GtkApplication reference.
+        drop(window_app_free(app));
+    }
+
+    if (app == 0i64) {
+        drop(write_stdout("Nitty: ERROR — failed to create GtkApplication\n"));
+    }
+
     pass(NIL);
 };
 
@@ -37,5 +63,5 @@ pub func:app_shutdown = NIL() {
 };
 
 pub func:app_version = string() {
-    pass("0.0.0");
+    pass("0.0.1");
 };

@@ -2,7 +2,7 @@
 //
 // Calls the application lifecycle in order:
 //   1. app_init()     — initialize
-//   2. app_run()      — run (main loop, stub for now)
+//   2. app_run()      — run GTK4 main loop (blocks until window closed)
 //   3. app_shutdown() — clean shutdown
 //
 // Lifecycle functions return NIL — use drop() to discard the Result.

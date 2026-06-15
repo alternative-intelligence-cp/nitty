@@ -1,15 +1,14 @@
-// tests/test_app.npk — Lifecycle unit tests for Nitty v0.0.0
+// tests/test_app.npk — Lifecycle unit tests for Nitty v0.0.1
 //
-// Tests the core/app.npk module:
-//   - app_version() returns "0.0.0"
-//   - app_init()    runs without error (exits 0)
-//   - app_run()     runs without error (exits 0)
-//   - app_shutdown() runs without error (exits 0)
+// Tests the non-blocking parts of core/app.npk:
+//   T01: app_version() returns "0.0.1"
+//   T02: app_init()    runs without error
+//   T03: app_shutdown() runs without error
 //
-// All tests pass → exit 0.
-// Any test fails → exit N (where N is the test number).
+// NOTE: app_run() is NOT tested here because it blocks on the GTK main loop.
+//       GTK integration is tested separately in tests/test_gtk4_ffi.npk.
 //
-// Test output goes to stdout for readability.
+// All tests pass → exit 0.  Any failure → exit N.
 
 use "../src/core/app.npk".*;
 
@@ -26,27 +25,23 @@ func:failsafe = int32(tbb32:_err) { exit 1i32; };
 
 func:main = int32() {
 
-    // T01: app_version() returns "0.0.0"
+    // T01: app_version() returns "0.0.1"
     Result<string>:ver_r = app_version();
     string:ver = ver_r ? "";
-    if (ver == "0.0.0") {
-        drop(print_line("[PASS] T01 app_version returns 0.0.0\n"));
+    if (ver == "0.0.1") {
+        drop(print_line("[PASS] T01 app_version returns 0.0.1\n"));
     }
-    if (ver != "0.0.0") {
+    if (ver != "0.0.1") {
         drop(print_line("[FAIL] T01 app_version\n"));
         exit 1i32;
     }
 
-    // T02: app_init() runs without crashing (output suppressed by redirect in CI)
+    // T02: app_init() runs without crashing
     drop(print_line("[PASS] T02 app_init lifecycle\n"));
     drop(app_init());
 
-    // T03: app_run() runs without crashing
-    drop(print_line("[PASS] T03 app_run lifecycle\n"));
-    drop(app_run());
-
-    // T04: app_shutdown() runs without crashing
-    drop(print_line("[PASS] T04 app_shutdown lifecycle\n"));
+    // T03: app_shutdown() runs without crashing
+    drop(print_line("[PASS] T03 app_shutdown lifecycle\n"));
     drop(app_shutdown());
 
     drop(print_line("All tests passed.\n"));
