@@ -406,6 +406,81 @@ int64_t nitty_gtk4_spawn_tab_shell_at_path(int64_t rows, int64_t cols,
  */
 int64_t nitty_gtk4_monotonic_sec(void);
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * v0.5.1: Split pane support
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Pane event queue poll.
+ * Returns: 0=none, 16=split_horiz, 17=split_vert, 18=close_pane_or_tab
+ * Calling this clears the pending event.
+ */
+int64_t nitty_gtk4_pane_event_poll(void);
+
+/**
+ * Create a GtkPaned widget.
+ * orientation: 0=GTK_ORIENTATION_HORIZONTAL, 1=GTK_ORIENTATION_VERTICAL
+ * Returns a GtkWidget pointer cast to int64_t, or 0 on failure.
+ */
+int64_t nitty_gtk4_paned_new(int64_t orientation);
+
+/**
+ * Set the start child (left or top) of a GtkPaned.
+ */
+void nitty_gtk4_paned_set_start_child(int64_t paned_ptr, int64_t child_ptr);
+
+/**
+ * Set the end child (right or bottom) of a GtkPaned.
+ */
+void nitty_gtk4_paned_set_end_child(int64_t paned_ptr, int64_t child_ptr);
+
+/**
+ * Set the divider position in pixels.
+ */
+void nitty_gtk4_paned_set_position(int64_t paned_ptr, int64_t position);
+
+/**
+ * Get the current divider position in pixels.
+ */
+int64_t nitty_gtk4_paned_get_position(int64_t paned_ptr);
+
+/**
+ * Create a new GtkDrawingArea for a pane, NOT wired to the primary render
+ * callback. Returns ptr cast to int64_t.
+ * The caller owns the widget (it is not yet parented).
+ */
+int64_t nitty_gtk4_pane_drawing_area_new(void);
+
+/**
+ * Replace the window's current child widget with a new one.
+ * Used when rebuilding the split layout. The old child is automatically
+ * unparented by GTK4 when a new child is set.
+ */
+void nitty_gtk4_set_content_widget(int64_t widget_ptr);
+
+/**
+ * Retrieve the current content widget (child of the main window,
+ * below the tab bar). Returns 0 if not set.
+ */
+int64_t nitty_gtk4_get_content_widget(void);
+
+/**
+ * Create a GtkBox container.
+ * orientation: 0=GTK_ORIENTATION_HORIZONTAL, 1=GTK_ORIENTATION_VERTICAL
+ * spacing: pixel spacing between children
+ */
+int64_t nitty_gtk4_box_new(int64_t orientation, int64_t spacing);
+
+/**
+ * Append a child widget to a GtkBox.
+ */
+void nitty_gtk4_box_append(int64_t box_ptr, int64_t child_ptr);
+
+/**
+ * Set widget to expand (fill_h=1 → horizontal, fill_v=1 → vertical).
+ */
+void nitty_gtk4_widget_set_expand(int64_t widget_ptr, int64_t fill_h, int64_t fill_v);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,0 +1,129 @@
+// tests/test_split_view.npk — Split view data model unit tests (v0.5.1)
+//
+// Tests the split_view.npk data layer: pane fd tracking, split_tree integration,
+// and layout geometry. Does NOT test GTK4 widget creation (requires display).
+
+use "../src/core/split_tree.npk".*;
+use "../src/core/pane.npk".*;
+
+func:failsafe = int32(tbb32:_code) { exit 1i32; };
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (expected != got)")));
+    pass(NIL);
+};
+
+func:check32 = NIL(string:name, int32:expected, int32:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (i32 expected != got)")));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Entry point
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:main = int32() {
+    print("=== test_split_view: Split View Data Model Tests ===");
+
+    // T01: split_tree_init creates single root pane
+    print("T01: split_tree_init");
+    drop(split_tree_init());
+    drop(check("T01: pane_count=1",  1i64, raw split_tree_pane_count()));
+    drop(check("T01: active_pane=0", 0i64, raw split_tree_get_active()));
+
+    // T02: pane registry — create pane 0
+    print("T02: pane registry create pane 0");
+    int64:t02_slot = raw pane_create(0i64, 10i64, 100i64, 24i64, 80i64);
+    drop(check("T02: slot=0",  0i64, t02_slot));
+    drop(check("T02: fd=10",   10i64, raw pane_get_pty_fd(0i64)));
+    drop(check("T02: pid=100", 100i64, raw pane_get_pid(0i64)));
+
+    // T03: split pane 0 horizontally → new pane 1
+    print("T03: horizontal split");
+    int64:t03_new = raw split_tree_split(0i64, 0i32);
+    drop(check("T03: new pane_id=1", 1i64, t03_new));
+    drop(check("T03: pane_count=2",  2i64, raw split_tree_pane_count()));
+    drop(check("T03: active=1",      1i64, raw split_tree_get_active()));
+
+    // T04: pane registry — create pane 1
+    print("T04: pane registry create pane 1");
+    int64:t04_slot = raw pane_create(1i64, 11i64, 101i64, 24i64, 80i64);
+    drop(check("T04: slot=1",  1i64, t04_slot));
+    drop(check("T04: fd=11",   11i64, raw pane_get_pty_fd(1i64)));
+
+    // T05: layout for 2-pane split
+    print("T05: layout 2-pane");
+    drop(split_tree_layout(0i64, 0i64, 800i64, 600i64));
+    drop(check("T05: layout_count=2",  2i64, raw split_tree_get_layout_count()));
+    drop(check("T05: divider_count=1", 1i64, raw split_tree_get_divider_count()));
+
+    // T06: layout pane IDs in order
+    print("T06: layout pane IDs");
+    drop(check("T06: layout[0]=0", 0i64, raw split_tree_get_layout_pane_id(0i64)));
+    drop(check("T06: layout[1]=1", 1i64, raw split_tree_get_layout_pane_id(1i64)));
+
+    // T07: divider geometry — horizontal paned means vertical divider (w < h)
+    print("T07: divider geometry (horizontal split)");
+    int64:t07_dw = raw split_tree_get_divider_w(0i64);
+    int64:t07_dh = raw split_tree_get_divider_h(0i64);
+    int64:t07_ok = 0i64;
+    if (t07_dw < t07_dh) { t07_ok = 1i64; }
+    drop(check("T07: horiz-split divider w<h", 1i64, t07_ok));
+
+    // T08: active pane management
+    print("T08: active pane tracking");
+    drop(split_tree_set_active(0i64));
+    drop(check("T08: set active→0", 0i64, raw split_tree_get_active()));
+
+    // T09: remove pane 1, tree collapses
+    print("T09: remove pane 1");
+    int32:t09_rm = raw split_tree_remove(1i64);
+    drop(check32("T09: remove=1", 1i32, t09_rm));
+    drop(check("T09: pane_count=1", 1i64, raw split_tree_pane_count()));
+
+    // T10: pane registry destroy pane 1
+    print("T10: pane_destroy pane 1");
+    int64:t10_slot = raw pane_find_by_id(1i64);
+    drop(pane_destroy(t10_slot));
+    drop(check("T10: pane 1 gone", -1i64, raw pane_find_by_id(1i64)));
+
+    // T11: vertical split
+    print("T11: vertical split");
+    int64:t11_new = raw split_tree_split(0i64, 1i32);
+    drop(check("T11: new pane_id=2", 2i64, t11_new));
+    drop(check("T11: pane_count=2",  2i64, raw split_tree_pane_count()));
+
+    // T12: layout after vertical split — divider dw>dh (wide horizontal bar)
+    print("T12: vertical split divider orientation");
+    drop(split_tree_layout(0i64, 0i64, 800i64, 600i64));
+    int64:t12_dw = raw split_tree_get_divider_w(0i64);
+    int64:t12_dh = raw split_tree_get_divider_h(0i64);
+    int64:t12_ok = 0i64;
+    // Vertical split (top|bottom) → horizontal divider bar → wide (dw > dh)
+    if (t12_dw > t12_dh) { t12_ok = 1i64; }
+    drop(check("T12: vert-split divider dw>dh (horiz bar)", 1i64, t12_ok));
+
+    // ── Results ─────────────────────────────────────────────────────────
+    print("=== Results ===");
+    if (g_fail > 0i64) {
+        print("SOME TESTS FAILED");
+        exit 1i32;
+    }
+    print("All split view data model tests passed.");
+    exit 0i32;
+};

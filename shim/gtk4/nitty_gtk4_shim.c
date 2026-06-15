@@ -1440,3 +1440,108 @@ int64_t nitty_gtk4_monotonic_sec(void)
     return (int64_t)ts.tv_sec;
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * v0.5.1: Split pane support — GtkPaned, GtkBox, content widget management
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Current content widget set via nitty_gtk4_set_content_widget */
+static GtkWidget *g_content_widget = NULL;
+
+int64_t nitty_gtk4_paned_new(int64_t orientation)
+{
+    GtkOrientation o = (orientation == 1)
+        ? GTK_ORIENTATION_VERTICAL
+        : GTK_ORIENTATION_HORIZONTAL;
+    GtkWidget *paned = gtk_paned_new(o);
+    if (paned == NULL) return 0;
+    gtk_widget_set_hexpand(paned, TRUE);
+    gtk_widget_set_vexpand(paned, TRUE);
+    return (int64_t)(uintptr_t)paned;
+}
+
+void nitty_gtk4_paned_set_start_child(int64_t paned_ptr, int64_t child_ptr)
+{
+    if (paned_ptr == 0 || child_ptr == 0) return;
+    GtkWidget *paned = (GtkWidget *)(uintptr_t)paned_ptr;
+    GtkWidget *child = (GtkWidget *)(uintptr_t)child_ptr;
+    gtk_paned_set_start_child(GTK_PANED(paned), child);
+    gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
+    gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
+}
+
+void nitty_gtk4_paned_set_end_child(int64_t paned_ptr, int64_t child_ptr)
+{
+    if (paned_ptr == 0 || child_ptr == 0) return;
+    GtkWidget *paned = (GtkWidget *)(uintptr_t)paned_ptr;
+    GtkWidget *child = (GtkWidget *)(uintptr_t)child_ptr;
+    gtk_paned_set_end_child(GTK_PANED(paned), child);
+    gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
+    gtk_paned_set_shrink_end_child(GTK_PANED(paned), FALSE);
+}
+
+void nitty_gtk4_paned_set_position(int64_t paned_ptr, int64_t position)
+{
+    if (paned_ptr == 0) return;
+    GtkWidget *paned = (GtkWidget *)(uintptr_t)paned_ptr;
+    gtk_paned_set_position(GTK_PANED(paned), (int)position);
+}
+
+int64_t nitty_gtk4_paned_get_position(int64_t paned_ptr)
+{
+    if (paned_ptr == 0) return 0;
+    GtkWidget *paned = (GtkWidget *)(uintptr_t)paned_ptr;
+    return (int64_t)gtk_paned_get_position(GTK_PANED(paned));
+}
+
+int64_t nitty_gtk4_pane_drawing_area_new(void)
+{
+    GtkWidget *da = gtk_drawing_area_new();
+    if (da == NULL) return 0;
+    gtk_widget_set_hexpand(da, TRUE);
+    gtk_widget_set_vexpand(da, TRUE);
+    return (int64_t)(uintptr_t)da;
+}
+
+void nitty_gtk4_set_content_widget(int64_t widget_ptr)
+{
+    if (g_main_window == NULL) return;
+    GtkWidget *widget = (widget_ptr != 0)
+        ? (GtkWidget *)(uintptr_t)widget_ptr
+        : NULL;
+    gtk_window_set_child(GTK_WINDOW(g_main_window), widget);
+    g_content_widget = widget;
+}
+
+int64_t nitty_gtk4_get_content_widget(void)
+{
+    return (int64_t)(uintptr_t)g_content_widget;
+}
+
+int64_t nitty_gtk4_box_new(int64_t orientation, int64_t spacing)
+{
+    GtkOrientation o = (orientation == 1)
+        ? GTK_ORIENTATION_VERTICAL
+        : GTK_ORIENTATION_HORIZONTAL;
+    GtkWidget *box = gtk_box_new(o, (int)spacing);
+    if (box == NULL) return 0;
+    gtk_widget_set_hexpand(box, TRUE);
+    gtk_widget_set_vexpand(box, TRUE);
+    return (int64_t)(uintptr_t)box;
+}
+
+void nitty_gtk4_box_append(int64_t box_ptr, int64_t child_ptr)
+{
+    if (box_ptr == 0 || child_ptr == 0) return;
+    GtkWidget *box   = (GtkWidget *)(uintptr_t)box_ptr;
+    GtkWidget *child = (GtkWidget *)(uintptr_t)child_ptr;
+    gtk_box_append(GTK_BOX(box), child);
+}
+
+void nitty_gtk4_widget_set_expand(int64_t widget_ptr, int64_t fill_h, int64_t fill_v)
+{
+    if (widget_ptr == 0) return;
+    GtkWidget *w = (GtkWidget *)(uintptr_t)widget_ptr;
+    gtk_widget_set_hexpand(w, fill_h != 0);
+    gtk_widget_set_vexpand(w, fill_v != 0);
+}

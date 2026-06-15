@@ -419,5 +419,33 @@ extern "nitty_gtk4_shim" {
 
     // v0.4.4: Return CLOCK_MONOTONIC seconds (for periodic save throttle).
     func:nitty_gtk4_monotonic_sec = int64();
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.5.1: Split pane support
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Poll for pane event: 0=none, 16=split_horiz, 17=split_vert, 18=close_pane_or_tab
+    func:nitty_gtk4_pane_event_poll = int64();
+
+    // Create GtkPaned: orientation 0=horizontal, 1=vertical
+    func:nitty_gtk4_paned_new = int64(int64:orientation);
+    func:nitty_gtk4_paned_set_start_child = NIL(int64:paned_ptr, int64:child_ptr);
+    func:nitty_gtk4_paned_set_end_child   = NIL(int64:paned_ptr, int64:child_ptr);
+    func:nitty_gtk4_paned_set_position    = NIL(int64:paned_ptr, int64:position);
+    func:nitty_gtk4_paned_get_position    = int64(int64:paned_ptr);
+
+    // Create a plain GtkDrawingArea for a secondary pane (no primary render callback)
+    func:nitty_gtk4_pane_drawing_area_new = int64();
+
+    // Replace the main window's content widget (for split layout rebuild)
+    func:nitty_gtk4_set_content_widget = NIL(int64:widget_ptr);
+    func:nitty_gtk4_get_content_widget = int64();
+
+    // GtkBox container
+    func:nitty_gtk4_box_new    = int64(int64:orientation, int64:spacing);
+    func:nitty_gtk4_box_append = NIL(int64:box_ptr, int64:child_ptr);
+
+    // Widget expand flags
+    func:nitty_gtk4_widget_set_expand = NIL(int64:widget_ptr, int64:fill_h, int64:fill_v);
 }
 

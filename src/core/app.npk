@@ -1,6 +1,6 @@
 // src/core/app.npk — Application lifecycle for Nitty
 //
-// v0.4.0: Tab data model + tab bar UI. Single-tab scaffolding.
+// v0.5.1: Split pane support: wire split_view_init after tab manager + session restore.
 // v0.4.4: Session persistence (save/restore via session.npk).
 //
 // Architecture:
@@ -20,6 +20,7 @@ use "../gui/input.npk".*;
 use "../gui/terminal_grid.npk".*;
 use "../gui/gtk4_ffi.npk".*;
 use "../gui/terminal_widget.npk".*;
+use "../gui/split_view.npk".*;
 use "../terminal/terminal.npk".*;
 use "../terminal/shell.npk".*;
 use "../terminal/pty_io.npk".*;
@@ -85,6 +86,13 @@ pub func:app_run = NIL() {
         int64:default_tab_id = raw tm_add_tab(-1i64, -1i64);
         drop(tm_activate(default_tab_id));
     }
+
+    // ── Initialize split view for the active tab ───────────────────────────
+    // At this point the active tab's PTY hasn't spawned yet (that happens in
+    // on_activate when g_use_terminal fires). We initialize split_view with
+    // placeholder fd=-1 / pid=-1; the real fd is set after terminal_enable().
+    drop(write_stdout("Nitty: initializing split view\n"));
+    drop(split_view_init(24i64, 80i64, -1i64, -1i64));
 
     // ── Enable the legacy terminal grid (C-side VT parser, still active in v0.3.0) ──
     drop(write_stdout("Nitty: enabling terminal grid (Monospace 12)\n"));
@@ -153,5 +161,5 @@ pub func:app_shutdown = NIL() {
 };
 
 pub func:app_version = string() {
-    pass("0.4.4");
+    pass("0.5.1");
 };

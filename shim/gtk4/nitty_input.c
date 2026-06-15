@@ -61,6 +61,9 @@ static int g_scroll_event = 0;
  * 5..13=direct(idx 0..8) 14=move_left 15=move_right */
 static int g_tab_event = 0;
 
+/* v0.5.1: Pane event queue: 0=none 16=split_horiz 17=split_vert 18=close_pane_or_tab */
+static int g_pane_event = 0;
+
 /* v0.4.2: Tab drag-and-drop state */
 static int    g_drag_active    = 0;  /* 1 while dragging */
 static int    g_drag_src_idx   = -1; /* source tab index */
@@ -101,17 +104,24 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
      * 5..13=direct(idx 0..8) 14=move_left 15=move_right */
 
     /* v0.4.1: Intercept Ctrl+Shift tab shortcuts before PTY routing */
+    /* v0.5.1: Added E=split_horiz, O=split_vert; W now emits pane_event=18 */
     if ((state & GDK_CONTROL_MASK) && (state & GDK_SHIFT_MASK)) {
         switch (keyval) {
             case GDK_KEY_t: case GDK_KEY_T:
                 g_tab_event = 1; return TRUE;  /* new tab */
             case GDK_KEY_w: case GDK_KEY_W:
-                g_tab_event = 2; return TRUE;  /* close tab */
+                /* v0.5.1: pane_event=18 lets Nitpick decide: close pane or tab */
+                g_pane_event = 18; return TRUE;
             /* v0.4.2: Ctrl+Shift+Left/Right to move active tab */
             case GDK_KEY_Left:  case GDK_KEY_KP_Left:
                 g_tab_event = 14; return TRUE; /* move tab left */
             case GDK_KEY_Right: case GDK_KEY_KP_Right:
                 g_tab_event = 15; return TRUE; /* move tab right */
+            /* v0.5.1: Split pane shortcuts */
+            case GDK_KEY_e: case GDK_KEY_E:
+                g_pane_event = 16; return TRUE; /* split horizontal */
+            case GDK_KEY_o: case GDK_KEY_O:
+                g_pane_event = 17; return TRUE; /* split vertical */
             default: break;
         }
     }
@@ -549,14 +559,29 @@ int64_t nitty_gtk4_scroll_event_poll(void)
 }
 
 /* ── v0.4.1: Tab event polling ────────────────────────────────────────── */
-/* Returns: 0=none 1=new 2=close 3=prev 4=next 5..13=direct(idx 0..8)    */
+/* Returns: 0=none 1=new 3=prev 4=next 5..13=direct(idx 0..8)            */
 /* v0.4.2: 14=move_left 15=move_right                                     */
+/* Note: code 2 (close tab) is now handled via nitty_gtk4_pane_event_poll */
+/*       (code 18=close_pane_or_tab) so Nitpick can decide per pane count */
 
 int64_t nitty_gtk4_tab_event_poll(void)
 {
     if (g_tab_event != 0) {
         int64_t ev = (int64_t)g_tab_event;
         g_tab_event = 0;
+        return ev;
+    }
+    return 0;
+}
+
+/* ── v0.5.1: Pane event polling ───────────────────────────────────────── */
+/* Returns: 0=none 16=split_horiz 17=split_vert 18=close_pane_or_tab     */
+
+int64_t nitty_gtk4_pane_event_poll(void)
+{
+    if (g_pane_event != 0) {
+        int64_t ev = (int64_t)g_pane_event;
+        g_pane_event = 0;
         return ev;
     }
     return 0;

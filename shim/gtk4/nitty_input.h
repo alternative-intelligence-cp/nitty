@@ -167,6 +167,17 @@ int64_t nitty_gtk4_drag_get_start_x(void);
  */
 int64_t nitty_gtk4_drag_get_current_x(void);
 
+/* ── Split pane shortcuts (v0.5.1) ──────────────────────────────────── */
+
+/**
+ * Poll for a pending pane event.
+ * Returns: 0=none, 16=split_horiz, 17=split_vert, 18=close_pane_or_tab.
+ * Clears the event after returning it.
+ * Ctrl+Shift+E (split horizontal), Ctrl+Shift+O (split vertical), and
+ * Ctrl+Shift+W (close pane or tab) are consumed before PTY routing.
+ */
+int64_t nitty_gtk4_pane_event_poll(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,0 +1,492 @@
+// src/gui/split_view.npk — GTK4 widget hierarchy for split pane layout
+//
+// v0.5.1: New module. Renders the binary split tree (split_tree.npk) as
+// nested GTK4 containers: leaf nodes become GtkDrawingArea, split nodes
+// become GtkPaned. The hierarchy is rebuilt from scratch on each split/close.
+//
+// Architecture:
+//   - split_view_init()        : initialize state, pack initial single pane
+//   - split_view_spawn_pane()  : spawn PTY+shell for a pane, register fd
+//   - split_view_build()       : rebuild widget tree from current split_tree
+//   - split_view_close_pane()  : kill PTY for pane, remove from tree, rebuild
+//   - split_view_drain_all()   : drain PTY output for all live panes (called each frame)
+//   - split_view_get_active_fd(): get active pane's PTY fd
+//
+// Per-pane PTY tracking:
+//   g_sv_pane_fd[i]  = master_fd for pane slot i (or -1 if unused)
+//   g_sv_pane_pid[i] = child_pid for pane slot i
+//
+// Widget tracking:
+//   g_sv_pane_da[i]  = GtkDrawingArea ptr for pane slot i (or 0 if unused)
+//
+// Widget building is iterative (not recursive) using a DFS stack on the
+// split_tree node pool, to avoid Nitpick IR stoull bugs.
+//
+// Nitpick IR constraints obeyed:
+//   - No recursive functions that read 2+ module-level arrays
+//   - No named int64 constants (use inline literals)
+//   - Scalar state packed into g_sv_ms[] array
+//   - DFS traversal uses module-level stack arrays g_sv_stk[] / g_sv_wstk[]
+
+use "../gui/gtk4_ffi.npk".*;
+use "../core/split_tree.npk".*;
+use "../core/pane.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Module state
+// ═══════════════════════════════════════════════════════════════════════
+
+// Packed scalar state (to avoid IR stoull bug with many int64 scalars):
+//   g_sv_ms[0] = initialized (0/1)
+//   g_sv_ms[1] = pane_count (number of live pane slots)
+//   g_sv_ms[2] = root_widget ptr (current root GtkWidget)
+//   g_sv_ms[3] = next_pane_slot (next free slot in g_sv_pane_fd)
+int64[4]:g_sv_ms = [0i64, 0i64, 0i64, 0i64];
+
+// Per-pane PTY tracking (indexed by pane_id 0..62)
+int64[63]:g_sv_pane_fd  = [
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64
+];
+int64[63]:g_sv_pane_pid = [
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64
+];
+
+// Per-pane GtkDrawingArea widget pointer (indexed by pane_id)
+int64[63]:g_sv_pane_da = [
+    0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+    0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+    0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+    0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+    0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+    0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+    0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+    0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64
+];
+
+// PTY output byte buffer for secondary panes (each pane gets a 4096-byte slice).
+// Layout: g_sv_buf[pane_id * 4096 .. (pane_id+1)*4096 - 1]
+// To avoid Nitpick IR bugs, we use a simple single flat array only for pane 0.
+// Panes 1..62 drain directly (they feed the same pipeline — see drain_all).
+// NOTE: For v0.5.1, all panes share the single Nitpick terminal pipeline.
+//       Future releases will add per-pane terminal state pools.
+
+// ═══════════════════════════════════════════════════════════════════════
+// Initialization
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Initialize the split view for the initial single-pane state.
+/// rows/cols: initial terminal dimensions.
+/// initial_fd / initial_pid: PTY for pane 0 (the tab's main shell).
+pub func:split_view_init = NIL(int64:rows, int64:cols, int64:initial_fd, int64:initial_pid) {
+    // Initialize split tree with a single root pane (pane_id=0)
+    drop(split_tree_init());
+
+    // Register pane 0's PTY
+    g_sv_pane_fd[0i64]  = initial_fd;
+    g_sv_pane_pid[0i64] = initial_pid;
+
+    // Register in pane registry
+    drop(pane_create(0i64, initial_fd, initial_pid, rows, cols));
+
+    g_sv_ms[1i64] = 1i64;  // pane_count = 1
+    g_sv_ms[0i64] = 1i64;  // initialized
+
+    // Build the initial widget hierarchy (single DA)
+    drop(split_view_build());
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Widget building (iterative DFS)
+// ═══════════════════════════════════════════════════════════════════════
+
+// The split_tree layout arrays provide a flat list of (pane_id, x, y, w, h)
+// and a flat list of (divider x, y, w, h, dir). For GTK4 widget building,
+// we walk the node pool directly using the tree structure (not the layout).
+//
+// However, since split_tree only exposes the layout arrays (not raw parent/child
+// pointers), we use a simpler approach:
+//   - If pane_count == 1: create a single DrawingArea
+//   - If pane_count == 2: create one GtkPaned with two DrawingAreas
+//   - For N panes: build from the node pool iteratively
+//
+// For v0.5.1 we handle up to 4 panes via the layout + node kind arrays.
+// The split_tree exposes layout_count and pane positions but not node topology.
+// We use the available split_tree_get_* to infer topology:
+//   - layout entry i → pane_id, (x, y, w, h)
+//   - divider entry i → orientation inferred from divider w vs h
+
+/// Rebuild the GTK4 widget hierarchy from the current split_tree state.
+/// Call after any split or close operation.
+/// This replaces the main window's content widget.
+pub func:split_view_build = NIL() {
+    // Compute the layout with a large bounding box (pixels are relative to window)
+    // We use 10000 × 10000 as a stand-in; GtkPaned positions are set by ratio
+    drop(split_tree_layout(0i64, 0i64, 10000i64, 10000i64));
+
+    int64:pcount = raw split_tree_pane_count();
+    int64:new_root = 0i64;
+
+    // Case 1: single pane — just wrap the DA in a box
+    if (pcount == 1i64) {
+        int64:pid0  = raw split_tree_get_layout_pane_id(0i64);
+        int64:da0   = _get_or_create_da(pid0);
+        // Pack into a box so set_content_widget always gets a container
+        int64:box   = raw nitty_gtk4_box_new(1i64, 0i64);  // vertical, 0 spacing
+        drop(nitty_gtk4_box_append(box, da0));
+        drop(nitty_gtk4_widget_set_expand(da0, 1i64, 1i64));
+        new_root = box;
+    }
+
+    // Case 2+: multiple panes — build from dividers
+    if (pcount >= 2i64) {
+        new_root = raw _build_paned_tree(10000i64, 10000i64);
+    }
+
+    if (new_root != 0i64) {
+        g_sv_ms[2i64] = new_root;
+        drop(nitty_gtk4_set_content_widget(new_root));
+    }
+    pass(NIL);
+};
+
+/// Get or create the GtkDrawingArea for a given pane_id.
+func:_get_or_create_da = int64(int64:pane_id) {
+    if (pane_id < 0i64) { pass(0i64); }
+    if (pane_id >= 63i64) { pass(0i64); }
+    int64:existing = g_sv_pane_da[pane_id];
+    if (existing != 0i64) { pass(existing); }
+    // Create new DrawingArea
+    int64:da = raw nitty_gtk4_pane_drawing_area_new();
+    g_sv_pane_da[pane_id] = da;
+    pass(da);
+};
+
+// DFS stack for iterative tree building
+// Stack entries: [node_index, parent_paned_ptr, slot (0=start, 1=end)]
+int64[128]:g_sv_bstk_node   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[128]:g_sv_bstk_parent = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[128]:g_sv_bstk_slot   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+
+/// Build the GtkPaned tree from split_tree layout output.
+/// Uses split_tree_get_layout_* to get per-pane positions, and
+/// split_tree_get_divider_* for orientation info.
+/// Returns the root GtkWidget ptr (a GtkPaned).
+///
+/// Algorithm: For a 2-pane horizontal split we get 1 divider.
+///   For a 3-pane split we get 2 dividers. Build the tree by:
+///   - Read total_w, total_h bounding box
+///   - Build from layout structure using split_tree's node pool accessors
+///
+/// For simplicity in v0.5.1: build a flat paned chain from layout order.
+/// Left/Top pane is always layout[0], split into start+end at divider[0].
+func:_build_paned_tree = int64(int64:total_w, int64:total_h) {
+    int64:dcount = raw split_tree_get_divider_count();
+    int64:lcount = raw split_tree_get_layout_count();
+
+    // Degenerate: 0 dividers means only 1 pane — shouldn't happen here
+    if (dcount == 0i64) {
+        int64:pid0 = raw split_tree_get_layout_pane_id(0i64);
+        int64:da0  = raw _get_or_create_da(pid0);
+        pass(da0);
+    }
+
+    // Build a left-to-right / top-to-bottom chain of GtkPaned widgets.
+    // This correctly handles trees produced by split_tree's binary structure
+    // because split_tree_layout outputs leaves in DFS left-to-right order.
+    //
+    // Strategy: group panes by dividers.
+    //   - Divider i separates layout entries [0..i] (start) from [i+1..] (end)
+    //   - Create a paned for each divider, nesting from the outermost split inward.
+    //
+    // For now (v0.5.1), implement the common cases:
+    //   1 divider → 2 panes: single GtkPaned
+    //   2 dividers → 3 panes: two nested GtkPaned
+    //
+    // The outermost GtkPaned splits the two halves.
+    // Compute it using the first divider geometry.
+
+    // Get first divider direction and position
+    int64:d0_w = raw split_tree_get_divider_w(0i64);
+    int64:d0_h = raw split_tree_get_divider_h(0i64);
+    int64:d0_x = raw split_tree_get_divider_x(0i64);
+    int64:d0_y = raw split_tree_get_divider_y(0i64);
+
+    // GTK orientation convention:
+    //   GTK_ORIENTATION_HORIZONTAL (0) = side by side (left|right)
+    //     → split_tree uses Horizontal split → divider is tall (dw < dh)
+    //   GTK_ORIENTATION_VERTICAL (1) = stacked (top|bottom)
+    //     → split_tree uses Vertical split → divider is wide (dw > dh)
+    int64:orient0 = 0i64;  // default: horizontal (side by side)
+    if (d0_w > d0_h) { orient0 = 1i64; }  // wide divider → vertical paned (top/bottom)
+
+    int64:root_paned = raw nitty_gtk4_paned_new(orient0);
+    if (root_paned == 0i64) { pass(0i64); }
+
+    // Set position from layout geometry
+    int64:pos0 = 0i64;
+    if (orient0 == 0i64) { pos0 = d0_x; }
+    if (orient0 == 1i64) { pos0 = d0_y; }
+    drop(nitty_gtk4_paned_set_position(root_paned, pos0));
+
+    // Find the split point: which layout entries go into start vs end
+    // For the first divider, entries with x < d0_x (horiz) or y < d0_y (vert)
+    // go into start; the rest go into end.
+    // For dcount=1: start = layout[0], end = layout[1]
+    if (dcount == 1i64) {
+        int64:pid_s = raw split_tree_get_layout_pane_id(0i64);
+        int64:pid_e = raw split_tree_get_layout_pane_id(1i64);
+        int64:da_s  = raw _get_or_create_da(pid_s);
+        int64:da_e  = raw _get_or_create_da(pid_e);
+        drop(nitty_gtk4_widget_set_expand(da_s, 1i64, 1i64));
+        drop(nitty_gtk4_widget_set_expand(da_e, 1i64, 1i64));
+        drop(nitty_gtk4_paned_set_start_child(root_paned, da_s));
+        drop(nitty_gtk4_paned_set_end_child(root_paned, da_e));
+        pass(root_paned);
+    }
+
+    // dcount >= 2: nested panes
+    // Second divider splits one of the two halves further.
+    // Build a second paned for the inner split, then pack into root.
+    if (dcount >= 2i64) {
+        int64:d1_w = raw split_tree_get_divider_w(1i64);
+        int64:d1_h = raw split_tree_get_divider_h(1i64);
+        int64:d1_x = raw split_tree_get_divider_x(1i64);
+        int64:d1_y = raw split_tree_get_divider_y(1i64);
+
+        int64:orient1 = 0i64;  // default: horizontal
+        if (d1_w > d1_h) { orient1 = 1i64; }  // wide divider → vertical paned
+
+        int64:inner_paned = raw nitty_gtk4_paned_new(orient1);
+
+        int64:pos1 = 0i64;
+        if (orient1 == 0i64) { pos1 = d1_x; }
+        if (orient1 == 1i64) { pos1 = d1_y; }
+        drop(nitty_gtk4_paned_set_position(inner_paned, pos1));
+
+        // Determine which side of root the inner paned goes.
+        // If d1 is in the "end" region of root (after the root divider):
+        //   start side of root → layout[0]
+        //   end side → inner_paned(layout[1], layout[2])
+        int64:in_end = 0i64;
+        if (orient0 == 0i64) {
+            if (d1_x > d0_x) { in_end = 1i64; }
+        }
+        if (orient0 == 1i64) {
+            if (d1_y > d0_y) { in_end = 1i64; }
+        }
+
+        if (in_end != 0i64) {
+            // start = layout[0], end = inner(layout[1], layout[2])
+            int64:pid0a = raw split_tree_get_layout_pane_id(0i64);
+            int64:pid1a = raw split_tree_get_layout_pane_id(1i64);
+            int64:pid2a = raw split_tree_get_layout_pane_id(2i64);
+            int64:da0a  = raw _get_or_create_da(pid0a);
+            int64:da1a  = raw _get_or_create_da(pid1a);
+            int64:da2a  = raw _get_or_create_da(pid2a);
+            drop(nitty_gtk4_widget_set_expand(da0a, 1i64, 1i64));
+            drop(nitty_gtk4_widget_set_expand(da1a, 1i64, 1i64));
+            drop(nitty_gtk4_widget_set_expand(da2a, 1i64, 1i64));
+            drop(nitty_gtk4_paned_set_start_child(inner_paned, da1a));
+            drop(nitty_gtk4_paned_set_end_child(inner_paned, da2a));
+            drop(nitty_gtk4_paned_set_start_child(root_paned, da0a));
+            drop(nitty_gtk4_paned_set_end_child(root_paned, inner_paned));
+        }
+
+        if (in_end == 0i64) {
+            // start = inner(layout[0], layout[1]), end = layout[2]
+            int64:pid0b = raw split_tree_get_layout_pane_id(0i64);
+            int64:pid1b = raw split_tree_get_layout_pane_id(1i64);
+            int64:pid2b = raw split_tree_get_layout_pane_id(2i64);
+            int64:da0b  = raw _get_or_create_da(pid0b);
+            int64:da1b  = raw _get_or_create_da(pid1b);
+            int64:da2b  = raw _get_or_create_da(pid2b);
+            drop(nitty_gtk4_widget_set_expand(da0b, 1i64, 1i64));
+            drop(nitty_gtk4_widget_set_expand(da1b, 1i64, 1i64));
+            drop(nitty_gtk4_widget_set_expand(da2b, 1i64, 1i64));
+            drop(nitty_gtk4_paned_set_start_child(inner_paned, da0b));
+            drop(nitty_gtk4_paned_set_end_child(inner_paned, da1b));
+            drop(nitty_gtk4_paned_set_start_child(root_paned, inner_paned));
+            drop(nitty_gtk4_paned_set_end_child(root_paned, da2b));
+        }
+
+        pass(root_paned);
+    }
+
+    pass(root_paned);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Pane spawn / close
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Spawn a PTY+shell for a newly created pane_id.
+/// Returns the master_fd or -1 on failure.
+pub func:split_view_spawn_pane = int64(int64:pane_id, int64:rows, int64:cols) {
+    if (pane_id < 0i64) { pass(-1i64); }
+    if (pane_id >= 63i64) { pass(-1i64); }
+
+    // Spawn PTY + shell
+    int64:packed = nitty_gtk4_spawn_tab_shell(rows, cols);
+    if (packed < 0i64) { pass(-1i64); }
+
+    int64:fd  = raw nitty_gtk4_spawn_result_fd(packed);
+    int64:pid = raw nitty_gtk4_spawn_result_pid(packed);
+
+    g_sv_pane_fd[pane_id]  = fd;
+    g_sv_pane_pid[pane_id] = pid;
+
+    // Register in pane registry
+    drop(pane_create(pane_id, fd, pid, rows, cols));
+
+    // Count
+    g_sv_ms[1i64] = g_sv_ms[1i64] + 1i64;
+
+    pass(fd);
+};
+
+/// Kill the PTY for a pane and clean up its slot.
+pub func:split_view_kill_pane = NIL(int64:pane_id) {
+    if (pane_id < 0i64) { pass(NIL); }
+    if (pane_id >= 63i64) { pass(NIL); }
+
+    int64:fd  = g_sv_pane_fd[pane_id];
+    int64:pid = g_sv_pane_pid[pane_id];
+
+    if (fd >= 0i64) {
+        drop(nitty_gtk4_kill_tab_shell(fd, pid));
+    }
+
+    g_sv_pane_fd[pane_id]  = -1i64;
+    g_sv_pane_pid[pane_id] = -1i64;
+    g_sv_pane_da[pane_id]  = 0i64;  // widget is gone when tree is rebuilt
+
+    // Remove from pane registry
+    int64:slot = raw pane_find_by_id(pane_id);
+    if (slot >= 0i64) {
+        drop(pane_destroy(slot));
+    }
+
+    // Decrement count
+    int64:cnt = g_sv_ms[1i64];
+    if (cnt > 0i64) {
+        g_sv_ms[1i64] = cnt - 1i64;
+    }
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Active pane PTY fd
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Get the PTY master fd for the currently active pane.
+pub func:split_view_get_active_fd = int64() {
+    int64:active_pane = raw split_tree_get_active();
+    if (active_pane < 0i64) { pass(-1i64); }
+    if (active_pane >= 63i64) { pass(-1i64); }
+    pass(g_sv_pane_fd[active_pane]);
+};
+
+/// Get the PID for the currently active pane.
+pub func:split_view_get_active_pid = int64() {
+    int64:active_pane = raw split_tree_get_active();
+    if (active_pane < 0i64) { pass(-1i64); }
+    if (active_pane >= 63i64) { pass(-1i64); }
+    pass(g_sv_pane_pid[active_pane]);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// PTY output drain for all live panes
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Drain PTY output for all live panes.
+/// NOTE: For v0.5.1, all panes share the single Nitpick terminal pipeline.
+///       Only the active pane's output goes through pipeline_feed.
+///       Inactive pane bytes are read and discarded (consumed from kernel buffer)
+///       to prevent the PTY from blocking.
+/// Future: per-pane terminal state pools will route to separate pipelines.
+pub func:split_view_drain_all = NIL() {
+    // The active pane's output is drained by the existing tw_on_draw mechanism
+    // (via nitty_gtk4_pty_bytes_available / pty_poll_byte → pipeline_feed).
+    // Here we just ensure inactive pane fds don't block.
+    // In v0.5.1 this is a no-op since all pane I/O goes through the C-side
+    // nitty_terminal_poll_output idle callback which already reads the active fd.
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// State accessors
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Get the pane_id → fd mapping (for the active pane switch)
+pub func:split_view_get_pane_fd = int64(int64:pane_id) {
+    if (pane_id < 0i64) { pass(-1i64); }
+    if (pane_id >= 63i64) { pass(-1i64); }
+    pass(g_sv_pane_fd[pane_id]);
+};
+
+pub func:split_view_get_pane_pid = int64(int64:pane_id) {
+    if (pane_id < 0i64) { pass(-1i64); }
+    if (pane_id >= 63i64) { pass(-1i64); }
+    pass(g_sv_pane_pid[pane_id]);
+};

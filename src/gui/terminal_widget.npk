@@ -1,5 +1,9 @@
 // src/gui/terminal_widget.npk — Terminal widget: pipeline + renderer + GTK4
 //
+// v0.5.1: Pane event polling (Ctrl+Shift+E/O=split, Ctrl+Shift+W=close pane/tab).
+//   nitty_gtk4_pane_event_poll() dispatched each frame. On split: split_tree_split,
+//   spawn PTY via split_view_spawn_pane, split_view_build. On close: kill pane PTY
+//   and collapse tree, or fall through to tab close if last pane.
 // v0.4.4: Periodic 30s session save via monotonic clock in idle callback.
 // v0.4.3: Right-click on tab bar triggers context menu (context_menu_show).
 //   tcm_poll() dispatched each frame to handle pending menu selections.
@@ -46,10 +50,12 @@ use "renderer.npk".*;
 use "viewport.npk".*;
 use "tab_bar.npk".*;
 use "tab_context_menu.npk".*;
+use "split_view.npk".*;
 use "../terminal/terminal_pipeline.npk".*;
 use "../terminal/terminal_state.npk".*;
 use "../terminal/scrollback.npk".*;
 use "../core/tab_manager.npk".*;
+use "../core/split_tree.npk".*;
 use "../core/session.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -185,6 +191,79 @@ pub func:tw_on_draw = NIL() {
     if (tev == 15i64) {
         drop(tm_move_right());
         drop(tw_queue_redraw());
+    }
+
+    // v0.5.1 Step 0d: Poll pane events (split / close pane)
+    // 16=split_horiz 17=split_vert 18=close_pane_or_tab
+    int64:pev = nitty_gtk4_pane_event_poll();
+    if (pev == 16i64) {
+        // Ctrl+Shift+E: split active pane horizontally (left | right)
+        int64:active_p = raw split_tree_get_active();
+        int64:new_pid  = raw split_tree_split(active_p, 0i32);  // 0=Horizontal
+        if (new_pid != 63i64) {
+            // Spawn PTY+shell for the new pane
+            int64:sv_fd = raw split_view_spawn_pane(new_pid, g_tw_rows, g_tw_cols);
+            if (sv_fd >= 0i64) {
+                // Switch active PTY to the new pane
+                int64:sv_pid = raw split_view_get_pane_pid(new_pid);
+                drop(nitty_gtk4_set_active_pty_fd(sv_fd, sv_pid));
+                drop(split_tree_set_active(new_pid));
+            }
+            // Rebuild GTK4 widget hierarchy
+            drop(split_view_build());
+            drop(tw_queue_redraw());
+        }
+    }
+    if (pev == 17i64) {
+        // Ctrl+Shift+O: split active pane vertically (top / bottom)
+        int64:active_v = raw split_tree_get_active();
+        int64:new_vid  = raw split_tree_split(active_v, 1i32);  // 1=Vertical
+        if (new_vid != 63i64) {
+            int64:sv_fdv = raw split_view_spawn_pane(new_vid, g_tw_rows, g_tw_cols);
+            if (sv_fdv >= 0i64) {
+                int64:sv_pidv = raw split_view_get_pane_pid(new_vid);
+                drop(nitty_gtk4_set_active_pty_fd(sv_fdv, sv_pidv));
+                drop(split_tree_set_active(new_vid));
+            }
+            drop(split_view_build());
+            drop(tw_queue_redraw());
+        }
+    }
+    if (pev == 18i64) {
+        // Ctrl+Shift+W: close active pane or tab
+        int64:pcount = raw split_tree_pane_count();
+        if (pcount <= 1i64) {
+            // Last pane — fall through to tab close
+            int64:active_pid_t = raw tm_get_active_pid();
+            int64:should_close_t = 1i64;
+            if (active_pid_t > 0i64) {
+                string:tab_title_t = raw tm_get_title_at(raw tm_get_active_index());
+                int64:confirmed_t  = nitty_gtk4_confirm_close(tab_title_t);
+                should_close_t = confirmed_t;
+            }
+            if (should_close_t != 0i64) {
+                drop(tm_close_active());
+                drop(tw_queue_redraw());
+            }
+        }
+        if (pcount > 1i64) {
+            // Multiple panes — close just the active pane
+            int64:close_pane = raw split_tree_get_active();
+            // Kill the PTY for this pane
+            drop(split_view_kill_pane(close_pane));
+            // Collapse the tree (split_tree picks the sibling as new active)
+            drop(split_tree_remove(close_pane));
+            // Switch active PTY to the new active pane
+            int64:new_active = raw split_tree_get_active();
+            int64:new_fd   = raw split_view_get_pane_fd(new_active);
+            int64:new_ppid = raw split_view_get_pane_pid(new_active);
+            if (new_fd >= 0i64) {
+                drop(nitty_gtk4_set_active_pty_fd(new_fd, new_ppid));
+            }
+            // Rebuild widget tree
+            drop(split_view_build());
+            drop(tw_queue_redraw());
+        }
     }
 
     // v0.4.2: Tab drag-and-drop — process each frame for live indicator + drop
