@@ -139,6 +139,39 @@ void nitty_render_set_cell(int64_t col, int64_t row, const char *ch)
     if ((int)row + 1 > g_grid_rows) g_grid_rows = (int)row + 1;
 }
 
+void nitty_render_set_cell_cp(int64_t col, int64_t row, int64_t codepoint)
+{
+    /* Encode Unicode codepoint to UTF-8 */
+    char buf[8] = {0};
+    uint32_t cp = (uint32_t)codepoint;
+
+    if (cp < 0x80) {
+        buf[0] = (char)cp;
+        buf[1] = '\0';
+    } else if (cp < 0x800) {
+        buf[0] = (char)(0xC0 | (cp >> 6));
+        buf[1] = (char)(0x80 | (cp & 0x3F));
+        buf[2] = '\0';
+    } else if (cp < 0x10000) {
+        buf[0] = (char)(0xE0 | (cp >> 12));
+        buf[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        buf[2] = (char)(0x80 | (cp & 0x3F));
+        buf[3] = '\0';
+    } else if (cp <= 0x10FFFF) {
+        buf[0] = (char)(0xF0 | (cp >> 18));
+        buf[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        buf[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        buf[3] = (char)(0x80 | (cp & 0x3F));
+        buf[4] = '\0';
+    } else {
+        /* Invalid codepoint — use replacement character U+FFFD */
+        buf[0] = (char)0xEF; buf[1] = (char)0xBF; buf[2] = (char)0xBD;
+        buf[3] = '\0';
+    }
+
+    nitty_render_set_cell(col, row, buf);
+}
+
 void nitty_render_set_cell_fg(int64_t col, int64_t row,
                                int64_t r, int64_t g, int64_t b)
 {

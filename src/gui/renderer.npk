@@ -1,0 +1,138 @@
+// src/gui/renderer.npk — Terminal cell grid renderer (v0.3.0)
+//
+// The sync layer between the Nitpick-side terminal state (terminal_state.npk,
+// grid.npk) and the C-side Cairo/Pango paint engine (nitty_render.c).
+//
+// Architecture:
+//   - The C side (nitty_render.c) maintains a static cell grid and paints it
+//     each GTK frame via nitty_render_frame(). It knows nothing about the
+//     Nitpick terminal model.
+//   - This module reads the authoritative TerminalState (via ts_get_* getters
+//     and grid_get_cp) and pushes each non-space cell to nitty_render_set_cell_cp()
+//     before each frame.
+//   - renderer_sync_frame() is called from the idle/draw callback.
+//
+// Coordinate system:
+//   Cell (row, col) → pixel (x, y):
+//     x = col * cell_width
+//     y = row * cell_height
+//   (All coordinates are in GTK4 widget-local logical pixels.)
+//
+// Fixed-point convention: colors are [0..1000] → [0.0..1.0].
+//
+// Usage:
+//   1. renderer_init("Monospace 12")   — set font
+//   2. renderer_resize(w_px, h_px)     — compute (rows, cols)
+//   3. Each frame: renderer_sync_frame() → GTK draw callback paints
+
+use "gtk4_ffi.npk".*;
+use "../terminal/terminal_state.npk".*;
+use "../terminal/grid.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Module state
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:g_rend_rows = 24i64;
+int64:g_rend_cols = 80i64;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Initialization
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Set the terminal font and configure default colors.
+/// font_desc: Pango font description e.g. "Monospace 12"
+pub func:renderer_init = NIL(string:font_desc) {
+    nitty_render_set_font(font_desc);
+    // Default: white text on black background
+    nitty_render_set_bg(0i64, 0i64, 0i64);
+    nitty_render_set_fg(1000i64, 1000i64, 1000i64);
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cell Metric Queries
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Cell width in logical pixels (available after first draw frame).
+pub func:renderer_get_cell_width = int64() {
+    pass(nitty_render_get_cell_width());
+};
+
+/// Cell height in logical pixels (available after first draw frame).
+pub func:renderer_get_cell_height = int64() {
+    pass(nitty_render_get_cell_height());
+};
+
+/// Font baseline offset in fixed-point × 1000.
+pub func:renderer_get_font_baseline = int64() {
+    pass(nitty_render_get_font_baseline());
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Resize Calculation
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Compute visible (rows, cols) from a pixel window size.
+/// Stores the result; caller retrieves with renderer_get_rows/cols().
+/// Cell metrics must be available (i.e., at least one draw frame done).
+/// If cell dimensions are 0 (not measured yet), keeps existing values.
+pub func:renderer_resize = NIL(int64:w_px, int64:h_px) {
+    int64:cw = nitty_render_get_cell_width();
+    int64:ch = nitty_render_get_cell_height();
+    if (cw > 0i64) {
+        if (ch > 0i64) {
+            int64:cols = w_px / cw;
+            int64:rows = h_px / ch;
+            if (cols < 1i64) { cols = 1i64; }
+            if (rows < 1i64) { rows = 1i64; }
+            g_rend_cols = cols;
+            g_rend_rows = rows;
+        }
+    }
+    pass(NIL);
+};
+
+/// Computed visible columns (from last renderer_resize call).
+pub func:renderer_get_cols = int64() { pass(g_rend_cols); };
+
+/// Computed visible rows (from last renderer_resize call).
+pub func:renderer_get_rows = int64() { pass(g_rend_rows); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Frame Synchronization
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Sync the terminal grid state to the C render grid.
+/// Steps:
+///   1. Clear all C-side grid cells (blank slate).
+///   2. Query TerminalState for rows and cols.
+///   3. For each cell: read codepoint from grid.npk, push to C renderer.
+///
+/// Called from the GTK idle/draw callback before nitty_render_frame()
+/// is invoked internally by the C draw callback.
+pub func:renderer_sync_frame = NIL() {
+    // Blank the C grid — prevents stale chars from prior frames
+    nitty_render_clear_grid();
+
+    // Query live terminal dimensions
+    int64:rows = raw ts_get_rows();
+    int64:cols = raw ts_get_cols();
+
+    int64:r = 0i64;
+    while (r < rows) {
+        int64:c = 0i64;
+        while (c < cols) {
+            int64:cp = raw grid_get_cp(r, c);
+            // Skip space (0x20) and NUL — C renderer already shows background
+            if (cp != 0x20i64) {
+                if (cp != 0i64) {
+                    nitty_render_set_cell_cp(c, r, cp);
+                }
+            }
+            c = c + 1i64;
+        }
+        r = r + 1i64;
+    }
+    pass(NIL);
+};

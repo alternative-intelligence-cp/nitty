@@ -44,6 +44,16 @@ void nitty_render_set_bg(int64_t r, int64_t g, int64_t b);
 void nitty_render_set_fg(int64_t r, int64_t g, int64_t b);
 
 /**
+ * Set a character at a specific grid position using a raw codepoint.
+ * Encodes the Unicode codepoint as UTF-8 internally.
+ * This is the preferred method from Nitpick (avoids dynamic string construction).
+ * @param col        Column (0-based)
+ * @param row        Row (0-based)
+ * @param codepoint  Unicode codepoint (U+0000 to U+10FFFF)
+ */
+void nitty_render_set_cell_cp(int64_t col, int64_t row, int64_t codepoint);
+
+/**
  * Set a character at a specific grid position.
  * Characters beyond the grid bounds are silently ignored.
  * @param col   Column (0-based)

@@ -75,6 +75,7 @@ extern "nitty_gtk4_shim" {
     func:nitty_render_set_bg       = NIL(int64:r, int64:g, int64:b);
     func:nitty_render_set_fg       = NIL(int64:r, int64:g, int64:b);
     func:nitty_render_set_cell     = NIL(int64:col, int64:row, string:ch);
+    func:nitty_render_set_cell_cp  = NIL(int64:col, int64:row, int64:codepoint);
     func:nitty_render_set_cell_fg  = NIL(int64:col, int64:row, int64:r, int64:g, int64:b);
     func:nitty_render_set_cell_bg  = NIL(int64:col, int64:row, int64:r, int64:g, int64:b);
     func:nitty_render_fill_text    = NIL(string:text, int64:cols, int64:rows);
