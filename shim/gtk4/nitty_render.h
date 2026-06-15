@@ -283,6 +283,13 @@ void nitty_render_draw_tab_underline(int64_t x, int64_t y, int64_t w,
  */
 void nitty_render_draw_tab_separator(int64_t x, int64_t y, int64_t h);
 
+/**
+ * v0.4.3: Draw a filled circle (6px diameter) for activity indicator dots.
+ * x, y: centre of the circle in pixels.
+ * r, g, b: colour components in thousandths (0-1000).
+ */
+void nitty_render_draw_dot(int64_t x, int64_t y, int64_t r, int64_t g, int64_t b);
+
 #ifdef __cplusplus
 }
 #endif

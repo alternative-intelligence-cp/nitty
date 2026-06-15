@@ -1,0 +1,100 @@
+// tests/test_split_tree.npk -- Split tree manipulation unit tests (v0.5.0)
+
+use "../src/core/split_tree.npk".*;
+
+func:failsafe = int32(tbb32:_code) { exit 1i32; };
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (expected != got)")));
+    pass(NIL);
+};
+
+func:check32 = NIL(string:name, int32:expected, int32:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (i32 expected != got)")));
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    print("=== test_split_tree: Split Tree Manipulation Tests ===");
+
+    // T01: init -- single leaf, active=0, count=1
+    print("T01: split_tree_init");
+    drop(raw split_tree_init());
+    drop(check("T01: pane_count=1",  1i64, raw split_tree_pane_count()));
+    drop(check("T01: active_pane=0", 0i64, raw split_tree_get_active()));
+
+    // T02: split pane 0 horizontally -- creates pane 1
+    print("T02: raw split_tree_split(0, Horizontal)");
+    int64:new_id = raw split_tree_split(0i64, 0i32);
+    drop(check("T02: new pane_id=1",  1i64, new_id));
+    drop(check("T02: pane_count=2",   2i64, raw split_tree_pane_count()));
+    drop(check("T02: active=1",       1i64, raw split_tree_get_active()));
+
+    // T03: split pane 0 vertically -- creates pane 2, count=3
+    print("T03: double split");
+    int64:new_id2 = raw split_tree_split(0i64, 1i32);
+    drop(check("T03: new pane_id=2", 2i64, new_id2));
+    drop(check("T03: pane_count=3",  3i64, raw split_tree_pane_count()));
+    drop(check("T03: active=2",      2i64, raw split_tree_get_active()));
+
+    // T04: remove pane 1 -- collapses to sibling, count=2
+    print("T04: raw split_tree_remove(1)");
+    int32:remove_ok = raw split_tree_remove(1i64);
+    drop(check32("T04: remove returns 1", 1i32, remove_ok));
+    drop(check("T04: pane_count=2",       2i64, raw split_tree_pane_count()));
+
+    // T05: remove until 1 pane, then refuse to remove last
+    print("T05: remove last pane refused");
+    drop(raw split_tree_remove(2i64));
+    drop(check("T05: pane_count=1", 1i64, raw split_tree_pane_count()));
+    int32:refused = raw split_tree_remove(0i64);
+    drop(check32("T05: remove last=0 (refused)", 0i32, refused));
+    drop(check("T05: count still 1", 1i64, raw split_tree_pane_count()));
+
+    // T06: pane_count after successive splits
+    print("T06: pane_count after 3 more splits");
+    drop(raw split_tree_reset());
+    drop(raw split_tree_split(0i64, 0i32)); // pane 1
+    drop(raw split_tree_split(0i64, 1i32)); // pane 2
+    drop(raw split_tree_split(1i64, 0i32)); // pane 3
+    drop(check("T06: pane_count=4", 4i64, raw split_tree_pane_count()));
+
+    // T07: ratio clamping
+    print("T07: ratio clamping");
+    drop(raw split_tree_reset());
+    drop(raw split_tree_split(0i64, 0i32));
+    // Set below min (50 < 100) -- should clamp to 100
+    drop(raw split_tree_set_ratio(0i64, 50i64));
+    drop(raw split_tree_layout(0i64, 0i64, 1000i64, 600i64));
+    drop(check("T07: clamped RATIO_MIN -> left_w=100",
+               100i64, raw split_tree_get_layout_w(0i64)));
+    // Set above max (950 > 900) -- should clamp to 900
+    drop(raw split_tree_set_ratio(0i64, 950i64));
+    drop(raw split_tree_layout(0i64, 0i64, 1000i64, 600i64));
+    drop(check("T07: clamped RATIO_MAX -> left_w=900",
+               900i64, raw split_tree_get_layout_w(0i64)));
+
+    // Summary
+    print("=== Results ===");
+    if (g_fail > 0i64) {
+        print("SOME TESTS FAILED");
+        exit 1i32;
+    }
+    print("All split tree tests passed.");
+    exit 0i32;
+};

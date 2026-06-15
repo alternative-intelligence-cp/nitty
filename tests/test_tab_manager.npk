@@ -1,4 +1,4 @@
-// tests/test_tab_manager.npk — Tab manager unit tests (v0.4.0)
+// tests/test_tab_manager.npk — Tab manager unit tests (v0.4.1)
 
 use "../src/core/tab_manager.npk".*;
 use "../src/core/tab.npk".*;
@@ -42,10 +42,13 @@ func:run_tests = NIL() {
     // T04: Active PTY fd is -1 when no tabs
     drop(check("T04: active pty_fd no tabs", -1i64, raw tm_get_active_pty_fd()));
 
+    // T04b: Active PID is -1 when no tabs
+    drop(check("T04b: active pid no tabs", -1i64, raw tm_get_active_pid()));
+
     // ── Add tabs ──
 
     // T05: Add first tab returns ID 1
-    int64:id1 = raw tm_add_tab(10i64);
+    int64:id1 = raw tm_add_tab(10i64, 1001i64);
     drop(check("T05: first tab id", 1i64, id1));
 
     // T06: Count is now 1
@@ -57,18 +60,21 @@ func:run_tests = NIL() {
     // T08: Tab at index 0 has correct pty_fd
     drop(check("T08: pty_fd at 0", 10i64, raw tab_get_pty_fd(0i64)));
 
+    // T08b: Tab at index 0 has correct pid
+    drop(check("T08b: pid at 0", 1001i64, raw tab_get_pid(0i64)));
+
     // T09: Title defaults to "Shell"
     drop(check_str("T09: title default", "Shell", raw tm_get_title_at(0i64)));
 
     // T10: Add second tab returns ID 2
-    int64:id2 = raw tm_add_tab(20i64);
+    int64:id2 = raw tm_add_tab(20i64, 2002i64);
     drop(check("T10: second tab id", 2i64, id2));
 
     // T11: Count is now 2
     drop(check("T11: count after second add", 2i64, raw tm_count()));
 
     // T12: Add third tab returns ID 3
-    int64:id3 = raw tm_add_tab(30i64);
+    int64:id3 = raw tm_add_tab(30i64, 3003i64);
     drop(check("T12: third tab id", 3i64, id3));
     drop(check("T12b: count after third add", 3i64, raw tm_count()));
 
@@ -133,9 +139,75 @@ func:run_tests = NIL() {
     // ── Re-add after empty ──
 
     // T24: IDs continue incrementing
-    int64:id4 = raw tm_add_tab(40i64);
+    int64:id4 = raw tm_add_tab(40i64, 4004i64);
     drop(check("T24: id continues", 4i64, id4));
     drop(check("T24b: count", 1i64, raw tm_count()));
+
+    // ── Move (v0.4.2) ──
+
+    // Setup: fresh 3-tab state, active at index 1
+    drop(tm_init());
+    int64:ma = raw tm_add_tab(10i64, 1001i64);  // index=0
+    int64:mb = raw tm_add_tab(20i64, 2002i64);  // index=1
+    int64:mc = raw tm_add_tab(30i64, 3003i64);  // index=2
+    drop(tm_activate_index(1i64));
+
+    // T25: move_left swaps active (1) with left neighbor (0)
+    drop(tm_move_left());
+    drop(check("T25a: id at 0 is mb", mb, raw tm_get_id_at(0i64)));
+    drop(check("T25b: id at 1 is ma", ma, raw tm_get_id_at(1i64)));
+    drop(check("T25c: active index follows to 0", 0i64, raw tm_get_active_index()));
+
+    // T26: move_left at index 0 wraps to end
+    drop(tm_move_left());
+    drop(check("T26a: id at 2 is mb", mb, raw tm_get_id_at(2i64)));
+    drop(check("T26b: active follows to last", 2i64, raw tm_get_active_index()));
+
+    // T27: move_right from last wraps to 0
+    drop(tm_move_right());
+    drop(check("T27a: id at 0 is mb", mb, raw tm_get_id_at(0i64)));
+    drop(check("T27b: active follows to 0", 0i64, raw tm_get_active_index()));
+
+    // T28: move_right from middle
+    drop(tm_init());
+    int64:mx = raw tm_add_tab(11i64, 101i64);
+    int64:my = raw tm_add_tab(22i64, 202i64);
+    int64:mz = raw tm_add_tab(33i64, 303i64);
+    drop(tm_activate_index(1i64));
+    drop(tm_move_right());
+    drop(check("T28a: id at 1 is mz", mz, raw tm_get_id_at(1i64)));
+    drop(check("T28b: id at 2 is my", my, raw tm_get_id_at(2i64)));
+    drop(check("T28c: active follows to 2", 2i64, raw tm_get_active_index()));
+
+    // T29: move_right at last wraps to 0
+    drop(tm_activate_index(2i64));
+    drop(tm_move_right());
+    drop(check("T29a: id at 0 is my", my, raw tm_get_id_at(0i64)));
+    drop(check("T29b: active follows to 0", 0i64, raw tm_get_active_index()));
+
+    // T30-T32: tm_move_tab general move
+    drop(tm_init());
+    int64:p1 = raw tm_add_tab(1i64, 1i64);
+    int64:p2 = raw tm_add_tab(2i64, 2i64);
+    int64:p3 = raw tm_add_tab(3i64, 3i64);
+    int64:p4 = raw tm_add_tab(4i64, 4i64);
+
+    // T30: move tab 0 to index 2 (slide right)
+    drop(tm_activate_index(0i64));
+    drop(tm_move_tab(0i64, 2i64));
+    drop(check("T30a: id at 0", p2, raw tm_get_id_at(0i64)));
+    drop(check("T30b: id at 2", p1, raw tm_get_id_at(2i64)));
+    drop(check("T30c: active follows to 2", 2i64, raw tm_get_active_index()));
+
+    // T31: move tab 3 to index 0 (slide left)
+    drop(tm_activate_index(3i64));
+    drop(tm_move_tab(3i64, 0i64));
+    drop(check("T31a: id at 0", p4, raw tm_get_id_at(0i64)));
+    drop(check("T31b: active follows to 0", 0i64, raw tm_get_active_index()));
+
+    // T32: move_tab no-op (same slot)
+    drop(tm_move_tab(0i64, 0i64));
+    drop(check("T32: no-op, id at 0 unchanged", p4, raw tm_get_id_at(0i64)));
 
     pass(NIL);
 };

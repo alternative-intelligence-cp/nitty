@@ -1,0 +1,492 @@
+// src/core/session.npk — Session persistence for Nitty v0.4.4
+//
+// Saves and restores tab arrangement (title, CWD, color, active index,
+// window size) to/from ~/.config/nitty/session.toml using nitpick-toml.
+//
+// Save flow:  session_save()    → TOML build → atomic write
+// Load flow:  session_load()    → parse TOML → populate module arrays
+// Restore:    session_restore() → spawn tabs → apply metadata
+//
+// All functions are safe to call from the GTK main thread only.
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/src/nitpick_toml.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
+use "tab_manager.npk".*;
+use "tab.npk".*;
+use "../gui/gtk4_ffi.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════
+// Constants
+// ═══════════════════════════════════════════════════════════════════
+
+int64:SESSION_VERSION   = 1i64;
+int64:SESSION_MAX_TABS  = 16i64;
+string:SESSION_FILENAME = "session.toml";
+string:SESSION_TMP_EXT  = ".tmp";
+
+// ═══════════════════════════════════════════════════════════════════
+// Module state — loaded session data
+// ═══════════════════════════════════════════════════════════════════
+
+int64:g_sess_tab_count    = 0i64;   // number of tabs loaded from file
+int64:g_sess_active_idx   = 0i64;   // which tab was active
+int64:g_sess_win_width    = 0i64;   // saved window width  (0 = not available)
+int64:g_sess_win_height   = 0i64;   // saved window height (0 = not available)
+
+// Per-tab loaded data (parallel arrays, index = session slot)
+string:g_sess_title_0  = ""; string:g_sess_title_1  = ""; string:g_sess_title_2  = "";
+string:g_sess_title_3  = ""; string:g_sess_title_4  = ""; string:g_sess_title_5  = "";
+string:g_sess_title_6  = ""; string:g_sess_title_7  = ""; string:g_sess_title_8  = "";
+string:g_sess_title_9  = ""; string:g_sess_title_10 = ""; string:g_sess_title_11 = "";
+string:g_sess_title_12 = ""; string:g_sess_title_13 = ""; string:g_sess_title_14 = "";
+string:g_sess_title_15 = "";
+
+string:g_sess_cwd_0  = ""; string:g_sess_cwd_1  = ""; string:g_sess_cwd_2  = "";
+string:g_sess_cwd_3  = ""; string:g_sess_cwd_4  = ""; string:g_sess_cwd_5  = "";
+string:g_sess_cwd_6  = ""; string:g_sess_cwd_7  = ""; string:g_sess_cwd_8  = "";
+string:g_sess_cwd_9  = ""; string:g_sess_cwd_10 = ""; string:g_sess_cwd_11 = "";
+string:g_sess_cwd_12 = ""; string:g_sess_cwd_13 = ""; string:g_sess_cwd_14 = "";
+string:g_sess_cwd_15 = "";
+
+int64:g_sess_color_0  = 0i64; int64:g_sess_color_1  = 0i64; int64:g_sess_color_2  = 0i64;
+int64:g_sess_color_3  = 0i64; int64:g_sess_color_4  = 0i64; int64:g_sess_color_5  = 0i64;
+int64:g_sess_color_6  = 0i64; int64:g_sess_color_7  = 0i64; int64:g_sess_color_8  = 0i64;
+int64:g_sess_color_9  = 0i64; int64:g_sess_color_10 = 0i64; int64:g_sess_color_11 = 0i64;
+int64:g_sess_color_12 = 0i64; int64:g_sess_color_13 = 0i64; int64:g_sess_color_14 = 0i64;
+int64:g_sess_color_15 = 0i64;
+
+// 1 = user-renamed (title lock), 0 = OSC-assigned
+int64:g_sess_custom_0  = 0i64; int64:g_sess_custom_1  = 0i64; int64:g_sess_custom_2  = 0i64;
+int64:g_sess_custom_3  = 0i64; int64:g_sess_custom_4  = 0i64; int64:g_sess_custom_5  = 0i64;
+int64:g_sess_custom_6  = 0i64; int64:g_sess_custom_7  = 0i64; int64:g_sess_custom_8  = 0i64;
+int64:g_sess_custom_9  = 0i64; int64:g_sess_custom_10 = 0i64; int64:g_sess_custom_11 = 0i64;
+int64:g_sess_custom_12 = 0i64; int64:g_sess_custom_13 = 0i64; int64:g_sess_custom_14 = 0i64;
+int64:g_sess_custom_15 = 0i64;
+
+// ═══════════════════════════════════════════════════════════════════
+// Helper: build session file path (~/.config/nitty/session.toml)
+// ═══════════════════════════════════════════════════════════════════
+
+func:_session_path = string() {
+    string:h = raw home();
+    pass(string_concat(h, "/.config/nitty/session.toml"));
+};
+
+func:_session_tmp_path = string() {
+    string:h = raw home();
+    pass(string_concat(h, "/.config/nitty/session.toml.tmp"));
+};
+
+func:_session_config_dir = string() {
+    string:h = raw home();
+    pass(string_concat(h, "/.config/nitty"));
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Helper: ensure ~/.config/nitty/ directory exists
+// ═══════════════════════════════════════════════════════════════════
+
+func:_session_ensure_dir = int32() {
+    string:cfg_dir = raw _session_config_dir();
+    int32:dir_ok = raw fs_is_dir(cfg_dir);
+    if (dir_ok == 1i32) { pass(1i32); }
+
+    // Try ~/.config first
+    string:h = raw home();
+    string:dot_config = string_concat(h, "/.config");
+    int32:cfg_exists = raw fs_is_dir(dot_config);
+    if (cfg_exists == 0i32) {
+        drop(fs_mkdir(dot_config));
+    }
+
+    int32:r = raw fs_mkdir(cfg_dir);
+    pass(r);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Helper: get title/cwd/color/custom by index (0..15)
+// ═══════════════════════════════════════════════════════════════════
+
+func:_sess_get_title = string(int64:i) {
+    if (i == 0i64)  { pass(g_sess_title_0);  }
+    if (i == 1i64)  { pass(g_sess_title_1);  }
+    if (i == 2i64)  { pass(g_sess_title_2);  }
+    if (i == 3i64)  { pass(g_sess_title_3);  }
+    if (i == 4i64)  { pass(g_sess_title_4);  }
+    if (i == 5i64)  { pass(g_sess_title_5);  }
+    if (i == 6i64)  { pass(g_sess_title_6);  }
+    if (i == 7i64)  { pass(g_sess_title_7);  }
+    if (i == 8i64)  { pass(g_sess_title_8);  }
+    if (i == 9i64)  { pass(g_sess_title_9);  }
+    if (i == 10i64) { pass(g_sess_title_10); }
+    if (i == 11i64) { pass(g_sess_title_11); }
+    if (i == 12i64) { pass(g_sess_title_12); }
+    if (i == 13i64) { pass(g_sess_title_13); }
+    if (i == 14i64) { pass(g_sess_title_14); }
+    pass(g_sess_title_15);
+};
+
+func:_sess_set_title = NIL(int64:i, string:v) {
+    if (i == 0i64)  { g_sess_title_0  = v; pass(NIL); }
+    if (i == 1i64)  { g_sess_title_1  = v; pass(NIL); }
+    if (i == 2i64)  { g_sess_title_2  = v; pass(NIL); }
+    if (i == 3i64)  { g_sess_title_3  = v; pass(NIL); }
+    if (i == 4i64)  { g_sess_title_4  = v; pass(NIL); }
+    if (i == 5i64)  { g_sess_title_5  = v; pass(NIL); }
+    if (i == 6i64)  { g_sess_title_6  = v; pass(NIL); }
+    if (i == 7i64)  { g_sess_title_7  = v; pass(NIL); }
+    if (i == 8i64)  { g_sess_title_8  = v; pass(NIL); }
+    if (i == 9i64)  { g_sess_title_9  = v; pass(NIL); }
+    if (i == 10i64) { g_sess_title_10 = v; pass(NIL); }
+    if (i == 11i64) { g_sess_title_11 = v; pass(NIL); }
+    if (i == 12i64) { g_sess_title_12 = v; pass(NIL); }
+    if (i == 13i64) { g_sess_title_13 = v; pass(NIL); }
+    if (i == 14i64) { g_sess_title_14 = v; pass(NIL); }
+    g_sess_title_15 = v;
+    pass(NIL);
+};
+
+func:_sess_get_cwd = string(int64:i) {
+    if (i == 0i64)  { pass(g_sess_cwd_0);  }
+    if (i == 1i64)  { pass(g_sess_cwd_1);  }
+    if (i == 2i64)  { pass(g_sess_cwd_2);  }
+    if (i == 3i64)  { pass(g_sess_cwd_3);  }
+    if (i == 4i64)  { pass(g_sess_cwd_4);  }
+    if (i == 5i64)  { pass(g_sess_cwd_5);  }
+    if (i == 6i64)  { pass(g_sess_cwd_6);  }
+    if (i == 7i64)  { pass(g_sess_cwd_7);  }
+    if (i == 8i64)  { pass(g_sess_cwd_8);  }
+    if (i == 9i64)  { pass(g_sess_cwd_9);  }
+    if (i == 10i64) { pass(g_sess_cwd_10); }
+    if (i == 11i64) { pass(g_sess_cwd_11); }
+    if (i == 12i64) { pass(g_sess_cwd_12); }
+    if (i == 13i64) { pass(g_sess_cwd_13); }
+    if (i == 14i64) { pass(g_sess_cwd_14); }
+    pass(g_sess_cwd_15);
+};
+
+func:_sess_set_cwd = NIL(int64:i, string:v) {
+    if (i == 0i64)  { g_sess_cwd_0  = v; pass(NIL); }
+    if (i == 1i64)  { g_sess_cwd_1  = v; pass(NIL); }
+    if (i == 2i64)  { g_sess_cwd_2  = v; pass(NIL); }
+    if (i == 3i64)  { g_sess_cwd_3  = v; pass(NIL); }
+    if (i == 4i64)  { g_sess_cwd_4  = v; pass(NIL); }
+    if (i == 5i64)  { g_sess_cwd_5  = v; pass(NIL); }
+    if (i == 6i64)  { g_sess_cwd_6  = v; pass(NIL); }
+    if (i == 7i64)  { g_sess_cwd_7  = v; pass(NIL); }
+    if (i == 8i64)  { g_sess_cwd_8  = v; pass(NIL); }
+    if (i == 9i64)  { g_sess_cwd_9  = v; pass(NIL); }
+    if (i == 10i64) { g_sess_cwd_10 = v; pass(NIL); }
+    if (i == 11i64) { g_sess_cwd_11 = v; pass(NIL); }
+    if (i == 12i64) { g_sess_cwd_12 = v; pass(NIL); }
+    if (i == 13i64) { g_sess_cwd_13 = v; pass(NIL); }
+    if (i == 14i64) { g_sess_cwd_14 = v; pass(NIL); }
+    g_sess_cwd_15 = v;
+    pass(NIL);
+};
+
+func:_sess_get_color = int64(int64:i) {
+    if (i == 0i64)  { pass(g_sess_color_0);  }
+    if (i == 1i64)  { pass(g_sess_color_1);  }
+    if (i == 2i64)  { pass(g_sess_color_2);  }
+    if (i == 3i64)  { pass(g_sess_color_3);  }
+    if (i == 4i64)  { pass(g_sess_color_4);  }
+    if (i == 5i64)  { pass(g_sess_color_5);  }
+    if (i == 6i64)  { pass(g_sess_color_6);  }
+    if (i == 7i64)  { pass(g_sess_color_7);  }
+    if (i == 8i64)  { pass(g_sess_color_8);  }
+    if (i == 9i64)  { pass(g_sess_color_9);  }
+    if (i == 10i64) { pass(g_sess_color_10); }
+    if (i == 11i64) { pass(g_sess_color_11); }
+    if (i == 12i64) { pass(g_sess_color_12); }
+    if (i == 13i64) { pass(g_sess_color_13); }
+    if (i == 14i64) { pass(g_sess_color_14); }
+    pass(g_sess_color_15);
+};
+
+func:_sess_set_color = NIL(int64:i, int64:v) {
+    if (i == 0i64)  { g_sess_color_0  = v; pass(NIL); }
+    if (i == 1i64)  { g_sess_color_1  = v; pass(NIL); }
+    if (i == 2i64)  { g_sess_color_2  = v; pass(NIL); }
+    if (i == 3i64)  { g_sess_color_3  = v; pass(NIL); }
+    if (i == 4i64)  { g_sess_color_4  = v; pass(NIL); }
+    if (i == 5i64)  { g_sess_color_5  = v; pass(NIL); }
+    if (i == 6i64)  { g_sess_color_6  = v; pass(NIL); }
+    if (i == 7i64)  { g_sess_color_7  = v; pass(NIL); }
+    if (i == 8i64)  { g_sess_color_8  = v; pass(NIL); }
+    if (i == 9i64)  { g_sess_color_9  = v; pass(NIL); }
+    if (i == 10i64) { g_sess_color_10 = v; pass(NIL); }
+    if (i == 11i64) { g_sess_color_11 = v; pass(NIL); }
+    if (i == 12i64) { g_sess_color_12 = v; pass(NIL); }
+    if (i == 13i64) { g_sess_color_13 = v; pass(NIL); }
+    if (i == 14i64) { g_sess_color_14 = v; pass(NIL); }
+    g_sess_color_15 = v;
+    pass(NIL);
+};
+
+func:_sess_get_custom = int64(int64:i) {
+    if (i == 0i64)  { pass(g_sess_custom_0);  }
+    if (i == 1i64)  { pass(g_sess_custom_1);  }
+    if (i == 2i64)  { pass(g_sess_custom_2);  }
+    if (i == 3i64)  { pass(g_sess_custom_3);  }
+    if (i == 4i64)  { pass(g_sess_custom_4);  }
+    if (i == 5i64)  { pass(g_sess_custom_5);  }
+    if (i == 6i64)  { pass(g_sess_custom_6);  }
+    if (i == 7i64)  { pass(g_sess_custom_7);  }
+    if (i == 8i64)  { pass(g_sess_custom_8);  }
+    if (i == 9i64)  { pass(g_sess_custom_9);  }
+    if (i == 10i64) { pass(g_sess_custom_10); }
+    if (i == 11i64) { pass(g_sess_custom_11); }
+    if (i == 12i64) { pass(g_sess_custom_12); }
+    if (i == 13i64) { pass(g_sess_custom_13); }
+    if (i == 14i64) { pass(g_sess_custom_14); }
+    pass(g_sess_custom_15);
+};
+
+func:_sess_set_custom = NIL(int64:i, int64:v) {
+    if (i == 0i64)  { g_sess_custom_0  = v; pass(NIL); }
+    if (i == 1i64)  { g_sess_custom_1  = v; pass(NIL); }
+    if (i == 2i64)  { g_sess_custom_2  = v; pass(NIL); }
+    if (i == 3i64)  { g_sess_custom_3  = v; pass(NIL); }
+    if (i == 4i64)  { g_sess_custom_4  = v; pass(NIL); }
+    if (i == 5i64)  { g_sess_custom_5  = v; pass(NIL); }
+    if (i == 6i64)  { g_sess_custom_6  = v; pass(NIL); }
+    if (i == 7i64)  { g_sess_custom_7  = v; pass(NIL); }
+    if (i == 8i64)  { g_sess_custom_8  = v; pass(NIL); }
+    if (i == 9i64)  { g_sess_custom_9  = v; pass(NIL); }
+    if (i == 10i64) { g_sess_custom_10 = v; pass(NIL); }
+    if (i == 11i64) { g_sess_custom_11 = v; pass(NIL); }
+    if (i == 12i64) { g_sess_custom_12 = v; pass(NIL); }
+    if (i == 13i64) { g_sess_custom_13 = v; pass(NIL); }
+    if (i == 14i64) { g_sess_custom_14 = v; pass(NIL); }
+    g_sess_custom_15 = v;
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Helper: build TOML key for tab.N.field
+// ═══════════════════════════════════════════════════════════════════
+
+func:_tab_key = string(string:n, string:field) {
+    pass(string_concat("tabs.", string_concat(n, string_concat(".", field))));
+};
+
+// int64 → decimal string (non-negative only)
+func:_i64_to_str = string(int64:v) {
+    if (v == 0i64)  { pass("0"); }
+    if (v == 1i64)  { pass("1"); }
+    if (v == 2i64)  { pass("2"); }
+    if (v == 3i64)  { pass("3"); }
+    if (v == 4i64)  { pass("4"); }
+    if (v == 5i64)  { pass("5"); }
+    if (v == 6i64)  { pass("6"); }
+    if (v == 7i64)  { pass("7"); }
+    if (v == 8i64)  { pass("8"); }
+    if (v == 9i64)  { pass("9"); }
+    if (v == 10i64) { pass("10"); }
+    if (v == 11i64) { pass("11"); }
+    if (v == 12i64) { pass("12"); }
+    if (v == 13i64) { pass("13"); }
+    if (v == 14i64) { pass("14"); }
+    pass("15");
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Public API: session_save
+// ═══════════════════════════════════════════════════════════════════
+
+pub func:session_save = int32() {
+    int64:count = raw tm_count();
+
+    // Ensure config directory
+    drop(_session_ensure_dir());
+
+    // Build TOML document
+    drop(Toml.clear());
+    drop(Toml.set_int("version", SESSION_VERSION));
+    drop(Toml.set_int("timestamp", nitty_gtk4_monotonic_sec()));
+
+    // Window geometry — get current window size
+    int64:win = nitty_gtk4_get_main_window();
+    int64:w = 0i64;
+    int64:h = 0i64;
+    if (win != 0i64) {
+        w = nitty_gtk4_window_get_width(win);
+        h = nitty_gtk4_window_get_height(win);
+    }
+    drop(Toml.set_int("window.width",  w));
+    drop(Toml.set_int("window.height", h));
+
+    // Tab entries
+    int64:active_idx = raw tm_get_active_index();
+    int64:i = 0i64;
+    int32:running = 1i32;
+    while (running == 1i32) {
+        if (i >= count) { running = 0i32; }
+        if (running == 1i32) {
+            string:n = raw _i64_to_str(i);
+            string:title = raw tab_get_title(i);
+            int64:custom = raw tab_get_custom_title(i);
+            int64:color  = raw tab_get_custom_color(i);
+            int64:pid    = raw tab_get_pid(i);
+            string:cwd   = nitty_gtk4_get_proc_cwd(pid);
+            int32:is_active = 0i32;
+            if (i == active_idx) { is_active = 1i32; }
+
+            drop(Toml.set_string(raw _tab_key(n, "title"),  title));
+            drop(Toml.set_int(raw _tab_key(n, "custom_color"),  color));
+            drop(Toml.set_bool(raw _tab_key(n, "custom_title"), @cast<int32>(custom)));
+            drop(Toml.set_bool(raw _tab_key(n, "active"),       is_active));
+            drop(Toml.set_string(raw _tab_key(n, "cwd"),    cwd));
+
+            i = i + 1i64;
+        }
+    }
+
+    // Serialize and write atomically
+    string:toml_text = raw Toml.serialize();
+    string:tmp_path  = raw _session_tmp_path();
+    string:real_path = raw _session_path();
+
+    int32:wrote = raw fs_write_file(tmp_path, toml_text);
+    if (wrote == 0i32) { pass(0i32); }
+    int32:renamed = raw fs_rename(tmp_path, real_path);
+    pass(renamed);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Public API: session_load
+// Returns 1 = success (tabs available), 0 = failure or empty
+// ═══════════════════════════════════════════════════════════════════
+
+pub func:session_load = int32() {
+    g_sess_tab_count  = 0i64;
+    g_sess_active_idx = 0i64;
+    g_sess_win_width  = 0i64;
+    g_sess_win_height = 0i64;
+
+    string:path = raw _session_path();
+    int32:exists = raw fs_exists(path);
+    if (exists == 0i32) { pass(0i32); }
+
+    drop(Toml.clear());
+    int32:n = raw Toml.parse_file(path);
+    if (n < 0i32) { pass(0i32); }
+
+    // Validate version
+    int64:ver = raw Toml.get_int("version");
+    if (ver != SESSION_VERSION) { pass(0i32); }
+
+    // Window geometry
+    g_sess_win_width  = raw Toml.get_int("window.width");
+    g_sess_win_height = raw Toml.get_int("window.height");
+
+    // Load tabs until key not found
+    int64:i = 0i64;
+    int32:loading = 1i32;
+    while (loading == 1i32) {
+        if (i >= SESSION_MAX_TABS) { loading = 0i32; }
+        if (loading == 1i32) {
+            string:n2 = raw _i64_to_str(i);
+            string:title_key = raw _tab_key(n2, "title");
+            int32:has = raw Toml.has_key(title_key);
+            if (has == 0i32) {
+                loading = 0i32;
+            }
+            if (loading == 1i32) {
+                string:title = raw Toml.get_string(title_key);
+                string:cwd   = raw Toml.get_string(raw _tab_key(n2, "cwd"));
+                int64:color  = raw Toml.get_int(raw _tab_key(n2, "custom_color"));
+                int32:custom = raw Toml.get_bool(raw _tab_key(n2, "custom_title"));
+                int32:active = raw Toml.get_bool(raw _tab_key(n2, "active"));
+
+                drop(_sess_set_title(i, title));
+                drop(_sess_set_cwd(i, cwd));
+                drop(_sess_set_color(i, color));
+                drop(_sess_set_custom(i, @cast<int64>(custom)));
+                if (active == 1i32) { g_sess_active_idx = i; }
+
+                i = i + 1i64;
+            }
+        }
+    }
+
+    g_sess_tab_count = i;
+
+    // Reject empty sessions
+    if (g_sess_tab_count == 0i64) { pass(0i32); }
+    pass(1i32);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Public API: session_restore
+// Spawns tabs based on loaded session data.
+// Returns number of tabs restored (0 = nothing restored).
+// ═══════════════════════════════════════════════════════════════════
+
+pub func:session_restore = int64(int64:rows, int64:cols) {
+    if (g_sess_tab_count == 0i64) { pass(0i64); }
+
+    string:fallback_cwd = raw home();
+    int64:i = 0i64;
+    int32:running = 1i32;
+
+    while (running == 1i32) {
+        if (i >= g_sess_tab_count) { running = 0i32; }
+        if (running == 1i32) {
+            string:cwd   = raw _sess_get_cwd(i);
+            string:title = raw _sess_get_title(i);
+            int64:color  = raw _sess_get_color(i);
+            int64:custom = raw _sess_get_custom(i);
+
+            // Validate CWD — fall back to $HOME if non-existent
+            int32:cwd_ok = 0i32;
+            if (string_length(cwd) > 0i64) {
+                cwd_ok = raw fs_is_dir(cwd);
+            }
+            if (cwd_ok == 0i32) { cwd = fallback_cwd; }
+
+            // Spawn PTY + shell at the CWD
+            int64:packed = nitty_gtk4_spawn_tab_shell_at_path(rows, cols, cwd);
+            if (packed > 0i64) {
+                int64:fd  = packed / 1000000i64;
+                int64:pid = packed - (fd * 1000000i64);
+                int64:tab_id = raw tm_add_tab(fd, pid);
+
+                // Apply custom title if set
+                if (custom == 1i64) {
+                    drop(tm_set_title_at(i, title));
+                }
+
+                // Apply custom color if set
+                if (color != 0i64) {
+                    drop(tm_set_color_at(i, color));
+                }
+
+                // Register PID for completion polling
+                nitty_gtk4_register_tab_pid(i, pid);
+
+                drop(tab_id);
+            }
+
+            i = i + 1i64;
+        }
+    }
+
+    // Activate the saved active tab
+    int64:active = g_sess_active_idx;
+    if (active < 0i64) { active = 0i64; }
+    if (active >= g_sess_tab_count) { active = 0i64; }
+    drop(tm_activate_index(active));
+
+    pass(g_sess_tab_count);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Public accessors for saved window geometry
+// ═══════════════════════════════════════════════════════════════════
+
+pub func:session_get_saved_width  = int64() { pass(g_sess_win_width);  };
+pub func:session_get_saved_height = int64() { pass(g_sess_win_height); };
+pub func:session_get_saved_count  = int64() { pass(g_sess_tab_count);  };

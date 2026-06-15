@@ -57,6 +57,18 @@ static double g_mouse_scroll_dy = 0.0;
 /* v0.3.4: Scroll shortcut event: 0=none 1=pgup 2=pgdown 3=top 4=bottom */
 static int g_scroll_event = 0;
 
+/* v0.4.2: Tab event queue: 0=none 1=new 2=close 3=prev 4=next
+ * 5..13=direct(idx 0..8) 14=move_left 15=move_right */
+static int g_tab_event = 0;
+
+/* v0.4.2: Tab drag-and-drop state */
+static int    g_drag_active    = 0;  /* 1 while dragging */
+static int    g_drag_src_idx   = -1; /* source tab index */
+static double g_drag_start_x   = 0.0;
+static double g_drag_start_y   = 0.0;
+static double g_drag_current_x = 0.0;
+static int    g_drag_drop_event = 0; /* 1 when drop just occurred */
+
 /* ── Keyboard callbacks ───────────────────────────────────────────────── */
 
 static gboolean on_key_pressed(GtkEventControllerKey *controller,
@@ -81,6 +93,44 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
             case GDK_KEY_Page_Down: g_scroll_event = 2; return TRUE;
             case GDK_KEY_Home:      g_scroll_event = 3; return TRUE;
             case GDK_KEY_End:       g_scroll_event = 4; return TRUE;
+            default: break;
+        }
+    }
+
+    /* v0.4.2: Tab event queue: 0=none 1=new 2=close 3=prev 4=next
+     * 5..13=direct(idx 0..8) 14=move_left 15=move_right */
+
+    /* v0.4.1: Intercept Ctrl+Shift tab shortcuts before PTY routing */
+    if ((state & GDK_CONTROL_MASK) && (state & GDK_SHIFT_MASK)) {
+        switch (keyval) {
+            case GDK_KEY_t: case GDK_KEY_T:
+                g_tab_event = 1; return TRUE;  /* new tab */
+            case GDK_KEY_w: case GDK_KEY_W:
+                g_tab_event = 2; return TRUE;  /* close tab */
+            /* v0.4.2: Ctrl+Shift+Left/Right to move active tab */
+            case GDK_KEY_Left:  case GDK_KEY_KP_Left:
+                g_tab_event = 14; return TRUE; /* move tab left */
+            case GDK_KEY_Right: case GDK_KEY_KP_Right:
+                g_tab_event = 15; return TRUE; /* move tab right */
+            default: break;
+        }
+    }
+
+    /* v0.4.1: Intercept Ctrl+PgUp/PgDn tab switching before PTY routing */
+    if (state & GDK_CONTROL_MASK) {
+        switch (keyval) {
+            case GDK_KEY_Page_Up:   g_tab_event = 3; return TRUE;  /* prev tab */
+            case GDK_KEY_Page_Down: g_tab_event = 4; return TRUE;  /* next tab */
+            /* Ctrl+1..9: direct tab switch → events 5..13 */
+            case GDK_KEY_1: g_tab_event = 5;  return TRUE;
+            case GDK_KEY_2: g_tab_event = 6;  return TRUE;
+            case GDK_KEY_3: g_tab_event = 7;  return TRUE;
+            case GDK_KEY_4: g_tab_event = 8;  return TRUE;
+            case GDK_KEY_5: g_tab_event = 9;  return TRUE;
+            case GDK_KEY_6: g_tab_event = 10; return TRUE;
+            case GDK_KEY_7: g_tab_event = 11; return TRUE;
+            case GDK_KEY_8: g_tab_event = 12; return TRUE;
+            case GDK_KEY_9: g_tab_event = 13; return TRUE;
             default: break;
         }
     }
@@ -257,6 +307,64 @@ static void on_motion(GtkEventControllerMotion *controller,
     g_mouse_pending = 1;
 }
 
+/* Forward declaration — nitty_render.c exposes tab bar height */
+extern int64_t nitty_render_get_tab_bar_height(void);
+extern int64_t nitty_gtk4_get_draw_width(void);
+
+/* ── Tab drag-and-drop gesture callbacks (v0.4.2) ────────────────────── */
+
+static void on_drag_begin(GtkGestureDrag *gesture, double x, double y,
+                          gpointer user_data)
+{
+    (void)gesture; (void)user_data;
+    int64_t tab_bar_h = nitty_render_get_tab_bar_height();
+    /* Only initiate drag if press was inside the tab bar */
+    if (tab_bar_h <= 0 || y >= (double)tab_bar_h) return;
+
+    /* Compute which tab was pressed */
+    int64_t win_w = nitty_gtk4_get_draw_width();
+    if (win_w <= 0) return;
+    /* tab_w calculation must match tab_bar.npk's tb_render logic */
+    /* (window_width / count), floor at TB_MIN_TAB_W=120) */
+    /* We don't know count here — store start_x and let Nitpick decode it */
+    g_drag_start_x   = x;
+    g_drag_start_y   = y;
+    g_drag_current_x = x;
+    g_drag_active    = 1;
+    g_drag_drop_event = 0;
+    /* src_idx is -1 until Nitpick reports the index via tb_hit_test */
+    g_drag_src_idx   = -1;
+}
+
+static void on_drag_update(GtkGestureDrag *gesture, double offset_x,
+                           double offset_y, gpointer user_data)
+{
+    (void)offset_y; (void)user_data;
+    if (!g_drag_active) return;
+    double start_x = 0.0, start_y = 0.0;
+    gtk_gesture_drag_get_start_point(gesture, &start_x, &start_y);
+    g_drag_current_x = start_x + offset_x;
+}
+
+static void on_drag_end(GtkGestureDrag *gesture, double offset_x,
+                        double offset_y, gpointer user_data)
+{
+    (void)offset_y; (void)user_data;
+    if (!g_drag_active) return;
+
+    double start_x = 0.0, start_y = 0.0;
+    gtk_gesture_drag_get_start_point(gesture, &start_x, &start_y);
+    g_drag_current_x = start_x + offset_x;
+
+    /* Only fire a drop event if the drag moved meaningfully */
+    double dist = g_drag_current_x - g_drag_start_x;
+    if (dist < 0.0) dist = -dist;
+    if (dist > 8.0) {
+        g_drag_drop_event = 1;
+    }
+    g_drag_active = 0;
+}
+
 /* ── Controller setup ─────────────────────────────────────────────────── */
 
 int64_t nitty_gtk4_key_controller_new(int64_t widget_ptr)
@@ -304,6 +412,15 @@ int64_t nitty_gtk4_mouse_controllers_new(int64_t widget_ptr)
     if (motion != NULL) {
         g_signal_connect(motion, "motion", G_CALLBACK(on_motion), NULL);
         gtk_widget_add_controller(widget, motion);
+    }
+
+    /* v0.4.2: Drag gesture for tab reordering */
+    GtkGesture *drag = gtk_gesture_drag_new();
+    if (drag != NULL) {
+        g_signal_connect(drag, "drag-begin",  G_CALLBACK(on_drag_begin),  NULL);
+        g_signal_connect(drag, "drag-update", G_CALLBACK(on_drag_update), NULL);
+        g_signal_connect(drag, "drag-end",    G_CALLBACK(on_drag_end),    NULL);
+        gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(drag));
     }
 
     return 1;   /* Non-zero = success */
@@ -429,4 +546,45 @@ int64_t nitty_gtk4_scroll_event_poll(void)
         return ev;
     }
     return 0;
+}
+
+/* ── v0.4.1: Tab event polling ────────────────────────────────────────── */
+/* Returns: 0=none 1=new 2=close 3=prev 4=next 5..13=direct(idx 0..8)    */
+/* v0.4.2: 14=move_left 15=move_right                                     */
+
+int64_t nitty_gtk4_tab_event_poll(void)
+{
+    if (g_tab_event != 0) {
+        int64_t ev = (int64_t)g_tab_event;
+        g_tab_event = 0;
+        return ev;
+    }
+    return 0;
+}
+
+/* ── v0.4.2: Tab drag-and-drop polling ──────────────────────────────── */
+/* Returns: 0=none 1=dragging (visual feedback) 2=drop (reorder now)      */
+
+int64_t nitty_gtk4_drag_event_poll(void)
+{
+    if (g_drag_drop_event) {
+        g_drag_drop_event = 0;
+        return 2;  /* drop completed — Nitpick should execute the reorder */
+    }
+    if (g_drag_active) {
+        return 1;  /* drag in progress — Nitpick should show visual feedback */
+    }
+    return 0;
+}
+
+/* Source tab's x position at drag start (pixel, integer) */
+int64_t nitty_gtk4_drag_get_start_x(void)
+{
+    return (int64_t)g_drag_start_x;
+}
+
+/* Current drag x position (pixel, integer) — for drop indicator placement */
+int64_t nitty_gtk4_drag_get_current_x(void)
+{
+    return (int64_t)g_drag_current_x;
 }

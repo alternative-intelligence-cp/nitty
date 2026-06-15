@@ -1,4 +1,4 @@
-// src/core/tab_manager.npk — Tab collection manager (v0.4.0)
+// src/core/tab_manager.npk — Tab collection manager (v0.4.3)
 //
 // Manages the ordered collection of tabs. Owns the tab creation/deletion
 // lifecycle, active tab tracking, and tab ordering.
@@ -11,8 +11,18 @@
 //
 // Tab slots in tab.npk are indexed by display position [0..count-1].
 // The manager ensures tab.npk slots match display order.
+//
+// v0.4.1 additions:
+//   - Each tab owns a PTY master fd and shell PID (stored in tab.npk)
+//   - tm_open_new_tab()  : spawn PTY+shell, register tab, switch active PTY
+//   - tm_close_tab(id)   : kill shell, close PTY, remove tab
+//   - tm_close_active()  : close the current active tab
+//   - tm_set_active_title(t): update active tab's title (from OSC sequences)
+//   - tm_get_active_pid(): shell PID for active tab
+//   - Activation functions now call nitty_gtk4_set_active_pty_fd to route I/O
 
 use "tab.npk".*;
+use "../gui/gtk4_ffi.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════
 // Module state
@@ -35,19 +45,19 @@ pub func:tm_init = NIL() {
 };
 
 // ═══════════════════════════════════════════════════════════════════
-// Tab creation / deletion
+// Tab creation / deletion (low-level)
 // ═══════════════════════════════════════════════════════════════════
 
-/// Create a new tab with the given PTY fd.
+/// Create a new tab with the given PTY fd and shell PID.
 /// Appends to the end of the tab list.
 /// Returns the new tab's unique ID.
-pub func:tm_add_tab = int64(int64:pty_fd) {
+pub func:tm_add_tab = int64(int64:pty_fd, int64:shell_pid) {
     int64:slot = g_tm_count;
     int64:id = g_tm_next_id;
     g_tm_next_id = g_tm_next_id + 1i64;
 
     // Initialize the tab slot
-    drop(tab_create(slot, id, pty_fd));
+    drop(tab_create(slot, id, pty_fd, shell_pid));
 
     g_tm_count = g_tm_count + 1i64;
     pass(id);
@@ -57,6 +67,7 @@ pub func:tm_add_tab = int64(int64:pty_fd) {
 /// Returns 1 on success, 0 if not found.
 /// Shifts remaining tabs left to fill the gap.
 /// Adjusts active_index if needed.
+/// NOTE: Does NOT kill the shell — caller must call tm_close_tab for that.
 pub func:tm_remove_tab = int64(int64:id) {
     // Find the slot with this ID
     int64:found = -1i64;
@@ -80,7 +91,8 @@ pub func:tm_remove_tab = int64(int64:id) {
     while (i < g_tm_count - 1i64) {
         int64:next = i + 1i64;
         // Copy next slot into current slot
-        drop(tab_create(i, raw tab_get_id(next), raw tab_get_pty_fd(next)));
+        drop(tab_create(i, raw tab_get_id(next),
+                        raw tab_get_pty_fd(next), raw tab_get_pid(next)));
         drop(tab_set_active(i, raw tab_is_active(next)));
         drop(tab_set_title(i, raw tab_get_title(next)));
         if (raw tab_has_activity(next) != 0i64) {
@@ -89,6 +101,12 @@ pub func:tm_remove_tab = int64(int64:id) {
         if (raw tab_has_bell(next) != 0i64) {
             drop(tab_mark_bell(i));
         }
+        // v0.4.3: copy new fields
+        if (raw tab_has_completion(next) != 0i64) {
+            drop(tab_mark_completion(i));
+        }
+        drop(tab_set_custom_title(i, raw tab_get_custom_title(next)));
+        drop(tab_set_custom_color(i, raw tab_get_custom_color(next)));
         i = i + 1i64;
     }
 
@@ -116,12 +134,139 @@ pub func:tm_remove_tab = int64(int64:id) {
 };
 
 // ═══════════════════════════════════════════════════════════════════
+// v0.4.1: High-level tab lifecycle
+// ═══════════════════════════════════════════════════════════════════
+
+/// Open a new tab: spawn PTY+shell, add to manager, make it active.
+/// rows/cols: terminal dimensions for the new PTY.
+/// Returns the new tab's unique ID, or 0 on failure.
+pub func:tm_open_new_tab = int64(int64:rows, int64:cols) {
+    // Spawn a new shell process (not yet the active PTY)
+    // FFI functions return plain int64 (-1 on error)
+    int64:packed = nitty_gtk4_spawn_tab_shell(rows, cols);
+    if (packed == -1i64) {
+        pass(0i64);  // spawn failed
+    }
+
+    // Unpack master_fd and PID from packed result
+    int64:fd  = nitty_gtk4_spawn_result_fd(packed);
+    int64:pid = nitty_gtk4_spawn_result_pid(packed);
+
+    if (fd == -1i64) {
+        pass(0i64);
+    }
+
+    // Deactivate the current tab's active flag
+    if (g_tm_count > 0i64) {
+        drop(tab_set_active(g_tm_active_index, 0i64));
+    }
+
+    // Create the new tab
+    int64:new_id = raw tm_add_tab(fd, pid);
+
+    // Make the new tab the active one
+    int64:new_idx = g_tm_count - 1i64;
+    g_tm_active_index = new_idx;
+    drop(tab_set_active(new_idx, 1i64));
+
+    // Switch the C-side idle poll and input routing to the new PTY
+    nitty_gtk4_set_active_pty_fd(fd, pid);
+
+    pass(new_id);
+};
+
+/// Close a tab by its unique ID.
+/// Kills the shell, closes the PTY fd, removes the tab.
+/// If this was the active tab, switches to the nearest remaining tab.
+/// If no tabs remain, opens a new one.
+/// Returns 1 on success, 0 if ID not found.
+pub func:tm_close_tab = int64(int64:id) {
+    // Find the slot with this ID
+    int64:found = -1i64;
+    int64:i = 0i64;
+    while (i < g_tm_count) {
+        if (raw tab_get_id(i) == id) {
+            found = i;
+        }
+        i = i + 1i64;
+    }
+
+    if (found == -1i64) {
+        pass(0i64);
+    }
+
+    // Grab fd and PID before destroying the slot
+    int64:fd  = raw tab_get_pty_fd(found);
+    int64:pid = raw tab_get_pid(found);
+    int64:was_active = raw tab_is_active(found);
+
+    // If closing the active tab, switch to a neighbor first
+    if (was_active != 0i64) {
+        int64:new_active = found - 1i64;
+        if (new_active < 0i64) {
+            new_active = found + 1i64;
+        }
+        // Only switch if there is another tab
+        if (new_active < g_tm_count) {
+            if (new_active != found) {
+                int64:neighbor_fd  = raw tab_get_pty_fd(new_active);
+                int64:neighbor_pid = raw tab_get_pid(new_active);
+                nitty_gtk4_set_active_pty_fd(neighbor_fd, neighbor_pid);
+            }
+        }
+    }
+
+    // Kill the shell and close the PTY
+    if (fd >= 0i64) {
+        nitty_gtk4_kill_tab_shell(fd, pid);
+    }
+
+    // Remove the tab from the manager
+    drop(tm_remove_tab(id));
+
+    // If no tabs left, open a new one automatically
+    if (g_tm_count == 0i64) {
+        int64:new_rows = 24i64;  // will be updated on next resize
+        int64:new_cols = 80i64;
+        drop(tm_open_new_tab(new_rows, new_cols));
+    }
+
+    // Update active PTY if needed (tm_remove_tab adjusted active_index)
+    if (g_tm_count > 0i64) {
+        int64:active_fd  = raw tab_get_pty_fd(g_tm_active_index);
+        int64:active_pid = raw tab_get_pid(g_tm_active_index);
+        nitty_gtk4_set_active_pty_fd(active_fd, active_pid);
+    }
+
+    pass(1i64);
+};
+
+/// Close the currently active tab.
+pub func:tm_close_active = int64() {
+    if (g_tm_count == 0i64) { pass(0i64); }
+    int64:active_id = raw tab_get_id(g_tm_active_index);
+    pass(raw tm_close_tab(active_id));
+};
+
+/// Update the active tab's display title (called from OSC 0/2 handler).
+/// v0.4.3: If the tab has a user-set custom title, OSC titles are ignored.
+pub func:tm_set_active_title = NIL(string:title) {
+    if (g_tm_count == 0i64) { pass(NIL); }
+    // Respect user-renamed lock — same as Kitty/Tabby behaviour
+    if (raw tab_get_custom_title(g_tm_active_index) == 0i64) {
+        drop(tab_set_title(g_tm_active_index, title));
+    }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
 // Activation
 // ═══════════════════════════════════════════════════════════════════
 
 /// Activate a tab by its unique ID.
 /// Clears active flag on old tab, sets on new tab.
 /// Also clears activity/bell flags on the newly focused tab.
+/// Switches the active PTY fd so I/O routes to the new tab's shell.
 pub func:tm_activate = NIL(int64:id) {
     // Deactivate current
     if (g_tm_count > 0i64) {
@@ -136,6 +281,11 @@ pub func:tm_activate = NIL(int64:id) {
             drop(tab_set_active(i, 1i64));
             drop(tab_clear_activity(i));
             drop(tab_clear_bell(i));
+            drop(tab_clear_completion(i));  // v0.4.3
+            // Switch active PTY
+            int64:fd  = raw tab_get_pty_fd(i);
+            int64:pid = raw tab_get_pid(i);
+            nitty_gtk4_set_active_pty_fd(fd, pid);
         }
         i = i + 1i64;
     }
@@ -157,6 +307,13 @@ pub func:tm_activate_index = NIL(int64:index) {
     drop(tab_set_active(index, 1i64));
     drop(tab_clear_activity(index));
     drop(tab_clear_bell(index));
+    drop(tab_clear_completion(index));  // v0.4.3
+
+    // Switch active PTY
+    int64:fd  = raw tab_get_pty_fd(index);
+    int64:pid = raw tab_get_pid(index);
+    nitty_gtk4_set_active_pty_fd(fd, pid);
+
     pass(NIL);
 };
 
@@ -174,6 +331,12 @@ pub func:tm_next = NIL() {
     drop(tab_set_active(g_tm_active_index, 1i64));
     drop(tab_clear_activity(g_tm_active_index));
     drop(tab_clear_bell(g_tm_active_index));
+
+    // Switch active PTY
+    int64:fd  = raw tab_get_pty_fd(g_tm_active_index);
+    int64:pid = raw tab_get_pid(g_tm_active_index);
+    nitty_gtk4_set_active_pty_fd(fd, pid);
+
     pass(NIL);
 };
 
@@ -192,6 +355,88 @@ pub func:tm_prev = NIL() {
     drop(tab_set_active(new_idx, 1i64));
     drop(tab_clear_activity(new_idx));
     drop(tab_clear_bell(new_idx));
+
+    // Switch active PTY
+    int64:fd  = raw tab_get_pty_fd(new_idx);
+    int64:pid = raw tab_get_pid(new_idx);
+    nitty_gtk4_set_active_pty_fd(fd, pid);
+
+    pass(NIL);
+};
+// ═══════════════════════════════════════════════════════════════════
+// v0.4.2: Tab reordering
+// ═══════════════════════════════════════════════════════════════════
+
+/// Move the active tab one position to the left.
+/// If already at index 0, wraps to the last position.
+/// active_index follows the moved tab.
+/// No PTY switch needed — the tab data (including fd/pid) moves with the slot.
+pub func:tm_move_left = NIL() {
+    if (g_tm_count < 2i64) { pass(NIL); }
+
+    int64:old_idx = g_tm_active_index;
+    int64:new_idx = old_idx - 1i64;
+    if (old_idx == 0i64) {
+        new_idx = g_tm_count - 1i64;
+    }
+
+    drop(tab_swap(old_idx, new_idx));
+    g_tm_active_index = new_idx;
+    pass(NIL);
+};
+
+/// Move the active tab one position to the right.
+/// If already at the last index, wraps to index 0.
+/// active_index follows the moved tab.
+pub func:tm_move_right = NIL() {
+    if (g_tm_count < 2i64) { pass(NIL); }
+
+    int64:old_idx = g_tm_active_index;
+    int64:new_idx = old_idx + 1i64;
+    if (old_idx == g_tm_count - 1i64) {
+        new_idx = 0i64;
+    }
+
+    drop(tab_swap(old_idx, new_idx));
+    g_tm_active_index = new_idx;
+    pass(NIL);
+};
+
+/// Move a tab from from_idx to to_idx by repeated neighboring swaps.
+/// This is an insertion-style move (not a simple swap): the tab slides
+/// through intermediate positions so all other tabs shift by one slot.
+/// active_index is updated to follow the moved tab.
+pub func:tm_move_tab = NIL(int64:from_idx, int64:to_idx) {
+    if (from_idx < 0i64) { pass(NIL); }
+    if (to_idx < 0i64) { pass(NIL); }
+    if (from_idx >= g_tm_count) { pass(NIL); }
+    if (to_idx >= g_tm_count) { pass(NIL); }
+    if (from_idx == to_idx) { pass(NIL); }
+
+    // Slide left: repeatedly swap with the slot to the left
+    int64:cur = from_idx;
+    if (to_idx < from_idx) {
+        while (cur > to_idx) {
+            int64:prev = cur - 1i64;
+            drop(tab_swap(cur, prev));
+            cur = prev;
+        }
+    }
+
+    // Slide right: repeatedly swap with the slot to the right
+    if (to_idx > from_idx) {
+        while (cur < to_idx) {
+            int64:nxt = cur + 1i64;
+            drop(tab_swap(cur, nxt));
+            cur = nxt;
+        }
+    }
+
+    // Track active index if it was the moved tab or was displaced
+    if (g_tm_active_index == from_idx) {
+        g_tm_active_index = to_idx;
+    }
+
     pass(NIL);
 };
 
@@ -223,6 +468,12 @@ pub func:tm_get_active_pty_fd = int64() {
     pass(raw tab_get_pty_fd(g_tm_active_index));
 };
 
+/// Shell PID of the active tab. Returns -1 if no tabs.
+pub func:tm_get_active_pid = int64() {
+    if (g_tm_count == 0i64) { pass(-1i64); }
+    pass(raw tab_get_pid(g_tm_active_index));
+};
+
 /// Get the unique ID of the tab at display position index.
 pub func:tm_get_id_at = int64(int64:index) {
     pass(raw tab_get_id(index));
@@ -231,4 +482,207 @@ pub func:tm_get_id_at = int64(int64:index) {
 /// Get the title of the tab at display position index.
 pub func:tm_get_title_at = string(int64:index) {
     pass(raw tab_get_title(index));
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// v0.4.3: Activity / indicator helpers
+// ═══════════════════════════════════════════════════════════════════
+
+/// Mark a bell on the active tab (if not currently focused tab... logic handled by caller).
+pub func:tm_mark_active_bell = NIL() {
+    if (g_tm_count == 0i64) { pass(NIL); }
+    drop(tab_mark_bell(g_tm_active_index));
+    pass(NIL);
+};
+
+/// Mark output activity on a tab at the given display index.
+pub func:tm_mark_activity_at = NIL(int64:index) {
+    if (index < 0i64) { pass(NIL); }
+    if (index >= g_tm_count) { pass(NIL); }
+    drop(tab_mark_activity(index));
+    pass(NIL);
+};
+
+/// Mark completion (shell exited) on a tab at the given display index.
+pub func:tm_mark_completion_at = NIL(int64:index) {
+    if (index < 0i64) { pass(NIL); }
+    if (index >= g_tm_count) { pass(NIL); }
+    drop(tab_mark_completion(index));
+    pass(NIL);
+};
+
+/// Set a user-renamed title on a tab by display index.
+/// Locks the custom_title flag so OSC won't override.
+pub func:tm_set_title_at = NIL(int64:index, string:title) {
+    if (index < 0i64) { pass(NIL); }
+    if (index >= g_tm_count) { pass(NIL); }
+    drop(tab_set_title(index, title));
+    drop(tab_set_custom_title(index, 1i64));
+    pass(NIL);
+};
+
+/// Set a custom color on a tab by display index.
+/// rgb = packed (r<<16)|(g<<8)|b, or 0 to clear.
+pub func:tm_set_color_at = NIL(int64:index, int64:rgb) {
+    if (index < 0i64) { pass(NIL); }
+    if (index >= g_tm_count) { pass(NIL); }
+    drop(tab_set_custom_color(index, rgb));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// v0.4.3: Context menu operations
+// ═══════════════════════════════════════════════════════════════════
+
+/// Duplicate a tab: open a new tab (with CWD from source tab's PID) and
+/// insert it immediately after source_idx. The source tab's working directory
+/// is captured in the C shim via /proc/pid/cwd.
+/// rows/cols: terminal dimensions for the new PTY.
+/// Returns the new tab's ID or 0 on failure.
+pub func:tm_duplicate_tab = int64(int64:source_idx, int64:rows, int64:cols) {
+    if (source_idx < 0i64) { pass(0i64); }
+    if (source_idx >= g_tm_count) { pass(0i64); }
+
+    // Get source PID for CWD capture
+    int64:source_pid = raw tab_get_pid(source_idx);
+
+    // Attempt CWD-aware spawn first, then fall back to plain spawn.
+    int64:packed_cwd = nitty_gtk4_spawn_tab_shell_at_cwd(rows, cols, source_pid);
+    int64:packed_plain = -1i64;
+    if (packed_cwd == -1i64) {
+        packed_plain = nitty_gtk4_spawn_tab_shell(rows, cols);
+    }
+
+    // Determine which packed result to use
+    int64:fd = -1i64;
+    int64:pid = -1i64;
+    if (packed_cwd != -1i64) {
+        fd  = nitty_gtk4_spawn_result_fd(packed_cwd);
+        pid = nitty_gtk4_spawn_result_pid(packed_cwd);
+    }
+    if (packed_cwd == -1i64) {
+        if (packed_plain != -1i64) {
+            fd  = nitty_gtk4_spawn_result_fd(packed_plain);
+            pid = nitty_gtk4_spawn_result_pid(packed_plain);
+        }
+    }
+    if (fd == -1i64) { pass(0i64); }
+
+    // Deactivate the current tab
+    drop(tab_set_active(g_tm_active_index, 0i64));
+
+    // Append the new tab at the end
+    int64:new_id = raw tm_add_tab(fd, pid);
+    int64:end_idx = g_tm_count - 1i64;
+
+    // Slide the new tab left from end_idx to (source_idx + 1)
+    int64:target_idx = source_idx + 1i64;
+    if (target_idx < end_idx) {
+        drop(tm_move_tab(end_idx, target_idx));
+    }
+
+    // Register PID for completion polling
+    nitty_gtk4_register_tab_pid(target_idx, pid);
+
+    // Activate the new duplicate tab
+    g_tm_active_index = target_idx;
+    drop(tab_set_active(target_idx, 1i64));
+    nitty_gtk4_set_active_pty_fd(fd, pid);
+
+    pass(new_id);
+};
+
+/// Close all tabs except the one at keep_idx.
+/// Each tab is closed via tm_close_tab (kills shell).
+/// keep_idx is a display index. After completion, the kept tab is active.
+pub func:tm_close_others = NIL(int64:keep_idx) {
+    if (g_tm_count <= 1i64) { pass(NIL); }
+    if (keep_idx < 0i64) { keep_idx = 0i64; }
+    if (keep_idx >= g_tm_count) { keep_idx = g_tm_count - 1i64; }
+
+    // First activate the tab we're keeping so the PTY is routed correctly
+    // when others are closed
+    int64:keep_id = raw tab_get_id(keep_idx);
+    drop(tm_activate(keep_id));
+
+    // Close all tabs with a different ID (iterate until only 1 remains)
+    // We close the last tab each pass to avoid shifting keep_idx
+    int64:safety = 0i64;
+    while (g_tm_count > 1i64) {
+        safety = safety + 1i64;
+        if (safety > 20i64) { pass(NIL); }  // prevent infinite loop
+
+        // Find a tab that is NOT the kept one
+        int64:victim_id = -1i64;
+        int64:j = 0i64;
+        while (j < g_tm_count) {
+            if (raw tab_get_id(j) != keep_id) {
+                victim_id = raw tab_get_id(j);
+            }
+            j = j + 1i64;
+        }
+        if (victim_id == -1i64) { pass(NIL); }
+
+        // Close without confirmation — context menu already asked
+        int64:victim_fd  = -1i64;
+        int64:victim_pid = -1i64;
+        int64:vi = 0i64;
+        while (vi < g_tm_count) {
+            if (raw tab_get_id(vi) == victim_id) {
+                victim_fd  = raw tab_get_pty_fd(vi);
+                victim_pid = raw tab_get_pid(vi);
+            }
+            vi = vi + 1i64;
+        }
+        if (victim_fd >= 0i64) {
+            nitty_gtk4_kill_tab_shell(victim_fd, victim_pid);
+        }
+        drop(tm_remove_tab(victim_id));
+    }
+
+    // Ensure PTY is routed to the remaining tab
+    if (g_tm_count > 0i64) {
+        int64:fd2  = raw tab_get_pty_fd(g_tm_active_index);
+        int64:pid2 = raw tab_get_pid(g_tm_active_index);
+        nitty_gtk4_set_active_pty_fd(fd2, pid2);
+    }
+
+    pass(NIL);
+};
+
+/// Close all tabs to the right of from_idx (display index, exclusive).
+/// Tabs at indices [from_idx+1 .. count-1] are closed.
+pub func:tm_close_to_right = NIL(int64:from_idx) {
+    if (from_idx < 0i64) { pass(NIL); }
+    if (from_idx >= g_tm_count - 1i64) { pass(NIL); }  // nothing to the right
+
+    // Close from the rightmost tab inward to avoid shifting issues
+    int64:safety2 = 0i64;
+    while (g_tm_count > from_idx + 1i64) {
+        safety2 = safety2 + 1i64;
+        if (safety2 > 20i64) { pass(NIL); }
+
+        // Always close the rightmost tab
+        int64:last_idx = g_tm_count - 1i64;
+        int64:last_id  = raw tab_get_id(last_idx);
+        int64:last_fd  = raw tab_get_pty_fd(last_idx);
+        int64:last_pid = raw tab_get_pid(last_idx);
+
+        if (last_fd >= 0i64) {
+            nitty_gtk4_kill_tab_shell(last_fd, last_pid);
+        }
+        drop(tm_remove_tab(last_id));
+    }
+
+    // Ensure active index is valid
+    if (g_tm_active_index >= g_tm_count) {
+        g_tm_active_index = g_tm_count - 1i64;
+    }
+    if (g_tm_count > 0i64) {
+        int64:afd  = raw tab_get_pty_fd(g_tm_active_index);
+        int64:apid = raw tab_get_pid(g_tm_active_index);
+        nitty_gtk4_set_active_pty_fd(afd, apid);
+    }
+
+    pass(NIL);
 };

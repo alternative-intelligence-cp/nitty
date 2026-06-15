@@ -1,0 +1,169 @@
+// src/gui/tab_context_menu.npk — Tab right-click context menu (v0.4.3)
+//
+// Polls for pending context menu actions each frame and dispatches them
+// to the appropriate tab_manager operations.
+//
+// Action codes from nitty_gtk4_context_menu_poll():
+//   0  = none
+//   1  = Rename Tab
+//   2  = Duplicate Tab
+//   3  = Close Tab
+//   4  = Close Other Tabs
+//   5  = Close Tabs to the Right
+//   6  = Set color: Red      (0xE05555)
+//   7  = Set color: Orange   (0xE08C40)
+//   8  = Set color: Yellow   (0xD4C05A)
+//   9  = Set color: Green    (0x5AC85A)
+//  10  = Set color: Blue     (0x4080D0)
+//  11  = Set color: Purple   (0x9060D0)
+//  12  = Set color: Pink     (0xD060A0)
+//  13  = Clear color (None)
+
+use "../core/tab_manager.npk".*;
+use "gtk4_ffi.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════
+// Preset color palette (packed RGB)
+// ═══════════════════════════════════════════════════════════════════
+
+int64:TCM_COLOR_RED    = 14699861i64;  // 0xE05555
+int64:TCM_COLOR_ORANGE = 14714944i64;  // 0xE08C40
+int64:TCM_COLOR_YELLOW = 13942874i64;  // 0xD4C05A
+int64:TCM_COLOR_GREEN  =  5951578i64;  // 0x5AC85A
+int64:TCM_COLOR_BLUE   =  4227280i64;  // 0x4080D0
+int64:TCM_COLOR_PURPLE =  9461968i64;  // 0x9060D0
+int64:TCM_COLOR_PINK   = 13655200i64;  // 0xD060A0
+int64:TCM_COLOR_NONE   =  0i64;
+
+// ═══════════════════════════════════════════════════════════════════
+// Cached terminal dimensions (needed for duplicate tab spawn)
+// ═══════════════════════════════════════════════════════════════════
+
+int64:g_tcm_rows = 24i64;
+int64:g_tcm_cols = 80i64;
+
+/// Update the cached terminal dimensions (call when window is resized).
+pub func:tcm_set_dimensions = NIL(int64:rows, int64:cols) {
+    g_tcm_rows = rows;
+    g_tcm_cols = cols;
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Action handlers
+// ═══════════════════════════════════════════════════════════════════
+
+/// Rename a tab: show the rename dialog and update its title.
+func:tcm_rename = NIL(int64:tab_idx) {
+    // Get current title to pre-fill the dialog
+    string:current = raw tm_get_title_at(tab_idx);
+    string:new_title = nitty_gtk4_prompt_string("Rename Tab", current);
+
+    // Only apply if user entered something
+    if (new_title != "") {
+        drop(tm_set_title_at(tab_idx, new_title));
+    }
+    pass(NIL);
+};
+
+/// Duplicate a tab: spawn new shell at the same CWD, insert after source.
+func:tcm_duplicate = NIL(int64:tab_idx) {
+    drop(tm_duplicate_tab(tab_idx, g_tcm_rows, g_tcm_cols));
+    pass(NIL);
+};
+
+/// Close a tab by display index.
+func:tcm_close = NIL(int64:tab_idx) {
+    int64:id = raw tm_get_id_at(tab_idx);
+    drop(tm_close_tab(id));
+    pass(NIL);
+};
+
+/// Close all tabs except the one at tab_idx.
+func:tcm_close_others = NIL(int64:tab_idx) {
+    drop(tm_close_others(tab_idx));
+    pass(NIL);
+};
+
+/// Close all tabs to the right of tab_idx.
+func:tcm_close_to_right = NIL(int64:tab_idx) {
+    drop(tm_close_to_right(tab_idx));
+    pass(NIL);
+};
+
+/// Apply a preset color to the tab at tab_idx.
+func:tcm_set_color = NIL(int64:tab_idx, int64:rgb) {
+    drop(tm_set_color_at(tab_idx, rgb));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Main poll function — call every frame from terminal_widget.npk
+// ═══════════════════════════════════════════════════════════════════
+
+/// Poll for a pending context menu action and dispatch it.
+/// Call this each frame in the idle callback.
+pub func:tcm_poll = NIL() {
+    int64:action = nitty_gtk4_context_menu_poll();
+    if (action == 0i64) { pass(NIL); }
+
+    int64:tab_idx = nitty_gtk4_context_menu_get_tab_idx();
+
+    // Rename Tab
+    if (action == 1i64) {
+        drop(tcm_rename(tab_idx));
+    }
+    // Duplicate Tab
+    if (action == 2i64) {
+        drop(tcm_duplicate(tab_idx));
+    }
+    // Close Tab
+    if (action == 3i64) {
+        drop(tcm_close(tab_idx));
+    }
+    // Close Other Tabs
+    if (action == 4i64) {
+        drop(tcm_close_others(tab_idx));
+    }
+    // Close Tabs to the Right
+    if (action == 5i64) {
+        drop(tcm_close_to_right(tab_idx));
+    }
+    // Set color: Red
+    if (action == 6i64) {
+        drop(tcm_set_color(tab_idx, TCM_COLOR_RED));
+    }
+    // Set color: Orange
+    if (action == 7i64) {
+        drop(tcm_set_color(tab_idx, TCM_COLOR_ORANGE));
+    }
+    // Set color: Yellow
+    if (action == 8i64) {
+        drop(tcm_set_color(tab_idx, TCM_COLOR_YELLOW));
+    }
+    // Set color: Green
+    if (action == 9i64) {
+        drop(tcm_set_color(tab_idx, TCM_COLOR_GREEN));
+    }
+    // Set color: Blue
+    if (action == 10i64) {
+        drop(tcm_set_color(tab_idx, TCM_COLOR_BLUE));
+    }
+    // Set color: Purple
+    if (action == 11i64) {
+        drop(tcm_set_color(tab_idx, TCM_COLOR_PURPLE));
+    }
+    // Set color: Pink
+    if (action == 12i64) {
+        drop(tcm_set_color(tab_idx, TCM_COLOR_PINK));
+    }
+    // Clear color (None)
+    if (action == 13i64) {
+        drop(tcm_set_color(tab_idx, TCM_COLOR_NONE));
+    }
+
+    // Queue a redraw after any context menu action
+    nitty_gtk4_queue_redraw();
+
+    pass(NIL);
+};

@@ -1,0 +1,127 @@
+// src/core/pane.npk -- Per-pane data registry (v0.5.0)
+//
+// Maps pane_id -> PTY fd, shell PID, terminal dimensions.
+// Uses the flat parallel-array pattern established by tab.npk.
+//
+// Pane slots are independent of tab slots: a tab has one SplitTree
+// which references pane_ids; this module stores the per-pane data.
+//
+// This is pure data -- no GTK4/rendering (v0.5.1+).
+
+// ===================================================================
+// Constants
+// ===================================================================
+
+int64:MAX_PANES = 64i64;
+
+// ===================================================================
+// Module state -- parallel flat arrays
+// ===================================================================
+
+int64[64]:g_pane_id = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];       // pane_id stored in this slot (0 = empty)
+int64[64]:g_pane_pty_fd = [-1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64];   // PTY master fd (-1 = not yet attached)
+int64[64]:g_pane_pid = [-1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64];      // shell PID (-1 = not yet attached)
+int64[64]:g_pane_rows = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];     // terminal rows
+int64[64]:g_pane_cols = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];     // terminal cols
+int64[64]:g_pane_in_use = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];   // 1 = slot occupied, 0 = free
+
+// ===================================================================
+// Public API: Lifecycle
+// ===================================================================
+
+/// Create a pane entry. Returns slot index on success, -1 if registry full.
+/// pane_id must be unique (caller supplies it from split_tree g_next_pane_id).
+pub func:pane_create = int64(int64:pane_id, int64:pty_fd, int64:pid, int64:rows, int64:cols) {
+    int64:slot = 0i64;
+    int64:found = -1i64;
+    while (slot < MAX_PANES) {
+        if (g_pane_in_use[slot] == 0i64 && found < 0i64) {
+            found = slot;
+            slot = MAX_PANES; // break
+        }
+        slot = slot + 1i64;
+    }
+    if (found < 0i64) { pass(-1i64); }
+
+    g_pane_id[found]     = pane_id;
+    g_pane_pty_fd[found] = pty_fd;
+    g_pane_pid[found]    = pid;
+    g_pane_rows[found]   = rows;
+    g_pane_cols[found]   = cols;
+    g_pane_in_use[found] = 1i64;
+    pass(found);
+};
+
+/// Destroy (free) a pane slot. Does NOT close the PTY -- caller is responsible.
+pub func:pane_destroy = NIL(int64:slot) {
+    if (slot < 0i64 || slot >= MAX_PANES) { pass(NIL); }
+    g_pane_id[slot]     = 0i64;
+    g_pane_pty_fd[slot] = -1i64;
+    g_pane_pid[slot]    = -1i64;
+    g_pane_rows[slot]   = 0i64;
+    g_pane_cols[slot]   = 0i64;
+    g_pane_in_use[slot] = 0i64;
+    pass(NIL);
+};
+
+// ===================================================================
+// Public API: Lookup
+// ===================================================================
+
+/// Find the slot index for a given pane_id. Returns -1 if not found.
+pub func:pane_find_by_id = int64(int64:pane_id) {
+    int64:slot  = 0i64;
+    int64:found = -1i64;
+    while (slot < MAX_PANES) {
+        if (g_pane_in_use[slot] == 1i64 && g_pane_id[slot] == pane_id && found < 0i64) {
+            found = slot;
+            slot = MAX_PANES; // break
+        }
+        slot = slot + 1i64;
+    }
+    pass(found);
+};
+
+// ===================================================================
+// Public API: Getters
+// ===================================================================
+
+pub func:pane_get_id = int64(int64:slot) {
+    pass(g_pane_id[slot]);
+};
+
+pub func:pane_get_pty_fd = int64(int64:slot) {
+    pass(g_pane_pty_fd[slot]);
+};
+
+pub func:pane_get_pid = int64(int64:slot) {
+    pass(g_pane_pid[slot]);
+};
+
+pub func:pane_get_rows = int64(int64:slot) {
+    pass(g_pane_rows[slot]);
+};
+
+pub func:pane_get_cols = int64(int64:slot) {
+    pass(g_pane_cols[slot]);
+};
+
+// ===================================================================
+// Public API: Setters
+// ===================================================================
+
+pub func:pane_set_pty_fd = NIL(int64:slot, int64:fd) {
+    g_pane_pty_fd[slot] = fd;
+    pass(NIL);
+};
+
+pub func:pane_set_pid = NIL(int64:slot, int64:pid) {
+    g_pane_pid[slot] = pid;
+    pass(NIL);
+};
+
+pub func:pane_set_size = NIL(int64:slot, int64:rows, int64:cols) {
+    g_pane_rows[slot] = rows;
+    g_pane_cols[slot] = cols;
+    pass(NIL);
+};

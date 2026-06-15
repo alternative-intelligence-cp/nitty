@@ -1,4 +1,4 @@
-// tests/test_tab.npk — Tab data model unit tests (v0.4.0)
+// tests/test_tab.npk — Tab data model unit tests (v0.4.1)
 
 use "../src/core/tab.npk".*;
 
@@ -25,7 +25,7 @@ func:check_str = NIL(string:name, string:expected, string:got) {
 
 func:run_tests = NIL() {
     // T01: tab_create sets id
-    drop(tab_create(0i64, 1i64, 5i64));
+    drop(tab_create(0i64, 1i64, 5i64, 9999i64));
     drop(check("T01: id", 1i64, raw tab_get_id(0i64)));
 
     // T02: tab_create sets pty_fd
@@ -73,10 +73,11 @@ func:run_tests = NIL() {
     drop(check("T13b: destroy pty_fd", -1i64, raw tab_get_pty_fd(0i64)));
     drop(check("T13c: destroy is_active", 0i64, raw tab_is_active(0i64)));
     drop(check_str("T13d: destroy title", "", raw tab_get_title(0i64)));
+    drop(check("T13e: destroy pid", -1i64, raw tab_get_pid(0i64)));
 
     // T14: Multiple slots are independent
-    drop(tab_create(0i64, 10i64, 100i64));
-    drop(tab_create(1i64, 20i64, 200i64));
+    drop(tab_create(0i64, 10i64, 100i64, 1001i64));
+    drop(tab_create(1i64, 20i64, 200i64, 2002i64));
     drop(tab_set_title(0i64, "first"));
     drop(tab_set_title(1i64, "second"));
     drop(check("T14a: slot0 id", 10i64, raw tab_get_id(0i64)));
@@ -85,6 +86,8 @@ func:run_tests = NIL() {
     drop(check_str("T14d: slot1 title", "second", raw tab_get_title(1i64)));
     drop(check("T14e: slot0 pty_fd", 100i64, raw tab_get_pty_fd(0i64)));
     drop(check("T14f: slot1 pty_fd", 200i64, raw tab_get_pty_fd(1i64)));
+    drop(check("T14g: slot0 pid", 1001i64, raw tab_get_pid(0i64)));
+    drop(check("T14h: slot1 pid", 2002i64, raw tab_get_pid(1i64)));
 
     // T15: tab_max_tabs returns 16
     drop(check("T15: max tabs", 16i64, raw tab_max_tabs()));
@@ -92,6 +95,12 @@ func:run_tests = NIL() {
     // T16: tab_set_pty_fd updates fd
     drop(tab_set_pty_fd(0i64, 42i64));
     drop(check("T16: set pty_fd", 42i64, raw tab_get_pty_fd(0i64)));
+
+    // T17: tab_set_pid and tab_get_pid
+    drop(tab_set_pid(0i64, 12345i64));
+    drop(check("T17a: set pid", 12345i64, raw tab_get_pid(0i64)));
+    drop(tab_set_pid(0i64, -1i64));
+    drop(check("T17b: clear pid", -1i64, raw tab_get_pid(0i64)));
 
     pass(NIL);
 };

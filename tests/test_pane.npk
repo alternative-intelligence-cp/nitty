@@ -1,0 +1,89 @@
+// tests/test_pane.npk -- Pane registry unit tests (v0.5.0)
+
+use "../src/core/pane.npk".*;
+
+func:failsafe = int32(tbb32:_code) { exit 1i32; };
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (expected != got)")));
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    print("=== test_pane: Pane Registry Tests ===");
+
+    // T01: pane_create allocates slot 0 and stores all fields
+    print("T01: pane_create returns slot 0");
+    int64:slot0 = raw pane_create(0i64, 10i64, 100i64, 24i64, 80i64);
+    drop(check("T01: slot=0",   0i64,  slot0));
+    drop(check("T01: fd=10",   10i64,  raw pane_get_pty_fd(slot0)));
+    drop(check("T01: pid=100", 100i64, raw pane_get_pid(slot0)));
+    drop(check("T01: rows=24",  24i64, raw pane_get_rows(slot0)));
+    drop(check("T01: cols=80",  80i64, raw pane_get_cols(slot0)));
+
+    // T02: pane_find_by_id round-trip
+    print("T02: pane_find_by_id");
+    int64:slot1 = raw pane_create(1i64, 20i64, 200i64, 24i64, 80i64);
+    drop(check("T02: second slot=1", 1i64, slot1));
+    drop(check("T02: find pane 0 -> slot 0",  0i64,  raw pane_find_by_id(0i64)));
+    drop(check("T02: find pane 1 -> slot 1",  1i64,  raw pane_find_by_id(1i64)));
+    drop(check("T02: find pane 99 -> -1",    -1i64,  raw pane_find_by_id(99i64)));
+
+    // T03: pane_destroy zeroes slot and marks it free
+    print("T03: pane_destroy");
+    drop(pane_destroy(0i64));
+    drop(check("T03: fd after destroy=-1", -1i64, raw pane_get_pty_fd(0i64)));
+    drop(check("T03: pane 0 not found",    -1i64, raw pane_find_by_id(0i64)));
+    // Freed slot 0 should be reused by next create
+    int64:reuse = raw pane_create(5i64, 50i64, 500i64, 40i64, 120i64);
+    drop(check("T03: reused slot=0", 0i64, reuse));
+
+    // T04: fill all 64 slots; 65th returns -1
+    print("T04: fill to capacity");
+    int64:si = 0i64;
+    while (si < 64i64) {
+        drop(pane_destroy(si));
+        si = si + 1i64;
+    }
+    int64:fi = 0i64;
+    while (fi < 64i64) {
+        drop(raw pane_create(fi, fi, fi, 24i64, 80i64));
+        fi = fi + 1i64;
+    }
+    int64:overflow = raw pane_create(64i64, 64i64, 64i64, 24i64, 80i64);
+    drop(check("T04: 65th slot=-1", -1i64, overflow));
+
+    // T05: setters round-trip
+    print("T05: pane_set/get round-trips");
+    si = 0i64;
+    while (si < 64i64) {
+        drop(pane_destroy(si));
+        si = si + 1i64;
+    }
+    int64:s = raw pane_create(10i64, 99i64, 12345i64, 24i64, 80i64);
+    drop(pane_set_pty_fd(s, 42i64));
+    drop(check("T05: fd after set=42",    42i64,  raw pane_get_pty_fd(s)));
+    drop(pane_set_pid(s, 9999i64));
+    drop(check("T05: pid after set=9999", 9999i64, raw pane_get_pid(s)));
+    drop(pane_set_size(s, 50i64, 200i64));
+    drop(check("T05: rows=50",            50i64,  raw pane_get_rows(s)));
+    drop(check("T05: cols=200",           200i64, raw pane_get_cols(s)));
+
+    // Summary
+    print("=== Results ===");
+    if (g_fail > 0i64) {
+        print("SOME TESTS FAILED");
+        exit 1i32;
+    }
+    print("All pane tests passed.");
+    exit 0i32;
+};

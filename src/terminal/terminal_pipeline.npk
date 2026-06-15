@@ -38,6 +38,7 @@ use "dcs_dispatch.npk".*;
 use "terminal_state.npk".*;
 use "terminal_state_apply.npk".*;
 use "actions.npk".*;
+use "../core/tab_manager.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Initialization
@@ -75,11 +76,37 @@ func:pl_apply_esc = NIL() {
 };
 
 // Route E_OSC: dispatch_osc → ts_apply_action.
+// v0.4.1: If action is SET_WINDOW_TITLE, also update active tab title.
 func:pl_apply_osc = NIL() {
     drop(dispatch_osc(raw parser_get_event_data()));
-    drop(ts_apply_action(raw osc_dispatch_get_action(),
-                         raw osc_dispatch_get_data1(),
-                         raw osc_dispatch_get_data2()));
+    int64:act  = raw osc_dispatch_get_action();
+    int64:dat1 = raw osc_dispatch_get_data1();
+    int64:dat2 = raw osc_dispatch_get_data2();
+    drop(ts_apply_action(act, dat1, dat2));
+
+    // v0.4.1: Wire OSC 0/2 (SET_WINDOW_TITLE) to tab title update
+    Result<int64>:swt_r = ACT_SET_WINDOW_TITLE();
+    int64:swt = swt_r ? 0i64;
+    if (act == swt) {
+        // Build title string from OSC payload bytes
+        int64:poff = raw osc_dispatch_get_payload_offset();
+        int64:plen = raw parser_get_osc_data_len();
+        string:title = "";
+        int64:pi = poff;
+        while (pi < plen) {
+            int64:b = raw parser_get_osc_data_byte(pi);
+            // Only include printable ASCII (0x20-0x7E) and common UTF-8 range
+            if (b >= 0x20i64) {
+                if (b <= 0x7Ei64) {
+                    title = string_concat(title, string_from_char(b));
+                }
+            }
+            pi = pi + 1i64;
+        }
+        if (raw string_is_empty(title) == 0i64) {
+            drop(tm_set_active_title(title));
+        }
+    }
     pass(NIL);
 };
 

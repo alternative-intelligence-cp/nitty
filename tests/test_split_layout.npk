@@ -1,0 +1,136 @@
+// tests/test_split_layout.npk -- Split pane layout geometry tests (v0.5.0)
+
+use "../src/core/split_tree.npk".*;
+
+func:failsafe = int32(tbb32:_code) { exit 1i32; };
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (expected != got)")));
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    print("=== test_split_layout: Layout Geometry Tests ===");
+
+    // T01: single pane fills entire 800x600 area
+    print("T01: single pane fills area");
+    drop(raw split_tree_init());
+    drop(raw split_tree_layout(0i64, 0i64, 800i64, 600i64));
+    drop(check("T01: count=1",   1i64,  raw split_tree_get_layout_count()));
+    drop(check("T01: pane_id=0", 0i64,  raw split_tree_get_layout_pane_id(0i64)));
+    drop(check("T01: x=0",       0i64,  raw split_tree_get_layout_x(0i64)));
+    drop(check("T01: y=0",       0i64,  raw split_tree_get_layout_y(0i64)));
+    drop(check("T01: w=800",     800i64, raw split_tree_get_layout_w(0i64)));
+    drop(check("T01: h=600",     600i64, raw split_tree_get_layout_h(0i64)));
+    drop(check("T01: dividers=0", 0i64, raw split_tree_get_divider_count()));
+
+    // T02: horizontal split 50/50 on 800x600
+    //   left:  x=0,   y=0, w=400, h=600
+    //   divider: x=400, y=0, w=4, h=600
+    //   right: x=404, y=0, w=396, h=600  (800-400-4=396)
+    print("T02: horizontal split 500mille on 800x600");
+    drop(raw split_tree_reset());
+    drop(raw split_tree_split(0i64, 0i32));
+    drop(raw split_tree_layout(0i64, 0i64, 800i64, 600i64));
+    drop(check("T02: count=2",        2i64,  raw split_tree_get_layout_count()));
+    drop(check("T02: left pane_id=0", 0i64,  raw split_tree_get_layout_pane_id(0i64)));
+    drop(check("T02: left x=0",       0i64,  raw split_tree_get_layout_x(0i64)));
+    drop(check("T02: left y=0",       0i64,  raw split_tree_get_layout_y(0i64)));
+    drop(check("T02: left w=400",     400i64, raw split_tree_get_layout_w(0i64)));
+    drop(check("T02: left h=600",     600i64, raw split_tree_get_layout_h(0i64)));
+    drop(check("T02: right pane_id=1", 1i64, raw split_tree_get_layout_pane_id(1i64)));
+    drop(check("T02: right x=404",    404i64, raw split_tree_get_layout_x(1i64)));
+    drop(check("T02: right y=0",       0i64,  raw split_tree_get_layout_y(1i64)));
+    drop(check("T02: right w=396",    396i64, raw split_tree_get_layout_w(1i64)));
+    drop(check("T02: right h=600",    600i64, raw split_tree_get_layout_h(1i64)));
+    drop(check("T02: dividers=1",      1i64,  raw split_tree_get_divider_count()));
+    drop(check("T02: divider x=400",  400i64, raw split_tree_get_divider_x(0i64)));
+    drop(check("T02: divider y=0",     0i64,  raw split_tree_get_divider_y(0i64)));
+    drop(check("T02: divider w=4",     4i64,  raw split_tree_get_divider_w(0i64)));
+    drop(check("T02: divider h=600",  600i64, raw split_tree_get_divider_h(0i64)));
+
+    // T03: vertical split 50/50 on 800x600
+    //   top:    x=0, y=0,   w=800, h=300
+    //   divider: x=0, y=300, w=800, h=4
+    //   bottom: x=0, y=304, w=800, h=296  (600-300-4=296)
+    print("T03: vertical split 500mille on 800x600");
+    drop(raw split_tree_reset());
+    drop(raw split_tree_split(0i64, 1i32));
+    drop(raw split_tree_layout(0i64, 0i64, 800i64, 600i64));
+    drop(check("T03: top y=0",    0i64,   raw split_tree_get_layout_y(0i64)));
+    drop(check("T03: top h=300",  300i64, raw split_tree_get_layout_h(0i64)));
+    drop(check("T03: bot y=304",  304i64, raw split_tree_get_layout_y(1i64)));
+    drop(check("T03: bot h=296",  296i64, raw split_tree_get_layout_h(1i64)));
+    drop(check("T03: div y=300",  300i64, raw split_tree_get_divider_y(0i64)));
+    drop(check("T03: div h=4",    4i64,   raw split_tree_get_divider_h(0i64)));
+
+    // T04: unequal ratio 700mille on 800x600
+    //   left_w = 800*700/1000 = 560
+    //   right_w = 800-560-4 = 236
+    print("T04: horizontal split 700mille on 800x600");
+    drop(raw split_tree_reset());
+    drop(raw split_tree_split(0i64, 0i32));
+    drop(raw split_tree_set_ratio(0i64, 700i64));
+    drop(raw split_tree_layout(0i64, 0i64, 800i64, 600i64));
+    drop(check("T04: left w=560",  560i64, raw split_tree_get_layout_w(0i64)));
+    drop(check("T04: right w=236", 236i64, raw split_tree_get_layout_w(1i64)));
+    drop(check("T04: div x=560",  560i64, raw split_tree_get_divider_x(0i64)));
+
+    // T05: nested split -- 3 panes, no overlap
+    //   root: horizontal (pane0 left, pane1 right), ratio=500
+    //   then split pane0 vertically: pane0 top-left, pane2 bottom-left
+    print("T05: nested split, 3 panes");
+    drop(raw split_tree_reset());
+    drop(raw split_tree_split(0i64, 0i32));  // pane1 right
+    drop(raw split_tree_split(0i64, 1i32));  // pane2 below pane0
+    drop(check("T05: pane_count=3", 3i64, raw split_tree_pane_count()));
+    drop(raw split_tree_layout(0i64, 0i64, 800i64, 600i64));
+    drop(check("T05: layout_count=3",    3i64, raw split_tree_get_layout_count()));
+    drop(check("T05: divider_count=2",   2i64, raw split_tree_get_divider_count()));
+    // Horizontal partition: left_col_w + 4 + right_pane_w = 800
+    int64:w0 = raw split_tree_get_layout_w(0i64);
+    int64:w1 = raw split_tree_get_layout_w(2i64);  // rightmost pane
+    drop(check("T05: horiz partition=800", 800i64, w0 + 4i64 + w1));
+    // Vertical partition: top_h + 4 + bot_h = 600
+    int64:h0 = raw split_tree_get_layout_h(0i64);
+    int64:h2 = raw split_tree_get_layout_h(1i64);
+    drop(check("T05: vert partition=600", 600i64, h0 + 4i64 + h2));
+
+    // T06: divider count == number of split nodes
+    print("T06: divider count == split nodes");
+    drop(raw split_tree_reset());
+    drop(raw split_tree_split(0i64, 0i32));  // 1 split
+    drop(raw split_tree_split(0i64, 1i32));  // 2 splits
+    drop(raw split_tree_layout(0i64, 0i64, 800i64, 600i64));
+    drop(check("T06: 2 splits -> 2 dividers", 2i64, raw split_tree_get_divider_count()));
+
+    // T07: split_tree_find_pane_at hit test
+    print("T07: find_pane_at hit test");
+    drop(raw split_tree_reset());
+    drop(raw split_tree_split(0i64, 0i32));  // pane0 left, pane1 right
+    drop(raw split_tree_layout(0i64, 0i64, 800i64, 600i64));
+    // Point in left pane
+    drop(check("T07: hit left=0",    0i64, raw split_tree_find_pane_at(200i64, 300i64)));
+    // Point in right pane
+    drop(check("T07: hit right=1",   1i64, raw split_tree_find_pane_at(600i64, 300i64)));
+    // Point in divider gap (x=402) -> 63 (NONE sentinel)
+    drop(check("T07: hit divider=63", 63i64, raw split_tree_find_pane_at(402i64, 300i64)));
+
+    // Summary
+    print("=== Results ===");
+    if (g_fail > 0i64) {
+        print("SOME TESTS FAILED");
+        exit 1i32;
+    }
+    print("All layout tests passed.");
+    exit 0i32;
+};

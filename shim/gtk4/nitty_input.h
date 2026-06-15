@@ -131,6 +131,42 @@ void nitty_input_clear_terminal_mode(void);
  */
 int64_t nitty_gtk4_scroll_event_poll(void);
 
+/* ── Tab key shortcuts (v0.4.1) ──────────────────────────────────────── */
+
+/**
+ * Poll for a pending tab keyboard event.
+ * Returns: 0=none, 1=new, 2=close, 3=prev, 4=next, 5..13=direct(idx 0..8),
+ *          14=move_left, 15=move_right.
+ * Clears the event after returning it.
+ * Ctrl+Shift+T/W, Ctrl+PgUp/PgDn/1-9, and Ctrl+Shift+Left/Right
+ * are all consumed before PTY routing.
+ */
+int64_t nitty_gtk4_tab_event_poll(void);
+
+/* ── Tab drag-and-drop (v0.4.2) ──────────────────────────────────────── */
+
+/**
+ * Poll for a pending tab drag event.
+ * Returns: 0=none, 1=drag-in-progress (update visual feedback),
+ *          2=drop-completed (execute reorder now).
+ * Clears the drop event after returning 2.
+ * Uses GtkGestureDrag attached to the DrawingArea.
+ */
+int64_t nitty_gtk4_drag_event_poll(void);
+
+/**
+ * Return the X pixel coordinate where the drag started.
+ * Use with tb_hit_test to determine the source tab index.
+ */
+int64_t nitty_gtk4_drag_get_start_x(void);
+
+/**
+ * Return the current X pixel coordinate of the drag.
+ * Use with tb_hit_test to determine the drop target index.
+ * Also used to position the drop indicator line.
+ */
+int64_t nitty_gtk4_drag_get_current_x(void);
+
 #ifdef __cplusplus
 }
 #endif

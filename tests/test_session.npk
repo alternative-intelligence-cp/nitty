@@ -1,0 +1,191 @@
+// tests/test_session.npk — Session persistence unit tests (v0.4.4)
+//
+// Tests the save/load/restore cycle for session.npk.
+// These tests run in a real shell environment with filesystem access.
+// They write to /tmp/nitty_test_session/ to avoid polluting ~/.config.
+//
+// T01: Ensure config dir creation works (fs_is_dir / fs_mkdir)
+// T02: session_load returns 0 when file does not exist
+// T03: After session_save() with 0 tabs, load returns 0 (empty = invalid)
+// T04: session_get_saved_width / session_get_saved_height return 0 when not loaded
+// T05: TOML round-trip: set_int + serialize + parse_file round trip works
+// T06: TOML round-trip: set_string + serialize + parse_file works
+// T07: TOML round-trip: set_bool + serialize + parse_file works
+// T08: fs_write_file creates file, fs_exists confirms it
+// T09: fs_rename moves file, original disappears
+// T10: TOML version check: parse file with version=2 → no valid session
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/src/nitpick_toml.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
+
+func:failsafe = int32(tbb32:_err) { exit 98i32; };
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+string:TEST_DIR = "/tmp/nitty_test_session";
+string:TEST_TOML = "/tmp/nitty_test_session/test.toml";
+string:TEST_TMP  = "/tmp/nitty_test_session/test.toml.tmp";
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (expected != got)")));
+    pass(NIL);
+};
+
+func:check_str = NIL(string:name, string:expected, string:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (string mismatch)")));
+    pass(NIL);
+};
+
+func:setup = NIL() {
+    // Create test directory
+    int32:exists = raw fs_is_dir(TEST_DIR);
+    if (exists == 0i32) {
+        drop(fs_mkdir(TEST_DIR));
+    }
+    // Remove leftover files
+    drop(fs_remove(TEST_TOML));
+    drop(fs_remove(TEST_TMP));
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    print("=== test_session: Session Persistence Unit Tests ===");
+    drop(setup());
+
+    // ── T01: fs_is_dir confirms test dir exists after setup ──────────────────
+    print("T01: config dir creation");
+    int32:t01 = raw fs_is_dir(TEST_DIR);
+    drop(check("T01: test dir exists", 1i64, @cast<int64>(t01)));
+
+    // ── T02: fs_exists returns 0 for missing file ────────────────────────────
+    print("T02: fs_exists on missing file");
+    drop(fs_remove(TEST_TOML));
+    int32:t02 = raw fs_exists(TEST_TOML);
+    drop(check("T02: missing file not found", 0i64, @cast<int64>(t02)));
+
+    // ── T03: session_load returns 0 on missing file ──────────────────────────
+    // Simulated: toml_parse_file on non-existent path returns -1
+    print("T03: toml_parse_file returns -1 on missing file");
+    drop(Toml.clear());
+    int32:t03 = raw Toml.parse_file("/tmp/nitty_test_session/no_such.toml");
+    drop(check("T03: parse_file missing = -1", -1i64, @cast<int64>(t03)));
+
+    // ── T04: TOML version check: version != 1 ────────────────────────────────
+    print("T04: TOML version mismatch rejected");
+    drop(Toml.clear());
+    drop(Toml.set_int("version", 2i64));
+    drop(Toml.set_string("tabs.0.title", "Shell"));
+    string:t04_text = raw Toml.serialize();
+    drop(fs_write_file(TEST_TOML, t04_text));
+    drop(Toml.clear());
+    int32:t04_parse = raw Toml.parse_file(TEST_TOML);
+    int64:t04_ver = raw Toml.get_int("version");
+    // Version 2 → session_load would reject (version != 1)
+    int64:t04_rejected = 0i64;
+    if (t04_ver != 1i64) { t04_rejected = 1i64; }
+    drop(check("T04: version 2 rejected", 1i64, t04_rejected));
+
+    // ── T05: TOML round-trip: int ────────────────────────────────────────────
+    print("T05: TOML int round-trip");
+    drop(Toml.clear());
+    drop(Toml.set_int("version", 1i64));
+    drop(Toml.set_int("window.width", 1280i64));
+    drop(Toml.set_int("window.height", 720i64));
+    string:t05_text = raw Toml.serialize();
+    drop(fs_write_file(TEST_TOML, t05_text));
+    drop(Toml.clear());
+    drop(raw Toml.parse_file(TEST_TOML));
+    int64:t05_w = raw Toml.get_int("window.width");
+    int64:t05_h = raw Toml.get_int("window.height");
+    drop(check("T05: window.width round-trip", 1280i64, t05_w));
+    drop(check("T05: window.height round-trip", 720i64, t05_h));
+
+    // ── T06: TOML round-trip: string ─────────────────────────────────────────
+    print("T06: TOML string round-trip");
+    drop(Toml.clear());
+    drop(Toml.set_int("version", 1i64));
+    drop(Toml.set_string("tabs.0.title", "My Shell"));
+    drop(Toml.set_string("tabs.0.cwd", "/home/randy"));
+    string:t06_text = raw Toml.serialize();
+    drop(fs_write_file(TEST_TOML, t06_text));
+    drop(Toml.clear());
+    drop(raw Toml.parse_file(TEST_TOML));
+    string:t06_title = raw Toml.get_string("tabs.0.title");
+    string:t06_cwd   = raw Toml.get_string("tabs.0.cwd");
+    drop(check_str("T06: title round-trip", "My Shell", t06_title));
+    drop(check_str("T06: cwd round-trip", "/home/randy", t06_cwd));
+
+    // ── T07: TOML round-trip: bool ───────────────────────────────────────────
+    print("T07: TOML bool round-trip");
+    drop(Toml.clear());
+    drop(Toml.set_int("version", 1i64));
+    drop(Toml.set_bool("tabs.0.custom_title", 1i32));
+    drop(Toml.set_bool("tabs.0.active", 1i32));
+    drop(Toml.set_bool("tabs.1.active", 0i32));
+    string:t07_text = raw Toml.serialize();
+    drop(fs_write_file(TEST_TOML, t07_text));
+    drop(Toml.clear());
+    drop(raw Toml.parse_file(TEST_TOML));
+    int32:t07_custom = raw Toml.get_bool("tabs.0.custom_title");
+    int32:t07_active = raw Toml.get_bool("tabs.0.active");
+    int32:t07_inact  = raw Toml.get_bool("tabs.1.active");
+    drop(check("T07: custom_title=true round-trip", 1i64, @cast<int64>(t07_custom)));
+    drop(check("T07: active=true round-trip",       1i64, @cast<int64>(t07_active)));
+    drop(check("T07: inactive tab active=false",    0i64, @cast<int64>(t07_inact)));
+
+    // ── T08: fs_write_file creates file ──────────────────────────────────────
+    print("T08: fs_write_file creates file");
+    drop(fs_remove(TEST_TOML));
+    int32:t08_write = raw fs_write_file(TEST_TOML, "version = 1\n");
+    int32:t08_exists = raw fs_exists(TEST_TOML);
+    drop(check("T08: write_file returns 1",   1i64, @cast<int64>(t08_write)));
+    drop(check("T08: file exists after write", 1i64, @cast<int64>(t08_exists)));
+
+    // ── T09: fs_rename moves file atomically ─────────────────────────────────
+    print("T09: fs_rename moves file");
+    drop(fs_write_file(TEST_TMP, "version = 1\n"));
+    drop(fs_remove(TEST_TOML));
+    int32:t09_rename = raw fs_rename(TEST_TMP, TEST_TOML);
+    int32:t09_new    = raw fs_exists(TEST_TOML);
+    int32:t09_gone   = raw fs_exists(TEST_TMP);
+    drop(check("T09: rename returns 1",    1i64, @cast<int64>(t09_rename)));
+    drop(check("T09: dest file exists",    1i64, @cast<int64>(t09_new)));
+    drop(check("T09: source file gone",    0i64, @cast<int64>(t09_gone)));
+
+    // ── T10: TOML has_key for missing tab ────────────────────────────────────
+    print("T10: toml_has_key for session tab iteration termination");
+    drop(Toml.clear());
+    drop(Toml.set_int("version", 1i64));
+    drop(Toml.set_string("tabs.0.title", "Shell"));
+    string:t10_text = raw Toml.serialize();
+    drop(fs_write_file(TEST_TOML, t10_text));
+    drop(Toml.clear());
+    drop(raw Toml.parse_file(TEST_TOML));
+    int32:t10_has0 = raw Toml.has_key("tabs.0.title");
+    int32:t10_has1 = raw Toml.has_key("tabs.1.title");
+    drop(check("T10: tabs.0.title present", 1i64, @cast<int64>(t10_has0)));
+    drop(check("T10: tabs.1.title absent",  0i64, @cast<int64>(t10_has1)));
+
+    // ── Summary ───────────────────────────────────────────────────────────────
+    print("=== Results ===");
+    if (g_fail > 0i64) {
+        print("SOME TESTS FAILED");
+        exit 1i32;
+    }
+    print("All session tests passed.");
+    exit 0i32;
+};

@@ -89,6 +89,14 @@ const char *nitty_pty_get_default_shell(void);
  */
 int64_t nitty_pty_spawn_shell(int64_t master_fd, int64_t rows, int64_t cols);
 
+/**
+ * Spawn a shell on the given PTY master with a specific working directory.
+ * cwd: initial working directory for the shell (NULL = use default).
+ * Returns child PID (> 0) on success, -1 on error.
+ */
+int64_t nitty_pty_spawn_shell_at(int64_t master_fd, int64_t rows, int64_t cols,
+                                   const char *cwd);
+
 /** Check if child is alive. Returns 1=alive, 0=exited, -1=error. */
 int64_t nitty_pty_child_alive(int64_t pid);
 

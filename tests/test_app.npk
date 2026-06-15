@@ -25,13 +25,13 @@ func:failsafe = int32(tbb32:_err) { exit 1i32; };
 
 func:main = int32() {
 
-    // T01: app_version() returns "0.0.4"
+    // T01: app_version() returns "0.4.4"
     Result<string>:ver_r = app_version();
     string:ver = ver_r ? "";
-    if (ver == "0.0.4") {
-        drop(print_line("[PASS] T01 app_version returns 0.0.4\n"));
+    if (ver == "0.4.4") {
+        drop(print_line("[PASS] T01 app_version returns 0.4.4\n"));
     }
-    if (ver != "0.0.4") {
+    if (ver != "0.4.4") {
         drop(print_line("[FAIL] T01 app_version\n"));
         exit 1i32;
     }

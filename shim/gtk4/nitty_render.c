@@ -1320,3 +1320,17 @@ void nitty_render_draw_tab_separator(int64_t x, int64_t y, int64_t h)
     cairo_line_to(g_draw_cr, (double)x + 0.5, (double)(y + h));
     cairo_stroke(g_draw_cr);
 }
+
+/* v0.4.3: Draw a filled circle (6px radius) for activity indicator dots.
+ * x, y: centre coordinates in pixels.
+ * r, g, b: colour components in thousandths (0-1000). */
+void nitty_render_draw_dot(int64_t x, int64_t y, int64_t r, int64_t g, int64_t b)
+{
+    if (g_draw_cr == NULL) return;
+    cairo_set_source_rgb(g_draw_cr,
+        (double)r / 1000.0,
+        (double)g / 1000.0,
+        (double)b / 1000.0);
+    cairo_arc(g_draw_cr, (double)x, (double)y, 3.0, 0.0, 2.0 * G_PI);
+    cairo_fill(g_draw_cr);
+}

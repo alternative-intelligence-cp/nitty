@@ -40,7 +40,7 @@ type = "binary"
 sources = ["src/main.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = ["-O2"]
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
 link_paths = [".nitpick_make/build"]
 
 # ── Test suite ────────────────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ type = "binary"
 sources = ["tests/test_app.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_gtk4_ffi]
@@ -241,7 +241,7 @@ type = "binary"
 sources = ["tests/test_terminal_widget.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_color_scheme]
@@ -335,6 +335,40 @@ link_paths = []
 [target.test_tab_manager]
 type = "binary"
 sources = ["tests/test_tab_manager.npk"]
+deps = ["gtk4_shim", "pty_shim"]
+flags = []
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_paths = [".nitpick_make/build"]
+
+# v0.4.4: Session persistence tests
+[target.test_session]
+type = "binary"
+sources = ["tests/test_session.npk"]
+deps = ["gtk4_shim", "pty_shim"]
+flags = []
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_paths = [".nitpick_make/build"]
+
+# v0.5.0: Split tree data model tests (pure Nitpick, no shim deps)
+[target.test_split_tree]
+type = "binary"
+sources = ["tests/test_split_tree.npk"]
+deps = []
+flags = []
+link_libraries = []
+link_paths = []
+
+[target.test_split_layout]
+type = "binary"
+sources = ["tests/test_split_layout.npk"]
+deps = []
+flags = []
+link_libraries = []
+link_paths = []
+
+[target.test_pane]
+type = "binary"
+sources = ["tests/test_pane.npk"]
 deps = []
 flags = []
 link_libraries = []

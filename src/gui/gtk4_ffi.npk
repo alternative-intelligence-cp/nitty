@@ -319,4 +319,105 @@ extern "nitty_gtk4_shim" {
 
     // Draw vertical separator between tabs.
     func:nitty_render_draw_tab_separator = NIL(int64:x, int64:y, int64:h);
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.4.1: Tab keyboard shortcuts and PTY lifecycle
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Poll for a tab keyboard event (Ctrl+Shift+T/W, Ctrl+PgUp/Dn, Ctrl+1-9).
+    // Returns: 0=none 1=new 2=close 3=prev 4=next 5..13=direct(idx 0..8).
+    func:nitty_gtk4_tab_event_poll = int64();
+
+    // Spawn a new PTY and shell. Returns packed (fd*1000000 + pid) or -1.
+    func:nitty_gtk4_spawn_tab_shell   = int64(int64:rows, int64:cols);
+
+    // Unpack master_fd from spawn result.
+    func:nitty_gtk4_spawn_result_fd   = int64(int64:result);
+
+    // Unpack child_pid from spawn result.
+    func:nitty_gtk4_spawn_result_pid  = int64(int64:result);
+
+    // Switch active PTY: idle poll and input writes use this fd/pid.
+    // Clears the PTY byte queue for a clean slate on tab switch.
+    func:nitty_gtk4_set_active_pty_fd = NIL(int64:master_fd, int64:child_pid);
+
+    // Kill a tab's shell process and close its PTY fd.
+    // Does NOT affect the currently active PTY.
+    func:nitty_gtk4_kill_tab_shell    = NIL(int64:master_fd, int64:child_pid);
+
+    // Show a close confirmation dialog. Returns 1=confirmed, 0=cancelled.
+    func:nitty_gtk4_confirm_close     = int64(string:tab_title);
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.4.2: Tab drag-and-drop (GtkGestureDrag on DrawingArea)
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Poll for a tab keyboard event (v0.4.2: also 14=move_left 15=move_right).
+    // Returns: 0=none 1=new 2=close 3=prev 4=next 5..13=direct(idx 0..8)
+    //          14=move_left 15=move_right.
+    // (Declaration above in v0.4.1 — same FFI function, updated comment only.)
+
+    // Poll for a drag event from the DrawingArea drag gesture.
+    // Returns: 0=none 1=drag-in-progress (show indicator) 2=drop (execute move).
+    // Clears the drop event after returning 2.
+    func:nitty_gtk4_drag_event_poll   = int64();
+
+    // X pixel position where the drag started. Use tb_hit_test to get source index.
+    func:nitty_gtk4_drag_get_start_x  = int64();
+
+    // Current X pixel position of the drag cursor. Use for drop indicator placement.
+    func:nitty_gtk4_drag_get_current_x = int64();
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.4.3: Context menu, rename dialog, duplicate CWD, completion poll
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Show the tab right-click context menu at (x, y) for tab at tab_idx.
+    func:nitty_gtk4_context_menu_show     = NIL(int64:x, int64:y, int64:tab_idx);
+
+    // Poll for a pending context menu action (0=none, 1..13 = action).
+    // Calling this clears the pending action.
+    func:nitty_gtk4_context_menu_poll     = int64();
+
+    // Return the tab display index that was right-clicked.
+    func:nitty_gtk4_context_menu_get_tab_idx = int64();
+
+    // Show a synchronous text-input dialog. Returns new string, or "" if cancelled.
+    func:nitty_gtk4_prompt_string         = string(string:prompt, string:current);
+
+    // Spawn a PTY+shell at the source tab's CWD (/proc/<source_pid>/cwd).
+    // Returns packed (fd*1000000 + pid) or -1.
+    func:nitty_gtk4_spawn_tab_shell_at_cwd = int64(int64:rows, int64:cols, int64:source_pid);
+
+    // Poll for shell completion events (shell exited in inactive tab).
+    // Returns display-slot index or -1 if none.
+    func:nitty_gtk4_completion_event_poll = int64();
+
+    // Register/unregister a tab slot's PID for completion polling.
+    func:nitty_gtk4_register_tab_pid     = NIL(int64:slot, int64:pid);
+    func:nitty_gtk4_unregister_tab_pid   = NIL(int64:slot);
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.4.3: Indicator dot renderer
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Draw a 6px filled circle at (x, y) in the given RGB color.
+    // Used for activity indicator dots in the tab bar.
+    func:nitty_render_draw_dot = NIL(int64:x, int64:y, int64:r, int64:g, int64:b);
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.4.4: Session persistence helpers
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Read CWD of a process from /proc/<pid>/cwd. Returns "" on error.
+    func:nitty_gtk4_get_proc_cwd = string(int64:pid);
+
+    // Spawn PTY+shell at an explicit directory path (not via /proc/pid/cwd).
+    // Falls back to $HOME if path is empty or non-existent.
+    // Returns (master_fd * 1000000 + child_pid), or -1 on failure.
+    func:nitty_gtk4_spawn_tab_shell_at_path = int64(int64:rows, int64:cols, string:path);
+
+    // v0.4.4: Return CLOCK_MONOTONIC seconds (for periodic save throttle).
+    func:nitty_gtk4_monotonic_sec = int64();
 }
+

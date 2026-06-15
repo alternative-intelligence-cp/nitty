@@ -260,8 +260,155 @@ void nitty_gtk4_focus_enable(void);
  */
 int64_t nitty_gtk4_get_focused(void);
 
+/* =======================================================================
+ * v0.4.1: Multi-tab PTY lifecycle
+ * ======================================================================= */
+
+/**
+ * Spawn a new PTY and shell for a new tab.
+ * Returns (master_fd * 1000000 + pid) so Nitpick can unpack both values.
+ * Returns -1 on failure.
+ * The new shell is NOT made the active PTY — call nitty_gtk4_set_active_pty_fd().
+ */
+int64_t nitty_gtk4_spawn_tab_shell(int64_t rows, int64_t cols);
+
+/**
+ * Unpack the master_fd from a nitty_gtk4_spawn_tab_shell return value.
+ */
+int64_t nitty_gtk4_spawn_result_fd(int64_t result);
+
+/**
+ * Unpack the child_pid from a nitty_gtk4_spawn_tab_shell return value.
+ */
+int64_t nitty_gtk4_spawn_result_pid(int64_t result);
+
+/**
+ * Switch the active PTY: the idle output poll and input writes will
+ * now use this master_fd/pid pair. Clears the PTY byte queue.
+ * Pass -1/-1 for master_fd/pid to disable.
+ */
+void nitty_gtk4_set_active_pty_fd(int64_t master_fd, int64_t child_pid);
+
+/**
+ * Kill a tab's shell process and close its PTY master fd.
+ * Sends SIGHUP first, then SIGKILL after 100ms if still alive.
+ * This does NOT affect the active PTY — caller must switch first.
+ */
+void nitty_gtk4_kill_tab_shell(int64_t master_fd, int64_t child_pid);
+
+/**
+ * Show a synchronous confirmation dialog for tab closure.
+ * Returns 1 if the user confirmed "Close", 0 if they cancelled.
+ */
+int64_t nitty_gtk4_confirm_close(const char *tab_title);
+
+/* =======================================================================
+ * v0.4.3: Context menu, rename dialog, duplicate-tab CWD, completion poll
+ * ======================================================================= */
+
+/**
+ * Show the tab right-click context menu at (x, y) relative to the DrawingArea.
+ * tab_idx is the display index of the right-clicked tab.
+ * The menu is async (GtkPopoverMenu); use nitty_gtk4_context_menu_poll() to
+ * receive the selected action on the next idle tick.
+ */
+void nitty_gtk4_context_menu_show(int64_t x, int64_t y, int64_t tab_idx);
+
+/**
+ * Poll for a pending context menu action.
+ * Returns:
+ *   0  = no pending action
+ *   1  = Rename Tab
+ *   2  = Duplicate Tab
+ *   3  = Close Tab
+ *   4  = Close Other Tabs
+ *   5  = Close Tabs to the Right
+ *   6  = Set color: Red       (0xE05555)
+ *   7  = Set color: Orange    (0xE08C40)
+ *   8  = Set color: Yellow    (0xD4C05A)
+ *   9  = Set color: Green     (0x5AC85A)
+ *  10  = Set color: Blue      (0x4080D0)
+ *  11  = Set color: Purple    (0x9060D0)
+ *  12  = Set color: Pink      (0xD060A0)
+ *  13  = Clear color (None)
+ * Calling this function clears the pending action.
+ */
+int64_t nitty_gtk4_context_menu_poll(void);
+
+/**
+ * Return the tab display index that was right-clicked to open the context menu.
+ * Valid only after nitty_gtk4_context_menu_poll() returns non-zero.
+ */
+int64_t nitty_gtk4_context_menu_get_tab_idx(void);
+
+/**
+ * Show a synchronous text-input dialog (for tab rename).
+ * current_title: pre-filled entry text.
+ * Returns the new title string entered by the user, or "" if cancelled.
+ * The returned pointer is valid until the next call to this function.
+ */
+const char *nitty_gtk4_prompt_string(const char *prompt, const char *current_value);
+
+/**
+ * Spawn a new PTY+shell with its working directory set to /proc/<source_pid>/cwd.
+ * Falls back to the user's home directory if the CWD cannot be read.
+ * Returns (master_fd * 1000000 + pid), same as nitty_gtk4_spawn_tab_shell.
+ * Returns -1 on failure.
+ */
+int64_t nitty_gtk4_spawn_tab_shell_at_cwd(int64_t rows, int64_t cols, int64_t source_pid);
+
+/**
+ * Poll for shell completion events (tabs whose child process has exited).
+ * Returns the display-slot index of a tab whose shell has exited, or -1 if none.
+ * Only reports inactive tabs (active tab exits are handled separately).
+ * Calling this clears the reported event.
+ * NOTE: The caller must register tab PIDs via nitty_gtk4_register_tab_pid().
+ */
+int64_t nitty_gtk4_completion_event_poll(void);
+
+/**
+ * Register a tab's PID so the completion poller can watch it.
+ * slot: display index [0..15]. pid: shell child PID.
+ */
+void nitty_gtk4_register_tab_pid(int64_t slot, int64_t pid);
+
+/**
+ * Unregister a tab slot's PID (called on tab close).
+ */
+void nitty_gtk4_unregister_tab_pid(int64_t slot);
+
+/**
+ * v0.4.4: Session persistence helpers.
+ */
+
+/**
+ * Read the working directory of a process from /proc/<pid>/cwd via readlink.
+ * Returns the path as a NUL-terminated string, or "" on error (pid invalid,
+ * process gone, or permission denied).  Thread-safe (static buffer protected
+ * by the GTK main thread assumption).
+ */
+const char *nitty_gtk4_get_proc_cwd(int64_t pid);
+
+/**
+ * Spawn a new PTY + shell with the working directory set to `path`.
+ * Like nitty_gtk4_spawn_tab_shell_at_cwd but takes an explicit path string
+ * instead of deriving it from a source PID.  Falls back to $HOME if path
+ * is NULL, empty, or does not exist.
+ *
+ * Returns (master_fd * 1000000 + child_pid), or -1 on failure.
+ */
+int64_t nitty_gtk4_spawn_tab_shell_at_path(int64_t rows, int64_t cols,
+                                           const char *path);
+
+/**
+ * Return CLOCK_MONOTONIC seconds as an int64_t.
+ * Used for periodic session save throttling in terminal_widget.npk.
+ */
+int64_t nitty_gtk4_monotonic_sec(void);
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* NITTY_GTK4_SHIM_H */
+

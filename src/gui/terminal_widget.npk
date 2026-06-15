@@ -1,5 +1,15 @@
 // src/gui/terminal_widget.npk — Terminal widget: pipeline + renderer + GTK4
 //
+// v0.4.4: Periodic 30s session save via monotonic clock in idle callback.
+// v0.4.3: Right-click on tab bar triggers context menu (context_menu_show).
+//   tcm_poll() dispatched each frame to handle pending menu selections.
+//   Completion poll (nitty_gtk4_completion_event_poll) marks tabs whose
+//   shells have exited with a dot indicator. tcm_set_dimensions kept in sync.
+// v0.4.1: Adds tab event polling (Ctrl+Shift+T/W, Ctrl+PgUp/Dn, Ctrl+1-9).
+//   Tab create/close/switch events drive tm_open_new_tab/tm_close_active/
+//   tm_next/tm_prev/tm_activate_index. Close confirmation shown when shell
+//   process is alive. Tab state changes flush the PTY queue automatically
+//   via nitty_gtk4_set_active_pty_fd.
 // v0.3.4: Adds scroll viewport handling (scroll wheel, Shift+PgUp/PgDn,
 //   auto-scroll to bottom on new output). Viewport state in viewport.npk.
 // v0.3.3: Adds focus controller registration (tw_focus_enable) and DECSET 1004
@@ -34,9 +44,13 @@
 use "gtk4_ffi.npk".*;
 use "renderer.npk".*;
 use "viewport.npk".*;
+use "tab_bar.npk".*;
+use "tab_context_menu.npk".*;
 use "../terminal/terminal_pipeline.npk".*;
 use "../terminal/terminal_state.npk".*;
 use "../terminal/scrollback.npk".*;
+use "../core/tab_manager.npk".*;
+use "../core/session.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Module state
@@ -46,6 +60,8 @@ int64:g_tw_rows = 24i64;
 int64:g_tw_cols = 80i64;
 // v0.3.3: track focus state to detect transitions for DECSET 1004 reporting
 int64:g_tw_last_focused = 1i64;  // assume focused at startup
+// v0.4.4: monotonic timestamp (seconds) of last periodic session save
+int64:g_tw_last_save_time = 0i64;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Initialization
@@ -120,15 +136,95 @@ pub func:tw_on_draw = NIL() {
     if (sev == 3i64) { drop(viewport_scroll_to_top(sb_len)); }
     if (sev == 4i64) { drop(viewport_scroll_to_bottom()); }
 
+    // v0.4.1 Step 0c: Poll tab keyboard events
+    // 1=new 2=close 3=prev 4=next 5..13=direct(idx 0..8)
+    int64:tev = nitty_gtk4_tab_event_poll();
+    if (tev == 1i64) {
+        // New tab: spawn with current terminal dimensions
+        drop(tm_open_new_tab(g_tw_rows, g_tw_cols));
+        drop(tw_queue_redraw());
+    }
+    if (tev == 2i64) {
+        // Close active tab — check if shell is alive for confirmation
+        int64:active_pid = raw tm_get_active_pid();
+        int64:should_close = 1i64;
+        if (active_pid > 0i64) {
+            // Shell PID > 0: show close confirmation dialog
+            string:tab_title = raw tm_get_title_at(raw tm_get_active_index());
+            int64:confirmed = nitty_gtk4_confirm_close(tab_title);
+            should_close = confirmed;
+        }
+        if (should_close != 0i64) {
+            drop(tm_close_active());
+            drop(tw_queue_redraw());
+        }
+    }
+    if (tev == 3i64) {
+        // Prev tab
+        drop(tm_prev());
+        drop(tw_queue_redraw());
+    }
+    if (tev == 4i64) {
+        // Next tab
+        drop(tm_next());
+        drop(tw_queue_redraw());
+    }
+    if (tev >= 5i64) {
+        if (tev <= 13i64) {
+            // Direct switch: event 5→idx 0, 6→idx 1, ..., 13→idx 8
+            int64:target_idx = tev - 5i64;
+            drop(tm_activate_index(target_idx));
+            drop(tw_queue_redraw());
+        }
+    }
+    // v0.4.2: Move active tab left/right
+    if (tev == 14i64) {
+        drop(tm_move_left());
+        drop(tw_queue_redraw());
+    }
+    if (tev == 15i64) {
+        drop(tm_move_right());
+        drop(tw_queue_redraw());
+    }
+
+    // v0.4.2: Tab drag-and-drop — process each frame for live indicator + drop
+    drop(tb_process_drag());
+
     // v0.3.4 Step 0c: Poll scroll wheel (mouse type 3, dy > 0 = down, dy < 0 = up)
+    // v0.4.3: Also handle right-click (button type 1) for context menu
     int64:mev = nitty_gtk4_mouse_poll();
     if (mev != 0i64) {
         int64:mtype = nitty_gtk4_mouse_get_type();
+        // Scroll wheel
         if (mtype == 3i64) {
             int64:dy = nitty_gtk4_mouse_get_scroll_dy();
             if (dy > 0i64) { drop(viewport_scroll_down(3i64)); }
             if (dy < 0i64) { drop(viewport_scroll_up(3i64, sb_len)); }
         }
+        // Right-click (button type 1 = button event, check for right button)
+        if (mtype == 1i64) {
+            int64:btn = nitty_gtk4_mouse_get_button();
+            if (btn == 3i64) {
+                // Right-click: hit-test to see if in tab bar
+                int64:rx = nitty_gtk4_mouse_get_x();
+                int64:ry = nitty_gtk4_mouse_get_y();
+                int64:hit_idx = raw tb_hit_test(rx, ry);
+                if (hit_idx >= 0i64) {
+                    // Clicked on a tab — show context menu
+                    nitty_gtk4_context_menu_show(rx, ry, hit_idx);
+                }
+            }
+        }
+    }
+
+    // v0.4.3: Poll for pending context menu selections (rename/duplicate/etc)
+    drop(tcm_poll());
+
+    // v0.4.3: Poll for shell completion events (inactive tab shells that exited)
+    int64:comp_slot = nitty_gtk4_completion_event_poll();
+    if (comp_slot >= 0i64) {
+        drop(tm_mark_completion_at(comp_slot));
+        drop(tw_queue_redraw());
     }
 
     // Step 1: Drain PTY byte queue through Nitpick pipeline
@@ -149,6 +245,14 @@ pub func:tw_on_draw = NIL() {
 
     // Step 2: Sync terminal state to C render grid
     drop(renderer_sync_frame());
+
+    // v0.4.4: Periodic session save every 30 seconds
+    int64:now_s = nitty_gtk4_monotonic_sec();
+    int64:elapsed = now_s - g_tw_last_save_time;
+    if (elapsed >= 30i64) {
+        drop(session_save());
+        g_tw_last_save_time = now_s;
+    }
 
     pass(NIL);
 };
@@ -174,6 +278,9 @@ pub func:tw_on_resize = NIL(int64:w_px, int64:h_px) {
 
     // Resize the terminal state (pipeline's TS module)
     drop(ts_resize(new_rows, new_cols));
+
+    // v0.4.3: Keep context menu module in sync for duplicate tab spawn
+    drop(tcm_set_dimensions(new_rows, new_cols));
 
     pass(NIL);
 };

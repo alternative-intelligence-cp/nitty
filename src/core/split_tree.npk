@@ -1,0 +1,575 @@
+// src/core/split_tree.npk -- Split pane binary tree (v0.5.0)
+//
+// Models the layout of panes within a single tab as a binary tree.
+// Each node is either a Leaf (terminal pane) or a Split (two children
+// divided horizontally or vertically).
+//
+// Storage: flat node pool encoded as parallel int64 arrays (indices 0..62).
+//   g_kind[i]:  0=Empty, 1=Leaf, 2=Split
+//   g_val_a[i]: Leaf->pane_id; Split->direction(0=Horiz,1=Vert)
+//   g_val_b[i]: Split->ratio_mille  (500 = 50/50)
+//   g_val_c[i]: Split->left_child_idx  (63=none)
+//   g_val_d[i]: Split->right_child_idx (63=none)
+//
+// Sentinel: 63 means "no node" / "not found" (out of valid range 0..62).
+// Ratios:   integer thousandths clamped [100,900].
+// Layout:   split_tree_layout() fills parallel output arrays.
+//
+// IMPLEMENTATION NOTE:
+//   Nitpick IR has a bug: recursive functions reading 2+ module-level arrays
+//   trigger "IR generation error: stoull". All traversals are ITERATIVE using
+//   a module-level DFS stack (g_stk). Single-threaded -- no re-entrancy issue.
+
+// ===================================================================
+// Module state -- node pool (parallel arrays)
+// ===================================================================
+
+// g_kind[i]: 0=Empty, 1=Leaf, 2=Split
+int64[63]:g_kind = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+// g_val_a[i]: Leaf->pane_id; Split->direction (0=Horiz, 1=Vert)
+int64[63]:g_val_a = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+// g_val_b[i]: Split->ratio_mille
+int64[63]:g_val_b = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+// g_val_c[i]: Split->left child idx (63=none)
+int64[63]:g_val_c = [63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64];
+// g_val_d[i]: Split->right child idx (63=none)
+int64[63]:g_val_d = [63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64];
+
+// Module state scalars (kept as array slots to avoid IR gen issues):
+// g_ms[0] = g_node_count
+// g_ms[1] = g_active_pane
+// g_ms[2] = g_next_pane_id
+// g_ms[3] = g_layout_count
+// g_ms[4] = g_divider_count
+int64[8]:g_ms = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+
+// Iterative DFS traversal stack (module-level; non-reentrant, single-threaded)
+// Holds up to 64 node indices.
+int64[64]:g_stk = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+// Parent tracking stack for _find_parent (parallel to g_stk)
+int64[64]:g_stk_par = [63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64];
+
+// ===================================================================
+// Module state -- layout output arrays (parallel)
+// ===================================================================
+
+int64[32]:g_lo_pane_id = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[32]:g_lo_x      = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[32]:g_lo_y      = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[32]:g_lo_w      = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[32]:g_lo_h      = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+
+int64[31]:g_di_x   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[31]:g_di_y   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[31]:g_di_w   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[31]:g_di_h   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[31]:g_di_dir = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+
+// Layout work stack: DFS traversal during layout
+// Each entry: node idx (4 fields per frame: idx, x, y, w, h -> 5 slots)
+// We use a parallel multi-slot approach: one array of (idx,x,y,w,h) × 32 frames
+int64[32]:g_lstk_idx = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[32]:g_lstk_x   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[32]:g_lstk_y   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[32]:g_lstk_w   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[32]:g_lstk_h   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+
+// ===================================================================
+// Private helpers
+// ===================================================================
+
+// Allocate a node slot. Returns index, or 63 (NONE) if pool full.
+func:_alloc_node = int64() {
+    if (g_ms[0] >= 63i64) {
+        pass(63i64);
+    }
+    int64:idx = g_ms[0];
+    g_ms[0] = g_ms[0] + 1i64;
+    g_kind[idx]  = 0i64;
+    g_val_a[idx] = 0i64;
+    g_val_b[idx] = 0i64;
+    g_val_c[idx] = 63i64;
+    g_val_d[idx] = 63i64;
+    pass(idx);
+};
+
+// Iterative DFS: count leaf nodes.
+func:_count_leaves = int64() {
+    g_stk[0] = 0i64;  // push root
+    int64:sp    = 1i64;
+    int64:count = 0i64;
+    while (sp > 0i64) {
+        sp = sp - 1i64;
+        int64:idx = g_stk[sp];
+        if (idx < 63i64) {
+            if (g_kind[idx] == 1i64) {
+                count = count + 1i64;
+            }
+            if (g_kind[idx] == 2i64) {
+                if (sp < 62i64) {
+                    g_stk[sp] = g_val_c[idx];
+                    sp = sp + 1i64;
+                    g_stk[sp] = g_val_d[idx];
+                    sp = sp + 1i64;
+                }
+            }
+        }
+    }
+    pass(count);
+};
+
+// Iterative DFS: find the node index of Leaf with given pane_id.
+// Returns 63 if not found.
+func:_find_leaf = int64(int64:pane_id) {
+    g_stk[0] = 0i64;
+    int64:sp    = 1i64;
+    int64:found = 63i64;
+    while (sp > 0i64 && found >= 63i64) {
+        sp = sp - 1i64;
+        int64:idx = g_stk[sp];
+        if (idx < 63i64) {
+            if (g_kind[idx] == 1i64) {
+                if (g_val_a[idx] == pane_id) { found = idx; }
+            }
+            if (g_kind[idx] == 2i64) {
+                if (sp < 62i64) {
+                    g_stk[sp] = g_val_c[idx];
+                    sp = sp + 1i64;
+                    g_stk[sp] = g_val_d[idx];
+                    sp = sp + 1i64;
+                }
+            }
+        }
+    }
+    pass(found);
+};
+
+// Iterative DFS: find the parent Split node of leaf with given pane_id.
+// Uses parallel g_stk / g_stk_par for (node, parent) pairs.
+// Returns 63 if not found or pane_id is the root leaf.
+func:_find_parent = int64(int64:pane_id) {
+    g_stk[0]     = 0i64;    // root node
+    g_stk_par[0] = 63i64;   // no parent for root
+    int64:sp     = 1i64;
+    int64:found  = 63i64;
+    while (sp > 0i64 && found >= 63i64) {
+        sp = sp - 1i64;
+        int64:idx = g_stk[sp];
+        int64:par = g_stk_par[sp];
+        if (idx < 63i64) {
+            if (g_kind[idx] == 1i64) {
+                if (g_val_a[idx] == pane_id) { found = par; }
+            }
+            if (g_kind[idx] == 2i64) {
+                if (sp < 62i64) {
+                    g_stk[sp]     = g_val_c[idx];
+                    g_stk_par[sp] = idx;
+                    sp = sp + 1i64;
+                    g_stk[sp]     = g_val_d[idx];
+                    g_stk_par[sp] = idx;
+                    sp = sp + 1i64;
+                }
+            }
+        }
+    }
+    pass(found);
+};
+
+// Iterative: find leftmost leaf pane_id under root (follows left children).
+func:_leftmost_pane = int64() {
+    int64:idx = 0i64;
+    while (idx < 63i64 && g_kind[idx] != 1i64) {
+        if (g_kind[idx] == 2i64) {
+            idx = g_val_c[idx];
+        }
+        if (g_kind[idx] == 0i64) {
+            idx = 63i64;  // empty -- bail
+        }
+    }
+    if (idx < 63i64) {
+        pass(g_val_a[idx]);
+    }
+    pass(63i64);
+};
+
+// Copy node slot src into slot dst.
+func:_copy_node = NIL(int64:dst, int64:src) {
+    g_kind[dst]  = g_kind[src];
+    g_val_a[dst] = g_val_a[src];
+    g_val_b[dst] = g_val_b[src];
+    g_val_c[dst] = g_val_c[src];
+    g_val_d[dst] = g_val_d[src];
+    pass(NIL);
+};
+
+// Iterative layout: fills g_lo_* and g_di_* arrays.
+// Uses parallel DFS stacks g_lstk_* to track (node, x, y, w, h).
+func:_do_layout = NIL(int64:area_x, int64:area_y, int64:area_w, int64:area_h) {
+    // Push root
+    g_lstk_idx[0] = 0i64;
+    g_lstk_x[0]   = area_x;
+    g_lstk_y[0]   = area_y;
+    g_lstk_w[0]   = area_w;
+    g_lstk_h[0]   = area_h;
+    int64:sp = 1i64;
+
+    while (sp > 0i64) {
+        sp = sp - 1i64;
+        int64:idx = g_lstk_idx[sp];
+        int64:x   = g_lstk_x[sp];
+        int64:y   = g_lstk_y[sp];
+        int64:w   = g_lstk_w[sp];
+        int64:h   = g_lstk_h[sp];
+
+        if (idx < 63i64) {
+            if (g_kind[idx] == 1i64) {
+                // Leaf: record geometry
+                if (g_ms[3] < 32i64) {
+                    g_lo_pane_id[g_ms[3]] = g_val_a[idx];
+                    g_lo_x[g_ms[3]] = x;
+                    g_lo_y[g_ms[3]] = y;
+                    g_lo_w[g_ms[3]] = w;
+                    g_lo_h[g_ms[3]] = h;
+                    g_ms[3] = g_ms[3] + 1i64;
+                }
+            }
+            if (g_kind[idx] == 2i64) {
+                int64:dir       = g_val_a[idx];
+                int64:ratio     = g_val_b[idx];
+                int64:left_idx  = g_val_c[idx];
+                int64:right_idx = g_val_d[idx];
+
+                if (g_ms[4] < 31i64) {
+                    if (dir == 0i64) {
+                        // Horizontal: vertical divider
+                        int64:split_x = (w * ratio) / 1000i64;
+                        g_di_x[g_ms[4]] = x + split_x;
+                        g_di_y[g_ms[4]] = y;
+                        g_di_w[g_ms[4]] = 4i64;
+                        g_di_h[g_ms[4]] = h;
+                        g_di_dir[g_ms[4]] = 0i64;
+                        g_ms[4] = g_ms[4] + 1i64;
+                        if (sp < 30i64) {
+                            int64:left_w  = split_x;
+                            int64:right_w = w - split_x - 4i64;
+                            // Push RIGHT first so LEFT is popped first (correct order)
+                            g_lstk_idx[sp] = right_idx;
+                            g_lstk_x[sp]   = x + split_x + 4i64;
+                            g_lstk_y[sp]   = y;
+                            g_lstk_w[sp]   = right_w;
+                            g_lstk_h[sp]   = h;
+                            sp = sp + 1i64;
+                            g_lstk_idx[sp] = left_idx;
+                            g_lstk_x[sp]   = x;
+                            g_lstk_y[sp]   = y;
+                            g_lstk_w[sp]   = left_w;
+                            g_lstk_h[sp]   = h;
+                            sp = sp + 1i64;
+                        }
+                    }
+                    if (dir == 1i64) {
+                        // Vertical: horizontal divider
+                        int64:split_y = (h * ratio) / 1000i64;
+                        g_di_x[g_ms[4]] = x;
+                        g_di_y[g_ms[4]] = y + split_y;
+                        g_di_w[g_ms[4]] = w;
+                        g_di_h[g_ms[4]] = 4i64;
+                        g_di_dir[g_ms[4]] = 1i64;
+                        g_ms[4] = g_ms[4] + 1i64;
+                        if (sp < 30i64) {
+                            int64:top_h    = split_y;
+                            int64:bottom_h = h - split_y - 4i64;
+                            // Push BOTTOM first so TOP is popped first (correct order)
+                            g_lstk_idx[sp] = right_idx;
+                            g_lstk_x[sp]   = x;
+                            g_lstk_y[sp]   = y + split_y + 4i64;
+                            g_lstk_w[sp]   = w;
+                            g_lstk_h[sp]   = bottom_h;
+                            sp = sp + 1i64;
+                            g_lstk_idx[sp] = left_idx;
+                            g_lstk_x[sp]   = x;
+                            g_lstk_y[sp]   = y;
+                            g_lstk_w[sp]   = w;
+                            g_lstk_h[sp]   = top_h;
+                            sp = sp + 1i64;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    pass(NIL);
+};
+
+// ===================================================================
+// Public API: Initialization
+// ===================================================================
+
+/// Initialize the split tree for a new tab.
+/// Creates a single root Leaf for pane_id=0.
+pub func:split_tree_init = NIL() {
+    g_ms[0] = 0i64;  // node_count
+    g_ms[1] = 0i64;  // active_pane
+    g_ms[2] = 0i64;  // next_pane_id
+    g_ms[3] = 0i64;  // layout_count
+    g_ms[4] = 0i64;  // divider_count
+    // Allocate root leaf for pane 0
+    int64:root = raw _alloc_node();
+    if (root < 63i64) {
+        g_kind[root]  = 1i64;  // Leaf
+        g_val_a[root] = 0i64;  // pane_id = 0
+    }
+    g_ms[2] = 1i64;  // next_pane_id = 1
+    g_ms[1] = 0i64;  // active_pane = 0
+    pass(NIL);
+};
+
+/// Reset to a fresh single-leaf state.
+pub func:split_tree_reset = NIL() {
+    drop(raw split_tree_init());
+    pass(NIL);
+};
+
+// ===================================================================
+// Public API: Query
+// ===================================================================
+
+/// Number of live pane (leaf) nodes.
+pub func:split_tree_pane_count = int64() {
+    pass(raw _count_leaves());
+};
+
+/// Currently focused pane_id.
+pub func:split_tree_get_active = int64() {
+    pass(g_ms[1]);
+};
+
+/// Set focused pane_id.
+pub func:split_tree_set_active = NIL(int64:pane_id) {
+    g_ms[1] = pane_id;
+    pass(NIL);
+};
+
+// ===================================================================
+// Public API: Tree manipulation
+// ===================================================================
+
+/// Split the pane identified by target_pane in the given direction.
+/// dir: 0 = Horizontal (left|right), 1 = Vertical (top|bottom).
+/// Returns the new pane_id, or 63 (NONE sentinel) on failure.
+pub func:split_tree_split = int64(int64:target_pane, int32:dir) {
+    // Find the existing leaf node
+    int64:leaf_idx = raw _find_leaf(target_pane);
+    if (leaf_idx >= 63i64) { pass(63i64); }
+
+    // Allocate two new child slots
+    int64:left_idx = raw _alloc_node();
+    if (left_idx >= 63i64) { pass(63i64); }
+    int64:right_idx = raw _alloc_node();
+    if (right_idx >= 63i64) { pass(63i64); }
+
+    // Assign new pane_id
+    int64:new_pane_id = g_ms[2];
+    g_ms[2] = g_ms[2] + 1i64;
+
+    // Left child = original pane leaf
+    g_kind[left_idx]  = 1i64;
+    g_val_a[left_idx] = target_pane;
+
+    // Right child = new pane leaf
+    g_kind[right_idx]  = 1i64;
+    g_val_a[right_idx] = new_pane_id;
+
+    // Replace leaf_idx with Split node in-place
+    g_kind[leaf_idx]  = 2i64;
+    g_val_a[leaf_idx] = @cast<int64>(dir);
+    g_val_b[leaf_idx] = 500i64;    // 50/50 default
+    g_val_c[leaf_idx] = left_idx;
+    g_val_d[leaf_idx] = right_idx;
+
+    // Focus the new pane
+    g_ms[1] = new_pane_id;
+
+    pass(new_pane_id);
+};
+
+/// Remove the pane identified by target_pane from the tree.
+/// Collapses the parent split to the sibling subtree.
+/// Returns 1 on success, 0 if refused (only one pane remains).
+pub func:split_tree_remove = int32(int64:target_pane) {
+    if (raw _count_leaves() <= 1i64) {
+        pass(0i32);
+    }
+
+    int64:parent_idx = raw _find_parent(target_pane);
+    if (parent_idx >= 63i64) {
+        pass(0i32);
+    }
+
+    int64:left_child  = g_val_c[parent_idx];
+    int64:right_child = g_val_d[parent_idx];
+
+    // Determine which subtree holds the target; sibling is the other
+    int64:sibling_idx = right_child;
+    int64:target_in_left = raw _find_leaf(target_pane);
+    // If target_in_left found under left_child subtree:
+    // We need to check if target leaf is on the left branch
+    // Use: push only left_child and check if target_pane is there
+    // Simpler: _find_leaf from left_child
+    g_stk[0] = left_child;
+    int64:sp2 = 1i64;
+    int64:found2 = 63i64;
+    while (sp2 > 0i64 && found2 >= 63i64) {
+        sp2 = sp2 - 1i64;
+        int64:n2 = g_stk[sp2];
+        if (n2 < 63i64) {
+            if (g_kind[n2] == 1i64) {
+                if (g_val_a[n2] == target_pane) { found2 = n2; }
+            }
+            if (g_kind[n2] == 2i64) {
+                if (sp2 < 62i64) {
+                    g_stk[sp2] = g_val_c[n2];
+                    sp2 = sp2 + 1i64;
+                    g_stk[sp2] = g_val_d[n2];
+                    sp2 = sp2 + 1i64;
+                }
+            }
+        }
+    }
+    if (found2 >= 63i64) {
+        // target not in left subtree -> it's in right; sibling is left
+        sibling_idx = left_child;
+    }
+
+    // Collapse: replace parent with sibling's data
+    drop(raw _copy_node(parent_idx, sibling_idx));
+    g_kind[sibling_idx] = 0i64;   // free sibling slot
+
+    // Update focused pane if removed
+    if (g_ms[1] == target_pane) {
+        int64:lm = raw _leftmost_pane();
+        if (lm < 63i64) {
+            g_ms[1] = lm;
+        }
+    }
+
+    pass(1i32);
+};
+
+// ===================================================================
+// Public API: Ratio control
+// ===================================================================
+
+/// Set the ratio (thousandths) for the split containing target_pane.
+/// Clamped to [100, 900].
+pub func:split_tree_set_ratio = NIL(int64:target_pane, int64:ratio_mille) {
+    int64:clamped = ratio_mille;
+    if (clamped < 100i64) { clamped = 100i64; }
+    if (clamped > 900i64) { clamped = 900i64; }
+
+    int64:parent_idx = raw _find_parent(target_pane);
+    if (parent_idx >= 63i64) { pass(NIL); }
+
+    if (g_kind[parent_idx] == 2i64) {
+        g_val_b[parent_idx] = clamped;
+    }
+    pass(NIL);
+};
+
+/// Adjust the ratio by delta_mille for the split containing target_pane.
+pub func:split_tree_adjust_ratio = NIL(int64:target_pane, int64:delta_mille) {
+    int64:parent_idx = raw _find_parent(target_pane);
+    if (parent_idx >= 63i64) { pass(NIL); }
+
+    if (g_kind[parent_idx] == 2i64) {
+        int64:new_ratio = g_val_b[parent_idx] + delta_mille;
+        if (new_ratio < 100i64) { new_ratio = 100i64; }
+        if (new_ratio > 900i64) { new_ratio = 900i64; }
+        g_val_b[parent_idx] = new_ratio;
+    }
+    pass(NIL);
+};
+
+// ===================================================================
+// Public API: Layout
+// ===================================================================
+
+/// Compute pixel geometry for all panes and dividers.
+pub func:split_tree_layout = NIL(int64:area_x, int64:area_y, int64:area_w, int64:area_h) {
+    g_ms[3] = 0i64;  // layout_count = 0
+    g_ms[4] = 0i64;  // divider_count = 0
+    drop(raw _do_layout(area_x, area_y, area_w, area_h));
+    pass(NIL);
+};
+
+/// Number of pane geometry entries from last split_tree_layout().
+pub func:split_tree_get_layout_count = int64() {
+    pass(g_ms[3]);
+};
+
+pub func:split_tree_get_layout_pane_id = int64(int64:i) {
+    pass(g_lo_pane_id[i]);
+};
+
+pub func:split_tree_get_layout_x = int64(int64:i) {
+    pass(g_lo_x[i]);
+};
+
+pub func:split_tree_get_layout_y = int64(int64:i) {
+    pass(g_lo_y[i]);
+};
+
+pub func:split_tree_get_layout_w = int64(int64:i) {
+    pass(g_lo_w[i]);
+};
+
+pub func:split_tree_get_layout_h = int64(int64:i) {
+    pass(g_lo_h[i]);
+};
+
+/// Number of divider geometry entries from last split_tree_layout().
+pub func:split_tree_get_divider_count = int64() {
+    pass(g_ms[4]);
+};
+
+pub func:split_tree_get_divider_x = int64(int64:i) {
+    pass(g_di_x[i]);
+};
+
+pub func:split_tree_get_divider_y = int64(int64:i) {
+    pass(g_di_y[i]);
+};
+
+pub func:split_tree_get_divider_w = int64(int64:i) {
+    pass(g_di_w[i]);
+};
+
+pub func:split_tree_get_divider_h = int64(int64:i) {
+    pass(g_di_h[i]);
+};
+
+pub func:split_tree_get_divider_dir = int64(int64:i) {
+    pass(g_di_dir[i]);
+};
+
+// ===================================================================
+// Public API: Hit testing
+// ===================================================================
+
+/// Return pane_id of the pane at pixel (px, py).
+/// Returns 63 (NONE sentinel) if no pane contains that point.
+pub func:split_tree_find_pane_at = int64(int64:px, int64:py) {
+    int64:i = 0i64;
+    int64:found = 63i64;
+    while (i < g_ms[3] && found >= 63i64) {
+        int64:x = g_lo_x[i];
+        int64:y = g_lo_y[i];
+        int64:w = g_lo_w[i];
+        int64:h = g_lo_h[i];
+        if (px >= x && px < x + w && py >= y && py < y + h) {
+            found = g_lo_pane_id[i];
+        }
+        i = i + 1i64;
+    }
+    pass(found);
+};

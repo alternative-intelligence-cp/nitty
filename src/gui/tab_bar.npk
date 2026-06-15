@@ -1,4 +1,4 @@
-// src/gui/tab_bar.npk — Cairo-drawn tab bar renderer (v0.4.0)
+// src/gui/tab_bar.npk — Cairo-drawn tab bar renderer (v0.4.3)
 //
 // Renders the tab bar at the top of the DrawingArea using Cairo/Pango
 // (via C shim FFI functions). Called every frame from renderer_sync_frame().
@@ -45,6 +45,22 @@ int64:TB_ACCENT_R = 310i64;
 int64:TB_ACCENT_G = 630i64;
 int64:TB_ACCENT_B = 940i64;
 
+// v0.4.3: Activity indicator dot colors
+// Activity = subtle blue dot (output arrived while inactive)
+int64:TB_DOT_ACT_R = 250i64;
+int64:TB_DOT_ACT_G = 580i64;
+int64:TB_DOT_ACT_B = 900i64;
+
+// Bell = amber dot
+int64:TB_DOT_BELL_R = 940i64;
+int64:TB_DOT_BELL_G = 740i64;
+int64:TB_DOT_BELL_B = 100i64;
+
+// Completion = green dot (shell exited)
+int64:TB_DOT_COMP_R = 300i64;
+int64:TB_DOT_COMP_G = 820i64;
+int64:TB_DOT_COMP_B = 300i64;
+
 // Layout constants
 int64:TB_PAD_X = 16i64;         // horizontal padding inside each tab
 int64:TB_PAD_Y = 4i64;          // vertical padding above/below text
@@ -57,6 +73,11 @@ int64:TB_MIN_TAB_W = 120i64;    // minimum tab width in pixels
 int64:g_tb_height = 0i64;       // computed tab bar height (pixels)
 int64:g_tb_visible = 1i64;      // 1 = show tab bar, 0 = hide
 int64:g_tb_cell_height = 0i64;  // cached cell height for tab sizing
+
+// v0.4.2: Drag state
+int64:g_tb_drag_active = 0i64;   // 1 while drag gesture is active
+int64:g_tb_drag_src_idx = -1i64; // source tab display index (-1 = none)
+int64:g_tb_drop_x = 0i64;        // current drag x for drop indicator
 
 // ═══════════════════════════════════════════════════════════════════
 // Initialization
@@ -125,12 +146,29 @@ pub func:tb_render = NIL(int64:window_width) {
             is_active_tab = 1i64;
         }
 
+        // v0.4.2: Dragged tab gets dimmed background
+        int64:is_dragging_this = 0i64;
+        if (g_tb_drag_active != 0i64) {
+            if (i == g_tb_drag_src_idx) {
+                is_dragging_this = 1i64;
+            }
+        }
+
         // Active tab: draw highlighted background
         if (is_active_tab == 1i64) {
-            drop(nitty_render_draw_tab_bg(
-                x, 0i64, tab_w, g_tb_height,
-                TB_ACTIVE_BG_R, TB_ACTIVE_BG_G, TB_ACTIVE_BG_B
-            ));
+            if (is_dragging_this == 0i64) {
+                drop(nitty_render_draw_tab_bg(
+                    x, 0i64, tab_w, g_tb_height,
+                    TB_ACTIVE_BG_R, TB_ACTIVE_BG_G, TB_ACTIVE_BG_B
+                ));
+            }
+            // Dragged active tab: draw dimmed background (use inactive colors)
+            if (is_dragging_this != 0i64) {
+                drop(nitty_render_draw_tab_bg(
+                    x, 0i64, tab_w, g_tb_height,
+                    TB_BAR_R + 10i64, TB_BAR_G + 10i64, TB_BAR_B + 10i64
+                ));
+            }
         }
 
         // Draw tab title text
@@ -139,16 +177,26 @@ pub func:tb_render = NIL(int64:window_width) {
         int64:text_y = TB_PAD_Y;
 
         if (is_active_tab == 1i64) {
-            drop(nitty_render_draw_tab_text(
-                text_x, text_y, title,
-                TB_ACTIVE_FG_R, TB_ACTIVE_FG_G, TB_ACTIVE_FG_B,
-                1i64
-            ));
-            // Active tab accent underline
-            drop(nitty_render_draw_tab_underline(
-                x, g_tb_height - 2i64, tab_w,
-                TB_ACCENT_R, TB_ACCENT_G, TB_ACCENT_B
-            ));
+            if (is_dragging_this == 0i64) {
+                drop(nitty_render_draw_tab_text(
+                    text_x, text_y, title,
+                    TB_ACTIVE_FG_R, TB_ACTIVE_FG_G, TB_ACTIVE_FG_B,
+                    1i64
+                ));
+                // Active tab accent underline
+                drop(nitty_render_draw_tab_underline(
+                    x, g_tb_height - 2i64, tab_w,
+                    TB_ACCENT_R, TB_ACCENT_G, TB_ACCENT_B
+                ));
+            }
+            // Dragged tab: dimmed text, no underline
+            if (is_dragging_this != 0i64) {
+                drop(nitty_render_draw_tab_text(
+                    text_x, text_y, title,
+                    TB_INACTIVE_FG_R, TB_INACTIVE_FG_G, TB_INACTIVE_FG_B,
+                    0i64
+                ));
+            }
         }
         if (is_active_tab == 0i64) {
             drop(nitty_render_draw_tab_text(
@@ -166,8 +214,108 @@ pub func:tb_render = NIL(int64:window_width) {
             ));
         }
 
+        // v0.4.3: Draw activity indicator dots (bottom-right of tab)
+        // Priority: bell > activity > completion (at most 2 dots shown)
+        // Dot positions: 8px from right edge, vertically centred
+        int64:dot_y = g_tb_height / 2i64;
+        int64:dot_x_right = x + tab_w - 8i64;  // rightmost dot
+        int64:dot_x_mid   = dot_x_right - 10i64; // second dot position
+
+        // Indicator: only show for inactive tabs (active tab is being watched)
+        if (is_active_tab == 0i64) {
+            int64:has_bell = raw tab_has_bell(i);
+            int64:has_act  = raw tab_has_activity(i);
+            int64:has_comp = raw tab_has_completion(i);
+
+            // Bell dot (rightmost)
+            if (has_bell != 0i64) {
+                nitty_render_draw_dot(dot_x_right, dot_y,
+                    TB_DOT_BELL_R, TB_DOT_BELL_G, TB_DOT_BELL_B);
+                // Activity dot next to bell
+                if (has_act != 0i64) {
+                    nitty_render_draw_dot(dot_x_mid, dot_y,
+                        TB_DOT_ACT_R, TB_DOT_ACT_G, TB_DOT_ACT_B);
+                }
+            }
+            // Activity dot only (no bell)
+            if (has_bell == 0i64) {
+                if (has_act != 0i64) {
+                    nitty_render_draw_dot(dot_x_right, dot_y,
+                        TB_DOT_ACT_R, TB_DOT_ACT_G, TB_DOT_ACT_B);
+                }
+            }
+            // Completion dot (always show, leftmost position)
+            if (has_comp != 0i64) {
+                int64:comp_x = dot_x_right;
+                if (has_bell != 0i64) { comp_x = dot_x_mid - 10i64; }
+                if (has_act != 0i64) {
+                    if (has_bell == 0i64) { comp_x = dot_x_mid; }
+                }
+                nitty_render_draw_dot(comp_x, dot_y,
+                    TB_DOT_COMP_R, TB_DOT_COMP_G, TB_DOT_COMP_B);
+            }
+        }
+
+        // v0.4.3: Custom underline color overrides accent for active tab
+        // (Tab has user-assigned color: override blue accent with that color)
+        // This replaces the accent line drawn earlier for the active tab.
+        // We do it here as a second pass to draw on top.
+        if (is_active_tab == 1i64) {
+            int64:custom_rgb = raw tab_get_custom_color(i);
+            if (custom_rgb != 0i64) {
+                int64:cr = (custom_rgb >> 16i64) & 0xFFi64;
+                int64:cg = (custom_rgb >> 8i64)  & 0xFFi64;
+                int64:cb = custom_rgb & 0xFFi64;
+                // Scale 0-255 to 0-1000
+                int64:cr1000 = cr * 1000i64 / 255i64;
+                int64:cg1000 = cg * 1000i64 / 255i64;
+                int64:cb1000 = cb * 1000i64 / 255i64;
+                drop(nitty_render_draw_tab_underline(
+                    x, g_tb_height - 2i64, tab_w,
+                    cr1000, cg1000, cb1000
+                ));
+            }
+        }
+        // v0.4.3: Inactive tab with custom color — draw thin color stripe at bottom
+        if (is_active_tab == 0i64) {
+            int64:custom_rgb2 = raw tab_get_custom_color(i);
+            if (custom_rgb2 != 0i64) {
+                int64:cr2 = (custom_rgb2 >> 16i64) & 0xFFi64;
+                int64:cg2 = (custom_rgb2 >> 8i64)  & 0xFFi64;
+                int64:cb2 = custom_rgb2 & 0xFFi64;
+                int64:cr2k = cr2 * 600i64 / 255i64;  // dimmed (60%)
+                int64:cg2k = cg2 * 600i64 / 255i64;
+                int64:cb2k = cb2 * 600i64 / 255i64;
+                drop(nitty_render_draw_tab_underline(
+                    x, g_tb_height - 1i64, tab_w,
+                    cr2k, cg2k, cb2k
+                ));
+            }
+        }
+
         x = x + tab_w;
         i = i + 1i64;
+    }
+
+    // v0.4.2: Draw drop indicator (2px accent vertical line) when dragging
+    if (g_tb_drag_active != 0i64) {
+        // Recompute tab_w for indicator (same formula as render loop above)
+        int64:ind_count = raw tm_count();
+        int64:ind_tab_w = window_width / ind_count;
+        if (ind_tab_w < TB_MIN_TAB_W) {
+            ind_tab_w = TB_MIN_TAB_W;
+        }
+        // Compute which gap the indicator sits in (at g_tb_drop_x boundary)
+        int64:ind_slot = raw tb_drop_index_at(g_tb_drop_x);
+        int64:indicator_x = ind_slot * ind_tab_w;
+        if (ind_slot >= ind_count) {
+            indicator_x = ind_count * ind_tab_w;
+        }
+        // Draw accent-colored indicator using draw_tab_underline repurposed as a vertical stripe
+        drop(nitty_render_draw_tab_underline(
+            indicator_x - 1i64, 0i64, 2i64,
+            TB_ACCENT_R, TB_ACCENT_G, TB_ACCENT_B
+        ));
     }
 
     pass(NIL);
@@ -196,4 +344,99 @@ pub func:tb_hit_test = int64(int64:x_px, int64:y_px) {
     int64:index = x_px / tab_w;
     if (index >= count) { pass(-1i64); }
     pass(index);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// v0.4.2: Drag-and-drop support
+// ═══════════════════════════════════════════════════════════════════
+
+/// Compute the insertion index for a drop at x_px.
+/// Returns 0..count (not -1): dropping before first tab = 0,
+/// after last tab = count, between tab i and i+1 = i+1.
+/// x_px is compared against each tab's midpoint.
+pub func:tb_drop_index_at = int64(int64:x_px) {
+    int64:count = raw tm_count();
+    if (count == 0i64) { pass(0i64); }
+
+    int64:window_w = nitty_gtk4_get_draw_width();
+    int64:tab_w = window_w / count;
+    if (tab_w < TB_MIN_TAB_W) {
+        tab_w = TB_MIN_TAB_W;
+    }
+
+    // Find the insertion gap: compare x against each tab's right midpoint
+    int64:i = 0i64;
+    while (i < count) {
+        int64:tab_mid = i * tab_w + tab_w / 2i64;
+        if (x_px < tab_mid) {
+            pass(i);
+        }
+        i = i + 1i64;
+    }
+    pass(count);
+};
+
+/// Process the current drag gesture state.
+/// - When dragging: update g_tb_drop_x and request redraw for indicator.
+/// - When drop completes (event=2): compute src→dst, call tm_move_tab, redraw.
+/// Called every frame from terminal_widget.npk's tw_on_draw().
+pub func:tb_process_drag = NIL() {
+    int64:dev = nitty_gtk4_drag_event_poll();
+
+    // No drag activity
+    if (dev == 0i64) {
+        if (g_tb_drag_active != 0i64) {
+            // Drag ended without a drop (e.g. cancelled) — clear state
+            g_tb_drag_active = 0i64;
+            g_tb_drag_src_idx = -1i64;
+            nitty_gtk4_queue_redraw();
+        }
+        pass(NIL);
+    }
+
+    // Drag in progress — update indicator position
+    if (dev == 1i64) {
+        int64:sx = nitty_gtk4_drag_get_start_x();
+        int64:cx = nitty_gtk4_drag_get_current_x();
+
+        if (g_tb_drag_active == 0i64) {
+            // First frame of drag — compute source tab index
+            g_tb_drag_src_idx = raw tb_hit_test(sx, g_tb_height / 2i64);
+            g_tb_drag_active = 1i64;
+        }
+
+        g_tb_drop_x = cx;
+        nitty_gtk4_queue_redraw();
+        pass(NIL);
+    }
+
+    // Drop completed — execute the reorder
+    if (dev == 2i64) {
+        int64:sx = nitty_gtk4_drag_get_start_x();
+        int64:cx = nitty_gtk4_drag_get_current_x();
+
+        int64:src_idx = raw tb_hit_test(sx, g_tb_height / 2i64);
+        int64:dst_idx = raw tb_drop_index_at(cx);
+
+        // Clamp dst_idx to valid range [0, count-1]
+        int64:count = raw tm_count();
+        if (dst_idx >= count) {
+            dst_idx = count - 1i64;
+        }
+
+        if (src_idx >= 0i64) {
+            if (src_idx != dst_idx) {
+                drop(tm_move_tab(src_idx, dst_idx));
+            }
+        }
+
+        // Clear drag state
+        g_tb_drag_active = 0i64;
+        g_tb_drag_src_idx = -1i64;
+        g_tb_drop_x = 0i64;
+        nitty_gtk4_queue_redraw();
+        pass(NIL);
+    }
+
+    pass(NIL);
 };

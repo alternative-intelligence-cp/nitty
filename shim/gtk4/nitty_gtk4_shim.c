@@ -921,3 +921,522 @@ int64_t nitty_gtk4_get_focused(void)
 {
     return (int64_t)g_terminal_focused;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.4.1: Multi-tab PTY lifecycle
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+/* Forward declarations from nitty_pty_shim.c */
+extern int64_t nitty_pty_openpt(void);
+extern int64_t nitty_pty_grantpt(int64_t master_fd);
+extern int64_t nitty_pty_unlockpt(int64_t master_fd);
+extern int64_t nitty_pty_set_winsize(int64_t master_fd, int64_t rows, int64_t cols,
+                                      int64_t xpixel, int64_t ypixel);
+extern int64_t nitty_pty_set_nonblock(int64_t master_fd);
+extern int64_t nitty_pty_spawn_shell(int64_t master_fd, int64_t rows, int64_t cols);
+extern int64_t nitty_pty_close(int64_t master_fd);
+
+/* Spawn a new PTY+shell for a tab.
+ * Returns packed int64: (master_fd * 1000000 + pid), or -1 on failure.
+ * Does NOT switch active PTY — call nitty_gtk4_set_active_pty_fd() after. */
+int64_t nitty_gtk4_spawn_tab_shell(int64_t rows, int64_t cols)
+{
+    int64_t master_fd = nitty_pty_openpt();
+    if (master_fd < 0) return -1;
+    nitty_pty_grantpt(master_fd);
+    nitty_pty_unlockpt(master_fd);
+    nitty_pty_set_winsize(master_fd, rows, cols, 0, 0);
+    nitty_pty_set_nonblock(master_fd);
+    int64_t pid = nitty_pty_spawn_shell(master_fd, rows, cols);
+    if (pid <= 0) {
+        nitty_pty_close(master_fd);
+        return -1;
+    }
+    return master_fd * 1000000LL + pid;
+}
+
+int64_t nitty_gtk4_spawn_result_fd(int64_t result)
+{
+    if (result < 0) return -1;
+    return result / 1000000LL;
+}
+
+int64_t nitty_gtk4_spawn_result_pid(int64_t result)
+{
+    if (result < 0) return -1;
+    return result % 1000000LL;
+}
+
+/* Switch the active PTY: idle poll and input writes use this fd/pid.
+ * Clears the PTY byte queue so the new tab starts with a clean slate. */
+void nitty_gtk4_set_active_pty_fd(int64_t master_fd, int64_t child_pid)
+{
+    g_terminal_master_fd  = master_fd;
+    g_terminal_child_pid  = child_pid;
+    g_terminal_shell_dead = 0;
+    /* Clear the byte queue — discard leftover bytes from previous tab */
+    g_pty_queue_write = 0;
+    g_pty_queue_read  = 0;
+    /* Update input routing so keys go to the new PTY fd */
+    if (master_fd >= 0) {
+        nitty_input_set_terminal_mode(master_fd);
+    } else {
+        nitty_input_clear_terminal_mode();
+    }
+}
+
+/* Kill a tab's shell and close its PTY fd.
+ * Sends SIGHUP; if still alive after ~100ms, sends SIGKILL. */
+void nitty_gtk4_kill_tab_shell(int64_t master_fd, int64_t child_pid)
+{
+    if (child_pid > 0) {
+        kill((pid_t)child_pid, SIGHUP);
+        /* Brief spin-wait up to ~100ms for graceful exit */
+        for (int i = 0; i < 10; i++) {
+            int status;
+            pid_t r = waitpid((pid_t)child_pid, &status, WNOHANG);
+            if (r == child_pid) break;   /* exited */
+            usleep(10000);               /* 10ms */
+        }
+        /* Force kill if still alive */
+        kill((pid_t)child_pid, SIGKILL);
+        waitpid((pid_t)child_pid, NULL, WNOHANG);
+    }
+    if (master_fd >= 0) {
+        nitty_pty_close(master_fd);
+    }
+}
+
+/* Callback state for synchronous close dialog */
+typedef struct {
+    GMainLoop *loop;
+    int        result;  /* 1 = Close chosen, 0 = Cancel */
+} ConfirmCloseState;
+
+static void on_confirm_close_response(GObject      *source,
+                                      GAsyncResult *result,
+                                      gpointer      user_data)
+{
+    ConfirmCloseState *state = (ConfirmCloseState *)user_data;
+    GtkAlertDialog    *dlg   = GTK_ALERT_DIALOG(source);
+    GError            *err   = NULL;
+    int button = gtk_alert_dialog_choose_finish(dlg, result, &err);
+    if (err) {
+        g_error_free(err);
+        state->result = 0;
+    } else {
+        /* buttons array: [0]="Cancel", [1]="Close"
+         * button == 1 means user chose "Close" */
+        state->result = (button == 1) ? 1 : 0;
+    }
+    g_main_loop_quit(state->loop);
+}
+
+/* Show a synchronous close confirmation dialog.
+ * Returns 1 = confirmed "Close", 0 = cancelled.
+ * Uses GtkAlertDialog + nested GMainLoop (GTK4 >= 4.10). */
+int64_t nitty_gtk4_confirm_close(const char *tab_title)
+{
+    char msg[512];
+    snprintf(msg, sizeof(msg),
+             "Terminal \"%s\" has a running process.",
+             tab_title ? tab_title : "Shell");
+
+    const char *buttons[] = { "Cancel", "Close", NULL };
+
+    GtkAlertDialog *dlg = gtk_alert_dialog_new("%s", msg);
+    gtk_alert_dialog_set_detail(dlg, "The terminal session will be terminated.");
+    gtk_alert_dialog_set_buttons(dlg, buttons);
+    gtk_alert_dialog_set_cancel_button(dlg, 0);   /* Cancel = index 0 */
+    gtk_alert_dialog_set_default_button(dlg, 1);  /* Close  = index 1 */
+    gtk_alert_dialog_set_modal(dlg, TRUE);
+
+    ConfirmCloseState state;
+    state.loop   = g_main_loop_new(NULL, FALSE);
+    state.result = 0;
+
+    gtk_alert_dialog_choose(dlg,
+                            GTK_WINDOW(g_main_window),
+                            NULL,
+                            on_confirm_close_response,
+                            &state);
+
+    /* Block until the dialog is dismissed */
+    g_main_loop_run(state.loop);
+    g_main_loop_unref(state.loop);
+    g_object_unref(dlg);
+
+    return (int64_t)state.result;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.4.3: Context menu (GtkPopoverMenu via GMenu)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+#include <gio/gio.h>  /* GMenu, GSimpleActionGroup */
+
+static volatile int64_t g_ctx_pending_action = 0;
+static volatile int64_t g_ctx_tab_idx = -1;
+
+/* Action callback — maps action name → numeric code */
+static void on_ctx_action(GSimpleAction *action, GVariant *param, gpointer user_data)
+{
+    (void)param;
+    (void)user_data;
+    const char *name = g_action_get_name(G_ACTION(action));
+    if      (strcmp(name, "rename")       == 0) g_ctx_pending_action = 1;
+    else if (strcmp(name, "duplicate")    == 0) g_ctx_pending_action = 2;
+    else if (strcmp(name, "close")        == 0) g_ctx_pending_action = 3;
+    else if (strcmp(name, "close-others") == 0) g_ctx_pending_action = 4;
+    else if (strcmp(name, "close-right")  == 0) g_ctx_pending_action = 5;
+    else if (strcmp(name, "color-red")    == 0) g_ctx_pending_action = 6;
+    else if (strcmp(name, "color-orange") == 0) g_ctx_pending_action = 7;
+    else if (strcmp(name, "color-yellow") == 0) g_ctx_pending_action = 8;
+    else if (strcmp(name, "color-green")  == 0) g_ctx_pending_action = 9;
+    else if (strcmp(name, "color-blue")   == 0) g_ctx_pending_action = 10;
+    else if (strcmp(name, "color-purple") == 0) g_ctx_pending_action = 11;
+    else if (strcmp(name, "color-pink")   == 0) g_ctx_pending_action = 12;
+    else if (strcmp(name, "color-none")   == 0) g_ctx_pending_action = 13;
+}
+
+void nitty_gtk4_context_menu_show(int64_t x, int64_t y, int64_t tab_idx)
+{
+    if (g_drawing_area == NULL) return;
+
+    g_ctx_tab_idx = tab_idx;
+
+    /* Build action group */
+    GSimpleActionGroup *ag = g_simple_action_group_new();
+    const char *actions[] = {
+        "rename", "duplicate", "close", "close-others", "close-right",
+        "color-red", "color-orange", "color-yellow", "color-green",
+        "color-blue", "color-purple", "color-pink", "color-none", NULL
+    };
+    for (int i = 0; actions[i]; i++) {
+        GSimpleAction *a = g_simple_action_new(actions[i], NULL);
+        g_signal_connect(a, "activate", G_CALLBACK(on_ctx_action), NULL);
+        g_action_map_add_action(G_ACTION_MAP(ag), G_ACTION(a));
+        g_object_unref(a);
+    }
+    gtk_widget_insert_action_group(g_drawing_area, "tab", G_ACTION_GROUP(ag));
+    g_object_unref(ag);
+
+    /* Build GMenu */
+    GMenu *menu = g_menu_new();
+    g_menu_append(menu, "Rename Tab",             "tab.rename");
+    g_menu_append(menu, "Duplicate Tab",          "tab.duplicate");
+
+    GMenu *close_section = g_menu_new();
+    g_menu_append(close_section, "Close Tab",              "tab.close");
+    g_menu_append(close_section, "Close Other Tabs",       "tab.close-others");
+    g_menu_append(close_section, "Close Tabs to the Right","tab.close-right");
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(close_section));
+    g_object_unref(close_section);
+
+    GMenu *color_menu = g_menu_new();
+    g_menu_append(color_menu, "Red",    "tab.color-red");
+    g_menu_append(color_menu, "Orange", "tab.color-orange");
+    g_menu_append(color_menu, "Yellow", "tab.color-yellow");
+    g_menu_append(color_menu, "Green",  "tab.color-green");
+    g_menu_append(color_menu, "Blue",   "tab.color-blue");
+    g_menu_append(color_menu, "Purple", "tab.color-purple");
+    g_menu_append(color_menu, "Pink",   "tab.color-pink");
+    g_menu_append(color_menu, "None",   "tab.color-none");
+    GMenuItem *color_item = g_menu_item_new_submenu("Set Tab Color",
+                                                     G_MENU_MODEL(color_menu));
+    g_menu_append_item(menu, color_item);
+    g_object_unref(color_item);
+    g_object_unref(color_menu);
+
+    /* Create and show popover */
+    GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
+    g_object_unref(menu);
+
+    gtk_widget_set_parent(popover, g_drawing_area);
+    GdkRectangle rect = { (int)x, (int)y, 1, 1 };
+    gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rect);
+    gtk_popover_set_has_arrow(GTK_POPOVER(popover), FALSE);
+    gtk_popover_popup(GTK_POPOVER(popover));
+}
+
+int64_t nitty_gtk4_context_menu_poll(void)
+{
+    int64_t action = g_ctx_pending_action;
+    g_ctx_pending_action = 0;
+    return action;
+}
+
+int64_t nitty_gtk4_context_menu_get_tab_idx(void)
+{
+    return g_ctx_tab_idx;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.4.3: Rename dialog (synchronous modal GtkWindow + GtkEntry)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    GMainLoop *loop;
+    char       result[512];
+    int        confirmed;
+} PromptState;
+
+static void on_prompt_ok(GtkButton *btn, gpointer user_data)
+{
+    (void)btn;
+    PromptState *state = (PromptState *)user_data;
+    state->confirmed = 1;
+    g_main_loop_quit(state->loop);
+}
+
+static void on_prompt_cancel(GtkButton *btn, gpointer user_data)
+{
+    (void)btn;
+    PromptState *state = (PromptState *)user_data;
+    state->confirmed = 0;
+    g_main_loop_quit(state->loop);
+}
+
+static void on_prompt_entry_activate(GtkEntry *entry, gpointer user_data)
+{
+    (void)entry;
+    PromptState *state = (PromptState *)user_data;
+    state->confirmed = 1;
+    g_main_loop_quit(state->loop);
+}
+
+static char g_prompt_result[512];
+
+const char *nitty_gtk4_prompt_string(const char *prompt, const char *current_value)
+{
+    g_prompt_result[0] = '\0';
+
+    PromptState state;
+    state.loop      = g_main_loop_new(NULL, FALSE);
+    state.confirmed = 0;
+    state.result[0] = '\0';
+
+    /* Dialog window */
+    GtkWidget *dialog = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(dialog), prompt ? prompt : "Rename Tab");
+    gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+    gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(g_main_window));
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 360, -1);
+    gtk_window_set_resizable(GTK_WINDOW(dialog), FALSE);
+
+    /* Layout */
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_start(box, 16);
+    gtk_widget_set_margin_end(box, 16);
+    gtk_widget_set_margin_top(box, 16);
+    gtk_widget_set_margin_bottom(box, 16);
+    gtk_window_set_child(GTK_WINDOW(dialog), box);
+
+    GtkWidget *label = gtk_label_new(prompt ? prompt : "Enter new tab name:");
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(box), label);
+
+    GtkWidget *entry = gtk_entry_new();
+    if (current_value && current_value[0]) {
+        gtk_editable_set_text(GTK_EDITABLE(entry), current_value);
+        gtk_editable_select_region(GTK_EDITABLE(entry), 0, -1);
+    }
+    gtk_box_append(GTK_BOX(box), entry);
+    g_signal_connect(entry, "activate", G_CALLBACK(on_prompt_entry_activate), &state);
+
+    GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_halign(btn_box, GTK_ALIGN_END);
+    gtk_box_append(GTK_BOX(box), btn_box);
+
+    GtkWidget *cancel_btn = gtk_button_new_with_label("Cancel");
+    GtkWidget *ok_btn     = gtk_button_new_with_label("Rename");
+    gtk_box_append(GTK_BOX(btn_box), cancel_btn);
+    gtk_box_append(GTK_BOX(btn_box), ok_btn);
+
+    g_signal_connect(cancel_btn, "clicked", G_CALLBACK(on_prompt_cancel), &state);
+    g_signal_connect(ok_btn,     "clicked", G_CALLBACK(on_prompt_ok),     &state);
+
+    gtk_widget_set_visible(dialog, TRUE);
+    g_main_loop_run(state.loop);
+
+    if (state.confirmed) {
+        const char *text = gtk_editable_get_text(GTK_EDITABLE(entry));
+        if (text && text[0]) {
+            strncpy(g_prompt_result, text, sizeof(g_prompt_result) - 1);
+            g_prompt_result[sizeof(g_prompt_result) - 1] = '\0';
+        }
+    }
+
+    gtk_window_destroy(GTK_WINDOW(dialog));
+    g_main_loop_unref(state.loop);
+
+    return g_prompt_result;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.4.3: Spawn tab shell at CWD (/proc/pid/cwd)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+extern int64_t nitty_pty_spawn_shell_at(int64_t master_fd, int64_t rows, int64_t cols,
+                                         const char *cwd);
+
+int64_t nitty_gtk4_spawn_tab_shell_at_cwd(int64_t rows, int64_t cols, int64_t source_pid)
+{
+    /* Resolve /proc/<pid>/cwd via readlink */
+    char cwd[4096] = {0};
+    if (source_pid > 0) {
+        char proc_path[64];
+        snprintf(proc_path, sizeof(proc_path), "/proc/%lld/cwd", (long long)source_pid);
+        ssize_t len = readlink(proc_path, cwd, sizeof(cwd) - 1);
+        if (len <= 0) cwd[0] = '\0';
+    }
+
+    int64_t master_fd = nitty_pty_openpt();
+    if (master_fd < 0) return -1;
+    nitty_pty_grantpt(master_fd);
+    nitty_pty_unlockpt(master_fd);
+    nitty_pty_set_winsize(master_fd, rows, cols, 0, 0);
+    nitty_pty_set_nonblock(master_fd);
+
+    /* Prefer CWD spawn; fall back to plain spawn if not available */
+    int64_t pid = -1;
+    if (cwd[0] != '\0') {
+        /* Try the extended spawn; fall back if the symbol isn't linked */
+        pid = nitty_pty_spawn_shell_at(master_fd, rows, cols, cwd);
+    }
+    if (pid <= 0) {
+        pid = nitty_pty_spawn_shell(master_fd, rows, cols);
+    }
+    if (pid <= 0) {
+        nitty_pty_close(master_fd);
+        return -1;
+    }
+    return master_fd * 1000000LL + pid;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.4.3: Completion event poll (waitpid WNOHANG on registered PIDs)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static int64_t g_tab_pids[16]  = { -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1 };
+static int64_t g_completion_pending_slot = -1;
+
+void nitty_gtk4_register_tab_pid(int64_t slot, int64_t pid)
+{
+    if (slot < 0 || slot >= 16) return;
+    g_tab_pids[slot] = pid;
+}
+
+void nitty_gtk4_unregister_tab_pid(int64_t slot)
+{
+    if (slot < 0 || slot >= 16) return;
+    g_tab_pids[slot] = -1;
+}
+
+/* Returns the slot index of a tab whose shell exited, or -1 if none.
+ * Skips the active tab (index that matches g_terminal_child_pid). */
+int64_t nitty_gtk4_completion_event_poll(void)
+{
+    if (g_completion_pending_slot >= 0) {
+        int64_t s = g_completion_pending_slot;
+        g_completion_pending_slot = -1;
+        return s;
+    }
+    for (int i = 0; i < 16; i++) {
+        int64_t pid = g_tab_pids[i];
+        if (pid <= 0) continue;
+        /* Skip the currently active tab */
+        if (pid == g_terminal_child_pid) continue;
+        int status;
+        pid_t r = waitpid((pid_t)pid, &status, WNOHANG);
+        if (r == (pid_t)pid) {
+            /* Process exited */
+            g_tab_pids[i] = -1;
+            return (int64_t)i;
+        }
+    }
+    return -1;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.4.4: Session persistence helpers
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Read the CWD of a process from /proc/<pid>/cwd via readlink.
+ * Returns a NUL-terminated path string, or "" on any error.
+ * Uses a static buffer — safe on the single GTK main thread. */
+const char *nitty_gtk4_get_proc_cwd(int64_t pid)
+{
+    static char s_cwd_buf[4096];
+    s_cwd_buf[0] = '\0';
+
+    if (pid <= 0) return s_cwd_buf;
+
+    char link_path[64];
+    snprintf(link_path, sizeof(link_path), "/proc/%lld/cwd", (long long)pid);
+
+    ssize_t n = readlink(link_path, s_cwd_buf, sizeof(s_cwd_buf) - 1);
+    if (n > 0) {
+        s_cwd_buf[n] = '\0';
+    } else {
+        s_cwd_buf[0] = '\0';
+    }
+    return s_cwd_buf;
+}
+
+/* Spawn PTY + shell at an explicit `path` directory.
+ * Falls back to $HOME if path is NULL, empty, or non-existent.
+ * Returns (master_fd * 1000000 + child_pid), or -1 on failure. */
+int64_t nitty_gtk4_spawn_tab_shell_at_path(int64_t rows, int64_t cols,
+                                           const char *path)
+{
+    extern int64_t nitty_pty_openpt(void);
+    extern int64_t nitty_pty_spawn_shell(int64_t master_fd, int64_t rows, int64_t cols);
+    extern int64_t nitty_pty_close(int64_t fd);
+    extern int64_t nitty_pty_spawn_shell_at(int64_t master_fd, int64_t rows,
+                                            int64_t cols, const char *cwd);
+
+    int master_fd = (int)nitty_pty_openpt();
+    if (master_fd < 0) return -1;
+
+    /* Resolve path: use supplied path if valid dir, else fall back to $HOME */
+    char resolved[4096];
+    resolved[0] = '\0';
+
+    if (path && path[0] != '\0') {
+        struct stat st;
+        if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+            snprintf(resolved, sizeof(resolved), "%s", path);
+        }
+    }
+
+    /* Fall back to $HOME if resolved is empty */
+    if (resolved[0] == '\0') {
+        const char *home = getenv("HOME");
+        if (home) snprintf(resolved, sizeof(resolved), "%s", home);
+    }
+
+    int64_t pid = nitty_pty_spawn_shell_at((int64_t)master_fd, rows, cols, resolved);
+    if (pid <= 0) {
+        pid = nitty_pty_spawn_shell((int64_t)master_fd, rows, cols);
+    }
+    if (pid <= 0) {
+        nitty_pty_close((int64_t)master_fd);
+        return -1;
+    }
+    return (int64_t)master_fd * 1000000LL + pid;
+}
+
+/* v0.4.4: Return CLOCK_MONOTONIC seconds as int64_t. */
+#include <time.h>
+int64_t nitty_gtk4_monotonic_sec(void)
+{
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (int64_t)ts.tv_sec;
+}
+

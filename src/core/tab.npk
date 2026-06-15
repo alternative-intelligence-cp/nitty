@@ -1,20 +1,25 @@
-// src/core/tab.npk — Tab data model (v0.4.0)
+// src/core/tab.npk — Tab data model (v0.4.3 / v0.5.0)
 //
 // Stores per-tab metadata as parallel flat arrays.
 // Each tab occupies one slot [0..MAX_TABS-1].
 //
 // Fields per tab:
-//   id          — unique monotonic ID
-//   pty_fd      — PTY master file descriptor (-1 if none)
-//   is_active   — 1 = focused, 0 = background
-//   has_activity — unseen output since last focus
-//   has_bell    — unseen bell since last focus
-//   created_at  — creation timestamp (monotonic µs, 0 if unused)
-//   title       — display title (default "Shell")
+//   id             — unique monotonic ID
+//   pty_fd         — PTY master file descriptor (-1 if none)
+//   shell_pid      — child shell PID (-1 if none)
+//   is_active      — 1 = focused, 0 = background
+//   has_activity   — unseen output since last focus
+//   has_bell       — unseen bell since last focus
+//   has_completion — shell child exited while tab was inactive
+//   created_at     — creation timestamp (monotonic µs, 0 if unused)
+//   title          — display title (default "Shell")
+//   custom_title   — 1 = user-renamed; OSC 0/2 won't override
+//   custom_color   — packed RGB (0=none, otherwise (r<<16)|(g<<8)|b)
+//   active_pane    — v0.5.0: pane_id of the focused pane in this tab's split tree
 //
 // Slot lifecycle:
-//   tab_create(slot, id, pty_fd)  → initialize all fields
-//   tab_destroy(slot)             → zero all fields (does NOT close PTY)
+//   tab_create(slot, id, pty_fd, shell_pid) → initialize all fields
+//   tab_destroy(slot)                       → zero all fields (does NOT close PTY)
 
 // ═══════════════════════════════════════════════════════════════════
 // Constants
@@ -28,26 +33,36 @@ int64:MAX_TABS = 16i64;
 
 int64[16]:g_tab_id;
 int64[16]:g_tab_pty_fd;
+int64[16]:g_tab_pid;
 int64[16]:g_tab_is_active;
 int64[16]:g_tab_has_activity;
 int64[16]:g_tab_has_bell;
+int64[16]:g_tab_has_completion;  // v0.4.3: shell exited while inactive
 int64[16]:g_tab_created_at;
 string[16]:g_tab_title;
+int64[16]:g_tab_custom_title;    // v0.4.3: 1 = user-renamed, OSC won't override
+int64[16]:g_tab_custom_color;    // v0.4.3: packed RGB (0=none)
+int64[16]:g_tab_active_pane;     // v0.5.0: pane_id of focused pane (0 = default)
 
 // ═══════════════════════════════════════════════════════════════════
 // Slot lifecycle
 // ═══════════════════════════════════════════════════════════════════
 
-/// Initialize a tab slot with the given ID and PTY fd.
+/// Initialize a tab slot with the given ID, PTY fd, and shell PID.
 /// Sets title to "Shell", is_active to 0, activity/bell to 0.
-pub func:tab_create = NIL(int64:slot, int64:id, int64:pty_fd) {
+pub func:tab_create = NIL(int64:slot, int64:id, int64:pty_fd, int64:shell_pid) {
     g_tab_id[slot] = id;
     g_tab_pty_fd[slot] = pty_fd;
+    g_tab_pid[slot] = shell_pid;
     g_tab_is_active[slot] = 0i64;
     g_tab_has_activity[slot] = 0i64;
     g_tab_has_bell[slot] = 0i64;
+    g_tab_has_completion[slot] = 0i64;
     g_tab_created_at[slot] = 0i64;
     g_tab_title[slot] = "Shell";
+    g_tab_custom_title[slot] = 0i64;
+    g_tab_custom_color[slot] = 0i64;
+    g_tab_active_pane[slot] = 0i64;  // v0.5.0
     pass(NIL);
 };
 
@@ -55,11 +70,16 @@ pub func:tab_create = NIL(int64:slot, int64:id, int64:pty_fd) {
 pub func:tab_destroy = NIL(int64:slot) {
     g_tab_id[slot] = 0i64;
     g_tab_pty_fd[slot] = -1i64;
+    g_tab_pid[slot] = -1i64;
     g_tab_is_active[slot] = 0i64;
     g_tab_has_activity[slot] = 0i64;
     g_tab_has_bell[slot] = 0i64;
+    g_tab_has_completion[slot] = 0i64;
     g_tab_created_at[slot] = 0i64;
     g_tab_title[slot] = "";
+    g_tab_custom_title[slot] = 0i64;
+    g_tab_custom_color[slot] = 0i64;
+    g_tab_active_pane[slot] = 0i64;  // v0.5.0
     pass(NIL);
 };
 
@@ -75,6 +95,11 @@ pub func:tab_get_id = int64(int64:slot) {
 /// Get the PTY master fd for a tab slot.
 pub func:tab_get_pty_fd = int64(int64:slot) {
     pass(g_tab_pty_fd[slot]);
+};
+
+/// Get the shell PID for a tab slot (-1 if none).
+pub func:tab_get_pid = int64(int64:slot) {
+    pass(g_tab_pid[slot]);
 };
 
 /// Check if a tab is the active (focused) tab.
@@ -124,6 +149,12 @@ pub func:tab_set_pty_fd = NIL(int64:slot, int64:fd) {
     pass(NIL);
 };
 
+/// Set the shell PID for a tab slot.
+pub func:tab_set_pid = NIL(int64:slot, int64:pid) {
+    g_tab_pid[slot] = pid;
+    pass(NIL);
+};
+
 /// Set the creation timestamp for a tab slot.
 pub func:tab_set_created_at = NIL(int64:slot, int64:ts) {
     g_tab_created_at[slot] = ts;
@@ -157,4 +188,144 @@ pub func:tab_clear_bell = NIL(int64:slot) {
 /// Get the maximum number of tabs supported.
 pub func:tab_max_tabs = int64() {
     pass(MAX_TABS);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// v0.4.3: Completion indicator
+// ═══════════════════════════════════════════════════════════════════
+
+/// Check if the shell process for this tab has exited while inactive.
+pub func:tab_has_completion = int64(int64:slot) {
+    pass(g_tab_has_completion[slot]);
+};
+
+/// Mark a tab as having a completed (exited) shell.
+pub func:tab_mark_completion = NIL(int64:slot) {
+    g_tab_has_completion[slot] = 1i64;
+    pass(NIL);
+};
+
+/// Clear the completion flag (on focus or new shell spawn).
+pub func:tab_clear_completion = NIL(int64:slot) {
+    g_tab_has_completion[slot] = 0i64;
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// v0.4.3: Custom title (user-renamed lock)
+// ═══════════════════════════════════════════════════════════════════
+
+/// Check if the tab has a user-set title (OSC 0/2 should not override).
+pub func:tab_get_custom_title = int64(int64:slot) {
+    pass(g_tab_custom_title[slot]);
+};
+
+/// Set or clear the custom-title lock.
+/// Pass 1 to lock (after user rename), 0 to re-enable OSC override.
+pub func:tab_set_custom_title = NIL(int64:slot, int64:val) {
+    g_tab_custom_title[slot] = val;
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// v0.4.3: Custom color (user-assigned tab accent)
+// ═══════════════════════════════════════════════════════════════════
+
+/// Get the custom color for a tab slot.
+/// Returns packed RGB: (r<<16)|(g<<8)|b, or 0 if no color set.
+pub func:tab_get_custom_color = int64(int64:slot) {
+    pass(g_tab_custom_color[slot]);
+};
+
+/// Set the custom color for a tab slot.
+/// Pass packed RGB (r<<16)|(g<<8)|b, or 0 to clear.
+pub func:tab_set_custom_color = NIL(int64:slot, int64:rgb) {
+    g_tab_custom_color[slot] = rgb;
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// v0.4.2: Slot swap (for tab reordering)
+// ═══════════════════════════════════════════════════════════════════
+
+/// Swap all fields between two tab slots.
+/// Used by tab_manager reorder functions (move_left, move_right, move_tab).
+/// Does NOT change the active PTY fd — caller must update that if needed.
+pub func:tab_swap = NIL(int64:a, int64:b) {
+    // Swap id
+    int64:tmp_id = g_tab_id[a];
+    g_tab_id[a] = g_tab_id[b];
+    g_tab_id[b] = tmp_id;
+
+    // Swap pty_fd
+    int64:tmp_fd = g_tab_pty_fd[a];
+    g_tab_pty_fd[a] = g_tab_pty_fd[b];
+    g_tab_pty_fd[b] = tmp_fd;
+
+    // Swap pid
+    int64:tmp_pid = g_tab_pid[a];
+    g_tab_pid[a] = g_tab_pid[b];
+    g_tab_pid[b] = tmp_pid;
+
+    // Swap is_active
+    int64:tmp_act = g_tab_is_active[a];
+    g_tab_is_active[a] = g_tab_is_active[b];
+    g_tab_is_active[b] = tmp_act;
+
+    // Swap has_activity
+    int64:tmp_uact = g_tab_has_activity[a];
+    g_tab_has_activity[a] = g_tab_has_activity[b];
+    g_tab_has_activity[b] = tmp_uact;
+
+    // Swap has_bell
+    int64:tmp_bell = g_tab_has_bell[a];
+    g_tab_has_bell[a] = g_tab_has_bell[b];
+    g_tab_has_bell[b] = tmp_bell;
+
+    // Swap created_at
+    int64:tmp_ts = g_tab_created_at[a];
+    g_tab_created_at[a] = g_tab_created_at[b];
+    g_tab_created_at[b] = tmp_ts;
+
+    // Swap title
+    string:tmp_title = g_tab_title[a];
+    g_tab_title[a] = g_tab_title[b];
+    g_tab_title[b] = tmp_title;
+
+    // Swap has_completion
+    int64:tmp_comp = g_tab_has_completion[a];
+    g_tab_has_completion[a] = g_tab_has_completion[b];
+    g_tab_has_completion[b] = tmp_comp;
+
+    // Swap custom_title
+    int64:tmp_ctitle = g_tab_custom_title[a];
+    g_tab_custom_title[a] = g_tab_custom_title[b];
+    g_tab_custom_title[b] = tmp_ctitle;
+
+    // Swap custom_color
+    int64:tmp_color = g_tab_custom_color[a];
+    g_tab_custom_color[a] = g_tab_custom_color[b];
+    g_tab_custom_color[b] = tmp_color;
+
+    // v0.5.0: Swap active_pane
+    int64:tmp_pane = g_tab_active_pane[a];
+    g_tab_active_pane[a] = g_tab_active_pane[b];
+    g_tab_active_pane[b] = tmp_pane;
+
+    pass(NIL);
+};
+
+// ===================================================================
+// v0.5.0: Active pane tracking
+// ===================================================================
+
+/// Get the pane_id of the currently focused pane within this tab's split tree.
+pub func:tab_get_active_pane = int64(int64:slot) {
+    pass(g_tab_active_pane[slot]);
+};
+
+/// Set the pane_id of the currently focused pane within this tab's split tree.
+pub func:tab_set_active_pane = NIL(int64:slot, int64:pane_id) {
+    g_tab_active_pane[slot] = pane_id;
+    pass(NIL);
 };
