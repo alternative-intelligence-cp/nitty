@@ -1,0 +1,60 @@
+// tests/test_renderer.npk — Text renderer configuration tests for Nitty v0.0.2
+//
+// Tests that the C renderer accepts configuration without crashing.
+// Does NOT render (no GTK main loop needed).
+//
+// T01: nitty_render_set_font() accepts a font string
+// T02: nitty_render_set_bg/fg() accept color values
+// T03: nitty_render_fill_text() fills without crash
+// T04: nitty_render_get_cell_width/height return 0 before first draw
+//
+// All pass → exit 0.
+
+use "../src/gui/gtk4_ffi.npk".*;
+
+int64:STDOUT = 1i64;
+
+func:print_line = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+func:main = int32() {
+
+    // T01: set_font accepts a font string
+    nitty_render_set_font("Monospace 12");
+    drop(print_line("[PASS] T01 nitty_render_set_font\n"));
+
+    // T02: set colors
+    nitty_render_set_bg(0i64, 0i64, 0i64);
+    nitty_render_set_fg(1000i64, 1000i64, 1000i64);
+    drop(print_line("[PASS] T02 nitty_render_set_bg/fg\n"));
+
+    // T03: fill_text with 80×24 grid
+    nitty_render_fill_text("Hello from Nitty! ", 80i64, 24i64);
+    drop(print_line("[PASS] T03 nitty_render_fill_text\n"));
+
+    // T04: cell width/height should be 0 before first draw
+    int64:cw = nitty_render_get_cell_width();
+    int64:ch = nitty_render_get_cell_height();
+    if (cw == 0i64) {
+        drop(print_line("[PASS] T04a cell_width is 0 before draw\n"));
+    }
+    if (cw != 0i64) {
+        drop(print_line("[FAIL] T04a cell_width should be 0\n"));
+        exit 4i32;
+    }
+    if (ch == 0i64) {
+        drop(print_line("[PASS] T04b cell_height is 0 before draw\n"));
+    }
+    if (ch != 0i64) {
+        drop(print_line("[FAIL] T04b cell_height should be 0\n"));
+        exit 4i32;
+    }
+
+    drop(print_line("All renderer tests passed.\n"));
+    exit 0i32;
+};

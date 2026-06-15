@@ -1,0 +1,96 @@
+// src/gui/text_renderer.npk — Grid-based terminal text renderer for Nitty
+//
+// High-level interface to the C-side renderer (nitty_render.h).
+// Nitpick code calls these functions to configure font, colors, and grid content.
+// The actual painting is done by the C draw callback via nitty_render_frame().
+//
+// Fixed-point convention: colors [0..1000] map to [0.0..1.0] in Cairo.
+//   - 0   = 0.0 (black / no color)
+//   - 500 = 0.5 (50% intensity)
+//   - 1000 = 1.0 (full intensity / white)
+//
+// Usage:
+//   1. renderer_set_font("Monospace 12")   — set the terminal font
+//   2. renderer_set_colors(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b)
+//   3. renderer_fill("Hello from Nitty! ", 80, 24)  — fill grid
+//   4. renderer_init_drawing_area() — creates and configures DrawingArea
+//   5. Run the GTK main loop — rendering happens automatically
+
+use "gtk4_ffi.npk".*;
+
+// ── Font configuration ────────────────────────────────────────────────────
+
+// Set the terminal font (Pango font description string).
+pub func:renderer_set_font = NIL(string:font_desc) {
+    nitty_render_set_font(font_desc);
+    pass(NIL);
+};
+
+// ── Color configuration ───────────────────────────────────────────────────
+
+// Set default foreground and background colors.
+// All values are fixed-point × 1000 (0=off, 1000=full).
+pub func:renderer_set_colors = NIL(int64:fg_r, int64:fg_g, int64:fg_b,
+                                    int64:bg_r, int64:bg_g, int64:bg_b) {
+    nitty_render_set_fg(fg_r, fg_g, fg_b);
+    nitty_render_set_bg(bg_r, bg_g, bg_b);
+    pass(NIL);
+};
+
+// ── Grid content ──────────────────────────────────────────────────────────
+
+// Fill the entire grid with a repeating text string.
+pub func:renderer_fill = NIL(string:text, int64:cols, int64:rows) {
+    nitty_render_fill_text(text, cols, rows);
+    pass(NIL);
+};
+
+// Set a single cell character at (col, row).
+pub func:renderer_set_cell = NIL(int64:col, int64:row, string:ch) {
+    nitty_render_set_cell(col, row, ch);
+    pass(NIL);
+};
+
+// Set a per-cell foreground color.
+pub func:renderer_set_cell_fg = NIL(int64:col, int64:row,
+                                     int64:r, int64:g, int64:b) {
+    nitty_render_set_cell_fg(col, row, r, g, b);
+    pass(NIL);
+};
+
+// Set a per-cell background color.
+pub func:renderer_set_cell_bg = NIL(int64:col, int64:row,
+                                     int64:r, int64:g, int64:b) {
+    nitty_render_set_cell_bg(col, row, r, g, b);
+    pass(NIL);
+};
+
+// ── Cell metrics (populated after first draw) ─────────────────────────────
+
+// Get the computed cell width in pixels.
+pub func:renderer_get_cell_width = int64() {
+    int64:w = nitty_render_get_cell_width();
+    pass(w);
+};
+
+// Get the computed cell height in pixels.
+pub func:renderer_get_cell_height = int64() {
+    int64:h = nitty_render_get_cell_height();
+    pass(h);
+};
+
+// ── DrawingArea setup ─────────────────────────────────────────────────────
+
+// Create and configure the DrawingArea widget.
+// Returns the widget pointer (int64 handle).
+// Must be called before app_run().
+pub func:renderer_init_drawing_area = int64() {
+    // Create the GtkDrawingArea
+    int64:da = nitty_gtk4_drawing_area_new();
+    if (da == 0i64) { pass(0i64); }
+
+    // Register the draw callback
+    nitty_gtk4_drawing_area_set_draw_func(da);
+
+    pass(da);
+};

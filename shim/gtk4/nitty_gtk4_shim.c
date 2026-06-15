@@ -1,59 +1,79 @@
 /*
  * nitty_gtk4_shim.c — GTK4 C FFI shim implementation for Nitty
  *
- * Provides a simplified, opaque-pointer API over GTK4 for Nitpick code.
- * All pointer values are passed as int64_t between Nitpick and C.
+ * v0.0.2: Added DrawingArea with cairo draw callback, Cairo drawing
+ *         primitives (fixed-point), Pango text rendering, and HiDPI support.
  *
- * v0.0.1 architecture:
- *   - The shim manages the window internally via a stored static pointer.
- *   - Nitpick configures title, size, and app_id BEFORE calling app_run().
- *   - The internal on_activate() handler creates and shows the window.
- *   - After app_run() returns, Nitpick calls app_free() to clean up.
- *
- * This design avoids Nitpick function-pointer FFI complexity in v0.0.1.
- * In v0.1.x+, a full callback registration mechanism will be added.
+ * Draw architecture:
+ *   1. nitty_gtk4_drawing_area_set_draw_func() registers on_draw_func()
+ *   2. When GTK needs to paint, on_draw_func() fires:
+ *      a. Stores cairo_t*, width, height in statics
+ *      b. Calls the registered render callback (g_render_callback)
+ *      c. The render callback uses nitty_cairo_* / nitty_pango_* to paint
+ *      d. Clears the statics when done
+ *   3. Nitpick's render function is called indirectly through the C callback
+ *      or directly via the pre-configure pattern (v0.0.2 uses pre-configure).
  */
 
 #include "nitty_gtk4_shim.h"
+#include "nitty_render.h"
 #include <gtk/gtk.h>
+#include <pango/pangocairo.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
 
-/* ── Internal state ──────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.0.1: Application lifecycle + Window management (unchanged)
+ * ═══════════════════════════════════════════════════════════════════════ */
 
-/* Configuration set by Nitpick before calling app_run() */
+/* Window configuration */
 static char   g_window_title[256] = "Nitty Terminal";
 static int    g_window_width      = 1024;
 static int    g_window_height     = 768;
 
-/* The main window created by on_activate() */
-static GtkWidget *g_main_window = NULL;
+/* Main window created by on_activate */
+static GtkWidget *g_main_window  = NULL;
 
-/* ── Internal GTK signal handlers ────────────────────────────────────── */
+/* DrawingArea for the terminal grid */
+static GtkWidget *g_drawing_area   = NULL;
+static int        g_use_drawing_area = 0;  /* Set to 1 by nitty_gtk4_drawing_area_new */
 
-/*
- * on_activate — called by GTK when the application is first activated.
- * Creates the main window with the pre-configured title and size.
- */
+/* Forward declaration of on_draw_func */
+static void on_draw_func(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer user_data);
+
+/* on_activate — creates the window with pre-configured settings.
+ * If g_use_drawing_area is set, creates the DrawingArea here (GTK is now init'd). */
 static void on_activate(GtkApplication *app, gpointer user_data)
 {
     (void)user_data;
 
     GtkWidget *window = gtk_application_window_new(app);
-    if (window == NULL) {
-        return;
-    }
+    if (window == NULL) return;
 
     gtk_window_set_title(GTK_WINDOW(window), g_window_title);
     gtk_window_set_default_size(GTK_WINDOW(window), g_window_width, g_window_height);
 
     g_main_window = window;
 
+    /* Create DrawingArea NOW — GTK is initialized at this point */
+    if (g_use_drawing_area) {
+        GtkWidget *da = gtk_drawing_area_new();
+        if (da != NULL) {
+            gtk_widget_set_hexpand(da, TRUE);
+            gtk_widget_set_vexpand(da, TRUE);
+            gtk_drawing_area_set_draw_func(
+                GTK_DRAWING_AREA(da), on_draw_func, NULL, NULL
+            );
+            gtk_window_set_child(GTK_WINDOW(window), da);
+            g_drawing_area = da;
+        }
+    }
+
     gtk_window_present(GTK_WINDOW(window));
 }
 
-/* ── Configuration (must be called before app_run) ───────────────────── */
+/* ── Configuration ────────────────────────────────────────────────────── */
 
 void nitty_gtk4_configure_window(const char *title, int64_t width, int64_t height)
 {
@@ -69,26 +89,18 @@ void nitty_gtk4_configure_window(const char *title, int64_t width, int64_t heigh
 
 int64_t nitty_gtk4_app_new(const char *app_id)
 {
-    if (app_id == NULL) {
-        return 0;
-    }
+    if (app_id == NULL) return 0;
 
     GtkApplication *app = gtk_application_new(app_id, G_APPLICATION_DEFAULT_FLAGS);
-    if (app == NULL) {
-        return 0;
-    }
+    if (app == NULL) return 0;
 
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
-
     return (int64_t)(uintptr_t)app;
 }
 
 int64_t nitty_gtk4_app_run(int64_t app_ptr)
 {
-    if (app_ptr == 0) {
-        return -1;
-    }
-
+    if (app_ptr == 0) return -1;
     GtkApplication *app = (GtkApplication *)(uintptr_t)app_ptr;
     int status = g_application_run(G_APPLICATION(app), 0, NULL);
     return (int64_t)status;
@@ -96,22 +108,19 @@ int64_t nitty_gtk4_app_run(int64_t app_ptr)
 
 void nitty_gtk4_app_quit(int64_t app_ptr)
 {
-    if (app_ptr == 0) {
-        return;
-    }
+    if (app_ptr == 0) return;
     g_application_quit((GApplication *)(uintptr_t)app_ptr);
 }
 
 void nitty_gtk4_app_free(int64_t app_ptr)
 {
-    if (app_ptr == 0) {
-        return;
-    }
+    if (app_ptr == 0) return;
     g_object_unref((GObject *)(uintptr_t)app_ptr);
-    g_main_window = NULL;
+    g_main_window  = NULL;
+    g_drawing_area = NULL;
 }
 
-/* ── Window access (after app_run) ───────────────────────────────────── */
+/* ── Window access ────────────────────────────────────────────────────── */
 
 int64_t nitty_gtk4_get_main_window(void)
 {
@@ -122,13 +131,9 @@ int64_t nitty_gtk4_get_main_window(void)
 
 int64_t nitty_gtk4_window_new(int64_t app_ptr)
 {
-    if (app_ptr == 0) {
-        return 0;
-    }
-    GtkWidget *window = gtk_application_window_new(
-        (GtkApplication *)(uintptr_t)app_ptr
-    );
-    return (int64_t)(uintptr_t)window;
+    if (app_ptr == 0) return 0;
+    GtkWidget *w = gtk_application_window_new((GtkApplication *)(uintptr_t)app_ptr);
+    return (int64_t)(uintptr_t)w;
 }
 
 void nitty_gtk4_window_set_title(int64_t win_ptr, const char *title)
@@ -140,9 +145,7 @@ void nitty_gtk4_window_set_title(int64_t win_ptr, const char *title)
 void nitty_gtk4_window_set_size(int64_t win_ptr, int64_t width, int64_t height)
 {
     if (win_ptr == 0 || width <= 0 || height <= 0) return;
-    gtk_window_set_default_size(
-        (GtkWindow *)(uintptr_t)win_ptr, (int)width, (int)height
-    );
+    gtk_window_set_default_size((GtkWindow *)(uintptr_t)win_ptr, (int)width, (int)height);
 }
 
 void nitty_gtk4_window_show(int64_t win_ptr)
@@ -169,11 +172,235 @@ int64_t nitty_gtk4_window_get_height(int64_t win_ptr)
     return (int64_t)gtk_widget_get_height((GtkWidget *)(uintptr_t)win_ptr);
 }
 
-/* ── Callback registration (stub — implemented in v0.1.x) ───────────── */
+void nitty_gtk4_window_set_child(int64_t win_ptr, int64_t widget_ptr)
+{
+    if (win_ptr == 0 || widget_ptr == 0) return;
+    gtk_window_set_child(
+        (GtkWindow *)(uintptr_t)win_ptr,
+        (GtkWidget *)(uintptr_t)widget_ptr
+    );
+}
+
+/* ── Callback stubs ───────────────────────────────────────────────────── */
 
 void nitty_gtk4_set_activate_callback(int64_t app_ptr, void (*callback)(int64_t))
 {
-    /* Reserved for v0.1.x full callback dispatch implementation */
     (void)app_ptr;
     (void)callback;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.0.2: DrawingArea + Draw callback infrastructure
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Draw state (valid only inside on_draw_func) ──────────────────────── */
+
+static cairo_t *g_draw_cr      = NULL;
+static int      g_draw_width   = 0;
+static int      g_draw_height  = 0;
+
+/* Registered render callback */
+static void (*g_render_callback)(void) = NULL;
+
+/*
+ * on_draw_func — GTK4 DrawingArea draw function.
+ * Called by GTK when the widget needs to be painted.
+ * Sets up statics so Nitpick-side (or C-side) render code can use them.
+ */
+static void on_draw_func(GtkDrawingArea *area,
+                          cairo_t *cr,
+                          int width,
+                          int height,
+                          gpointer user_data)
+{
+    (void)area;
+    (void)user_data;
+
+    g_draw_cr     = cr;
+    g_draw_width  = width;
+    g_draw_height = height;
+
+    if (g_render_callback != NULL) {
+        g_render_callback();
+    } else {
+        /* Default: render the terminal grid */
+        nitty_render_frame(cr, width, height);
+    }
+
+    g_draw_cr     = NULL;
+    g_draw_width  = 0;
+    g_draw_height = 0;
+}
+
+/* ── DrawingArea ──────────────────────────────────────────────────────── */
+
+int64_t nitty_gtk4_drawing_area_new(void)
+{
+    /* Mark that on_activate should create the DrawingArea.
+     * We can't create GTK widgets before g_application_run(). */
+    g_use_drawing_area = 1;
+    return 1;  /* Non-zero = success (actual pointer set in on_activate) */
+}
+
+void nitty_gtk4_drawing_area_set_size(int64_t da_ptr, int64_t w, int64_t h)
+{
+    if (da_ptr == 0 || w <= 0 || h <= 0) return;
+    gtk_drawing_area_set_content_width(
+        GTK_DRAWING_AREA((GtkWidget *)(uintptr_t)da_ptr), (int)w
+    );
+    gtk_drawing_area_set_content_height(
+        GTK_DRAWING_AREA((GtkWidget *)(uintptr_t)da_ptr), (int)h
+    );
+}
+
+void nitty_gtk4_drawing_area_set_draw_func(int64_t da_ptr)
+{
+    /* In v0.0.2, the draw func is set inside on_activate automatically.
+     * This function is kept for API completeness. */
+    (void)da_ptr;
+}
+
+void nitty_gtk4_widget_queue_draw(int64_t widget_ptr)
+{
+    if (widget_ptr == 0) return;
+    gtk_widget_queue_draw((GtkWidget *)(uintptr_t)widget_ptr);
+}
+
+/* ── Draw state getters ───────────────────────────────────────────────── */
+
+int64_t nitty_gtk4_get_draw_cr(void)
+{
+    return (int64_t)(uintptr_t)g_draw_cr;
+}
+
+int64_t nitty_gtk4_get_draw_width(void)
+{
+    return (int64_t)g_draw_width;
+}
+
+int64_t nitty_gtk4_get_draw_height(void)
+{
+    return (int64_t)g_draw_height;
+}
+
+/* ── Render callback ──────────────────────────────────────────────────── */
+
+void nitty_gtk4_set_render_callback(void (*render_fn)(void))
+{
+    g_render_callback = render_fn;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.0.2: Cairo drawing (fixed-point × 1000)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+void nitty_cairo_set_source_rgb(int64_t cr, int64_t r_fp, int64_t g_fp, int64_t b_fp)
+{
+    if (cr == 0) return;
+    cairo_set_source_rgb(
+        (cairo_t *)(uintptr_t)cr,
+        (double)r_fp / 1000.0,
+        (double)g_fp / 1000.0,
+        (double)b_fp / 1000.0
+    );
+}
+
+void nitty_cairo_paint(int64_t cr)
+{
+    if (cr == 0) return;
+    cairo_paint((cairo_t *)(uintptr_t)cr);
+}
+
+void nitty_cairo_rectangle(int64_t cr, int64_t x_fp, int64_t y_fp, int64_t w_fp, int64_t h_fp)
+{
+    if (cr == 0) return;
+    cairo_rectangle(
+        (cairo_t *)(uintptr_t)cr,
+        (double)x_fp / 1000.0,
+        (double)y_fp / 1000.0,
+        (double)w_fp / 1000.0,
+        (double)h_fp / 1000.0
+    );
+}
+
+void nitty_cairo_fill(int64_t cr)
+{
+    if (cr == 0) return;
+    cairo_fill((cairo_t *)(uintptr_t)cr);
+}
+
+void nitty_cairo_move_to(int64_t cr, int64_t x_fp, int64_t y_fp)
+{
+    if (cr == 0) return;
+    cairo_move_to(
+        (cairo_t *)(uintptr_t)cr,
+        (double)x_fp / 1000.0,
+        (double)y_fp / 1000.0
+    );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.0.2: Pango text rendering
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+int64_t nitty_pango_layout_new(int64_t cr)
+{
+    if (cr == 0) return 0;
+    PangoLayout *layout = pango_cairo_create_layout((cairo_t *)(uintptr_t)cr);
+    return (int64_t)(uintptr_t)layout;
+}
+
+void nitty_pango_layout_set_font(int64_t layout, const char *font_desc)
+{
+    if (layout == 0 || font_desc == NULL) return;
+
+    PangoFontDescription *desc = pango_font_description_from_string(font_desc);
+    if (desc != NULL) {
+        pango_layout_set_font_description(
+            (PangoLayout *)(uintptr_t)layout, desc
+        );
+        pango_font_description_free(desc);
+    }
+}
+
+void nitty_pango_layout_set_text(int64_t layout, const char *text)
+{
+    if (layout == 0 || text == NULL) return;
+    pango_layout_set_text((PangoLayout *)(uintptr_t)layout, text, -1);
+}
+
+int64_t nitty_pango_layout_get_pixel_size(int64_t layout)
+{
+    if (layout == 0) return 0;
+
+    int width = 0, height = 0;
+    pango_layout_get_pixel_size((PangoLayout *)(uintptr_t)layout, &width, &height);
+
+    /* Encode as width * 65536 + height */
+    return (int64_t)width * 65536 + (int64_t)height;
+}
+
+void nitty_pango_show_layout(int64_t cr, int64_t layout)
+{
+    if (cr == 0 || layout == 0) return;
+    pango_cairo_show_layout(
+        (cairo_t *)(uintptr_t)cr,
+        (PangoLayout *)(uintptr_t)layout
+    );
+}
+
+void nitty_pango_layout_destroy(int64_t layout)
+{
+    if (layout == 0) return;
+    g_object_unref((GObject *)(uintptr_t)layout);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.0.2: Scale factor
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+int64_t nitty_gtk4_widget_get_scale_factor(int64_t widget_ptr)
+{
+    if (widget_ptr == 0) return 1;
+    return (int64_t)gtk_widget_get_scale_factor((GtkWidget *)(uintptr_t)widget_ptr);
 }

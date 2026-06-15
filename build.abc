@@ -9,7 +9,7 @@
 
 [project]
 name = "nitty"
-version = "0.0.1"
+version = "0.0.2"
 author = "Alternative Intelligence"
 compiler = "/home/randy/Workspace/REPOS/nitpick/build/nitpickc"
 
@@ -17,9 +17,9 @@ compiler = "/home/randy/Workspace/REPOS/nitpick/build/nitpickc"
 
 [target.gtk4_shim]
 type = "c_library"
-sources = ["shim/gtk4/nitty_gtk4_shim.c"]
+sources = ["shim/gtk4/nitty_gtk4_shim.c", "shim/gtk4/nitty_render.c"]
 compiler = "gcc"
-flags = ["-fPIC", "-O2", "-Wall", "-Wextra", "-I/usr/include/gtk-4.0", "-I/usr/include/pango-1.0", "-I/usr/include/glib-2.0", "-I/usr/lib/x86_64-linux-gnu/glib-2.0/include", "-I/usr/include/harfbuzz", "-I/usr/include/freetype2", "-I/usr/include/libpng16", "-I/usr/include/libmount", "-I/usr/include/blkid", "-I/usr/include/fribidi", "-I/usr/include/cairo", "-I/usr/include/pixman-1", "-I/usr/include/gdk-pixbuf-2.0", "-I/usr/include/x86_64-linux-gnu", "-I/usr/include/graphene-1.0", "-I/usr/lib/x86_64-linux-gnu/graphene-1.0/include", "-mfpmath=sse", "-msse", "-msse2", "-pthread"]
+flags = ["-fPIC", "-O2", "-Wall", "-Wextra", "-Ishim/gtk4", "-I/usr/include/gtk-4.0", "-I/usr/include/pango-1.0", "-I/usr/include/glib-2.0", "-I/usr/lib/x86_64-linux-gnu/glib-2.0/include", "-I/usr/include/harfbuzz", "-I/usr/include/freetype2", "-I/usr/include/libpng16", "-I/usr/include/libmount", "-I/usr/include/blkid", "-I/usr/include/fribidi", "-I/usr/include/cairo", "-I/usr/include/pixman-1", "-I/usr/include/gdk-pixbuf-2.0", "-I/usr/include/x86_64-linux-gnu", "-I/usr/include/graphene-1.0", "-I/usr/lib/x86_64-linux-gnu/graphene-1.0/include", "-mfpmath=sse", "-msse", "-msse2", "-pthread"]
 output = "libnitty_gtk4_shim.a"
 deps = []
 
@@ -46,6 +46,14 @@ link_paths = [".nitpick_make/build"]
 [target.test_gtk4_ffi]
 type = "binary"
 sources = ["tests/test_gtk4_ffi.npk"]
+deps = ["gtk4_shim"]
+flags = []
+link_libraries = ["nitty_gtk4_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0"]
+link_paths = [".nitpick_make/build"]
+
+[target.test_renderer]
+type = "binary"
+sources = ["tests/test_renderer.npk"]
 deps = ["gtk4_shim"]
 flags = []
 link_libraries = ["nitty_gtk4_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0"]

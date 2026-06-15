@@ -1,21 +1,17 @@
 // src/gui/window.npk — High-level GTK4 window management for Nitty
 //
-// Wraps the raw FFI calls in gtk4_ffi.npk with a clean, idiomatic interface.
+// v0.0.2: Added window_set_child() for attaching the DrawingArea.
 //
-// v0.0.1 usage pattern:
-//   1. Call window_configure("Nitty Terminal", 1024, 768) to set title/size
-//   2. Create a GtkApplication via window_app_create("com.altintel.nitty")
-//   3. Call window_app_run(app) — blocks while GTK creates the window
-//   4. Call window_app_free(app) after run returns
-//
-// NOTE: extern function calls return raw values directly (NOT Result<T>).
-//       Only pub func calls need Result<T> handling and drop()/raw prefix.
+// Usage:
+//   1. window_configure("Nitty Terminal", 1024, 768)
+//   2. window_app_create("com.altintel.nitty")
+//   3. window_app_run(app) — blocks while GTK runs
+//   4. window_app_free(app)
 
 use "gtk4_ffi.npk".*;
 
 // ── Pre-run window configuration ──────────────────────────────────────────
 
-// Set the window title and dimensions before calling window_app_run().
 pub func:window_configure = NIL(string:title, int64:width, int64:height) {
     nitty_gtk4_configure_window(title, width, height);
     pass(NIL);
@@ -23,19 +19,16 @@ pub func:window_configure = NIL(string:title, int64:width, int64:height) {
 
 // ── Application lifecycle ──────────────────────────────────────────────────
 
-// Create a GtkApplication. Returns 0 on failure.
 pub func:window_app_create = int64(string:app_id) {
     int64:app = nitty_gtk4_app_new(app_id);
     pass(app);
 };
 
-// Run the GTK main loop (blocks). Returns exit status (0 = success).
 pub func:window_app_run = int64(int64:app) {
     int64:status = nitty_gtk4_app_run(app);
     pass(status);
 };
 
-// Release the GtkApplication after run returns.
 pub func:window_app_free = NIL(int64:app) {
     nitty_gtk4_app_free(app);
     pass(NIL);
@@ -43,24 +36,36 @@ pub func:window_app_free = NIL(int64:app) {
 
 // ── Window operations ──────────────────────────────────────────────────────
 
-// Get the main window handle (valid inside GTK signal handlers or after run).
 pub func:window_get_handle = int64() {
     int64:win = nitty_gtk4_get_main_window();
     pass(win);
 };
 
-// Present the window on screen.
 pub func:window_show = NIL(int64:win) {
     nitty_gtk4_window_show(win);
     pass(NIL);
 };
 
-// Close the window.
 pub func:window_close = NIL(int64:win) {
     nitty_gtk4_window_close(win);
     pass(NIL);
 };
 
-// Get window dimensions. extern calls return raw int64 directly.
 pub func:window_get_width  = int64(int64:win) { int64:w = nitty_gtk4_window_get_width(win);  pass(w); };
 pub func:window_get_height = int64(int64:win) { int64:h = nitty_gtk4_window_get_height(win); pass(h); };
+
+// ── v0.0.2: Set child widget ──────────────────────────────────────────────
+
+// Set a widget as the window's child. Used to attach the DrawingArea.
+// In v0.0.2, this is called in on_activate via the pre-configure pattern —
+// the DrawingArea is created before app_run and on_activate sets it as child.
+pub func:window_set_child = NIL(int64:win, int64:widget) {
+    nitty_gtk4_window_set_child(win, widget);
+    pass(NIL);
+};
+
+// Request a widget redraw.
+pub func:window_queue_draw = NIL(int64:widget) {
+    nitty_gtk4_widget_queue_draw(widget);
+    pass(NIL);
+};

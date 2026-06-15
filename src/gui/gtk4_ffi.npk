@@ -1,25 +1,26 @@
 // src/gui/gtk4_ffi.npk — Nitpick-side extern declarations for the GTK4 C shim
 //
-// Exactly matches shim/gtk4/nitty_gtk4_shim.h signatures.
+// v0.0.2: Added DrawingArea, Cairo, Pango, render config, and scale factor.
+//
+// Exactly matches shim/gtk4/nitty_gtk4_shim.h + nitty_render.h signatures.
 // All GTK object pointers are opaque int64 handles.
+// Fixed-point color/coord values: multiply float by 1000 (e.g. 1.0 = 1000).
 
 extern "nitty_gtk4_shim" {
 
-    // ── Pre-run configuration ─────────────────────────────────────────────
-    // Call configure_window BEFORE app_run to set title and size.
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.0.1: Application lifecycle + Window management
+    // ═══════════════════════════════════════════════════════════════════
+
     func:nitty_gtk4_configure_window = NIL(string:title, int64:width, int64:height);
 
-    // ── Application lifecycle ─────────────────────────────────────────────
     func:nitty_gtk4_app_new  = int64(string:app_id);
     func:nitty_gtk4_app_run  = int64(int64:app_ptr);
     func:nitty_gtk4_app_quit = NIL(int64:app_ptr);
     func:nitty_gtk4_app_free = NIL(int64:app_ptr);
 
-    // ── Window access ─────────────────────────────────────────────────────
-    // Returns the main window pointer created by the internal activate handler.
     func:nitty_gtk4_get_main_window = int64();
 
-    // ── Window management (advanced/multi-window) ─────────────────────────
     func:nitty_gtk4_window_new       = int64(int64:app_ptr);
     func:nitty_gtk4_window_set_title = NIL(int64:win_ptr, string:title);
     func:nitty_gtk4_window_set_size  = NIL(int64:win_ptr, int64:width, int64:height);
@@ -27,8 +28,62 @@ extern "nitty_gtk4_shim" {
     func:nitty_gtk4_window_close     = NIL(int64:win_ptr);
     func:nitty_gtk4_window_get_width  = int64(int64:win_ptr);
     func:nitty_gtk4_window_get_height = int64(int64:win_ptr);
+    func:nitty_gtk4_window_set_child  = NIL(int64:win_ptr, int64:widget_ptr);
 
-    // ── Callback registration (stub in v0.0.1) ────────────────────────────
     func:nitty_gtk4_set_activate_callback = NIL(int64:app_ptr, int64:callback_fn);
 
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.0.2: DrawingArea
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_gtk4_drawing_area_new          = int64();
+    func:nitty_gtk4_drawing_area_set_size     = NIL(int64:da_ptr, int64:w, int64:h);
+    func:nitty_gtk4_drawing_area_set_draw_func = NIL(int64:da_ptr);
+    func:nitty_gtk4_widget_queue_draw          = NIL(int64:widget_ptr);
+
+    // Draw state (valid only during draw callback)
+    func:nitty_gtk4_get_draw_cr     = int64();
+    func:nitty_gtk4_get_draw_width  = int64();
+    func:nitty_gtk4_get_draw_height = int64();
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.0.2: Cairo drawing (fixed-point × 1000)
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_cairo_set_source_rgb = NIL(int64:cr, int64:r_fp, int64:g_fp, int64:b_fp);
+    func:nitty_cairo_paint          = NIL(int64:cr);
+    func:nitty_cairo_rectangle      = NIL(int64:cr, int64:x_fp, int64:y_fp, int64:w_fp, int64:h_fp);
+    func:nitty_cairo_fill           = NIL(int64:cr);
+    func:nitty_cairo_move_to        = NIL(int64:cr, int64:x_fp, int64:y_fp);
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.0.2: Pango text rendering
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_pango_layout_new           = int64(int64:cr);
+    func:nitty_pango_layout_set_font      = NIL(int64:layout, string:font_desc);
+    func:nitty_pango_layout_set_text      = NIL(int64:layout, string:text);
+    func:nitty_pango_layout_get_pixel_size = int64(int64:layout);
+    func:nitty_pango_show_layout          = NIL(int64:cr, int64:layout);
+    func:nitty_pango_layout_destroy       = NIL(int64:layout);
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.0.2: Terminal grid renderer (nitty_render.h)
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_render_set_font     = NIL(string:font_desc);
+    func:nitty_render_set_bg       = NIL(int64:r, int64:g, int64:b);
+    func:nitty_render_set_fg       = NIL(int64:r, int64:g, int64:b);
+    func:nitty_render_set_cell     = NIL(int64:col, int64:row, string:ch);
+    func:nitty_render_set_cell_fg  = NIL(int64:col, int64:row, int64:r, int64:g, int64:b);
+    func:nitty_render_set_cell_bg  = NIL(int64:col, int64:row, int64:r, int64:g, int64:b);
+    func:nitty_render_fill_text    = NIL(string:text, int64:cols, int64:rows);
+    func:nitty_render_get_cell_width  = int64();
+    func:nitty_render_get_cell_height = int64();
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.0.2: Scale factor (HiDPI)
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_gtk4_widget_get_scale_factor = int64(int64:widget_ptr);
 }
