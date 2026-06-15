@@ -26,6 +26,8 @@ use "actions.npk".*;
 use "vt_parser.npk".*;
 use "sgr_dispatch.npk".*;
 use "attributes.npk".*;
+use "mode_dispatch.npk".*;
+use "modes.npk".*;
 
 func:failsafe = int32(tbb32:err) { exit 1; };
 
@@ -270,10 +272,66 @@ pub func:dispatch_csi = NIL(int64:final_byte, int64:param_count) {
         pass(NIL);
     }
 
-    // ── Private Mode (ESC [ ? ...) — store as NONE for now ──────────
-    // Future: v0.2.3 will handle ?25h/l (cursor visibility), ?1049h/l (alt screen)
-    // Detected via intermediate '?' byte in parser state
-    // For now, unrecognized sequences produce ACT_NONE (already set)
+    // ── Mode Sequences (h = SM/DECSET, l = RM/DECRST) ────────────────
+    // dispatch_mode_h/l check the '?' intermediate byte internally.
+    if (final_byte == 0x68i64) {
+        drop(dispatch_mode_h(param_count));
+        d_action_type  = raw mode_get_action_type();
+        d_action_data1 = raw mode_get_action_data1();
+        d_action_data2 = raw mode_get_action_data2();
+        pass(NIL);
+    }
+
+    if (final_byte == 0x6Ci64) {
+        drop(dispatch_mode_l(param_count));
+        d_action_type  = raw mode_get_action_type();
+        d_action_data1 = raw mode_get_action_data1();
+        d_action_data2 = raw mode_get_action_data2();
+        pass(NIL);
+    }
+
+    // s — ANSI Save Cursor (0x73)
+    if (final_byte == 0x73i64) {
+        drop(set_action(10i64, 0i64, 0i64));  // ACT_CURSOR_SAVE
+        pass(NIL);
+    }
+
+    // u — ANSI Restore Cursor (0x75)
+    if (final_byte == 0x75i64) {
+        drop(set_action(11i64, 0i64, 0i64));  // ACT_CURSOR_RESTORE
+        pass(NIL);
+    }
+
+    // n — DSR: Device Status Report (0x6E)
+    // param 5 = device status query; param 6 = cursor position report (CPR)
+    if (final_byte == 0x6Ei64) {
+        int64:qtype = raw eparam(0i64, 5i64);
+        drop(set_action(57i64, qtype, 0i64));  // ACT_DEVICE_STATUS
+        pass(NIL);
+    }
+
+    // c — DA: Device Attributes (0x63)
+    // CSI c or CSI 0 c = Primary DA; CSI > c = Secondary DA (inter[0]='>')
+    if (final_byte == 0x63i64) {
+        if (raw parser_get_intermediate_count() != 0i64) {
+            if (raw parser_get_intermediate(0i64) == 0x3Ei64) {
+                drop(set_action(59i64, 0i64, 0i64));  // ACT_SECONDARY_DA
+                pass(NIL);
+            }
+        }
+        drop(set_action(58i64, 0i64, 0i64));  // ACT_PRIMARY_DA
+        pass(NIL);
+    }
+
+    // p — DECSTR: Soft Reset (0x70) — only when inter[0]='!' (0x21)
+    if (final_byte == 0x70i64) {
+        if (raw parser_get_intermediate_count() != 0i64) {
+            if (raw parser_get_intermediate(0i64) == 0x21i64) {
+                drop(set_action(55i64, 0i64, 0i64));  // ACT_SOFT_RESET
+                pass(NIL);
+            }
+        }
+    }
 
     pass(NIL);
 };
@@ -299,6 +357,24 @@ pub func:dispatch_esc = NIL(int64:final_byte) {
         pass(NIL);
     }
 
+    // ESC c — RIS: Full Reset (Reset to Initial State)
+    if (final_byte == 0x63i64) {
+        drop(set_action(56i64, 0i64, 0i64)); // ACT_FULL_RESET
+        pass(NIL);
+    }
+
+    // ESC N — SS2: Single Shift G2 (invoke G2 for next char only)
+    if (final_byte == 0x4Ei64) {
+        drop(set_action(54i64, 2i64, 0i64)); // ACT_INVOKE_CHARSET, slot=2
+        pass(NIL);
+    }
+
+    // ESC O — SS3: Single Shift G3 (invoke G3 for next char only)
+    if (final_byte == 0x4Fi64) {
+        drop(set_action(54i64, 3i64, 0i64)); // ACT_INVOKE_CHARSET, slot=3
+        pass(NIL);
+    }
+
     // ESC D — IND: Index (move cursor down, scroll if at bottom)
     if (final_byte == 0x44i64) {
         drop(set_action(26i64, 0i64, 0i64)); // ACT_INDEX
@@ -321,6 +397,16 @@ pub func:dispatch_esc = NIL(int64:final_byte) {
     if (final_byte == 0x48i64) {
         drop(set_action(22i64, 0i64, 0i64)); // ACT_SET_TAB_STOP
         pass(NIL);
+    }
+
+    // ESC ( / ) / * / + — Charset Designation for G0–G3
+    // intermediate byte selects the slot, final byte selects charset.
+    // ESC ( B = G0←ASCII, ESC ( 0 = G0←DEC Drawing, etc.
+    if (raw parser_get_intermediate_count() != 0i64) {
+        drop(dispatch_esc_charset(final_byte));
+        d_action_type  = raw mode_get_action_type();
+        d_action_data1 = raw mode_get_action_data1();
+        d_action_data2 = raw mode_get_action_data2();
     }
 
     pass(NIL);

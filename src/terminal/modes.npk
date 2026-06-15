@@ -1,0 +1,120 @@
+// src/terminal/modes.npk — Terminal mode and character set constants
+//
+// v0.2.4: Defines the mode IDs used by ACT_SET_MODE (data1) and the
+// charset IDs used by ACT_SET_CHARSET (data2).
+//
+// Mode IDs are the actual DECSET/DECRST parameter numbers for DEC private
+// modes, and the standard SM/RM parameter numbers for standard modes.
+// The terminal state layer uses these to update its mode flags.
+
+func:failsafe = int32(tbb32:err) { exit 1; };
+
+// ═══════════════════════════════════════════════════════════════════════
+// DEC Private Mode Numbers (DECSET/DECRST — CSI ? Ps h/l)
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:MODE_CURSOR_KEYS        = int64() { pass(1i64); };    // DECCKM: app vs normal cursor keys
+pub func:MODE_COLUMN_132         = int64() { pass(3i64); };    // DECCOLM: 132/80 column mode
+pub func:MODE_SMOOTH_SCROLL      = int64() { pass(4i64); };    // DECSCLM: smooth vs jump scroll
+pub func:MODE_REVERSE_VIDEO      = int64() { pass(5i64); };    // DECSCNM: screen-wide reverse video
+pub func:MODE_ORIGIN             = int64() { pass(6i64); };    // DECOM: origin relative to scroll region
+pub func:MODE_AUTO_WRAP          = int64() { pass(7i64); };    // DECAWM: auto-wrap at right margin
+pub func:MODE_BLINK_CURSOR       = int64() { pass(12i64); };   // ATT610: blinking cursor
+pub func:MODE_CURSOR_VISIBLE     = int64() { pass(25i64); };   // DECTCEM: cursor visibility
+pub func:MODE_ALT_SCREEN         = int64() { pass(47i64); };   // DECSET 47: basic alternate screen
+pub func:MODE_MOUSE_BUTTON       = int64() { pass(1000i64); }; // X10 mouse: button events
+pub func:MODE_MOUSE_DRAG         = int64() { pass(1002i64); }; // button + drag events
+pub func:MODE_MOUSE_ALL          = int64() { pass(1003i64); }; // all mouse events
+pub func:MODE_MOUSE_SGR          = int64() { pass(1006i64); }; // SGR extended mouse encoding
+pub func:MODE_ALT_SCREEN_FULL    = int64() { pass(1049i64); }; // DECSET 1049: save+alt+clear
+pub func:MODE_BRACKETED_PASTE    = int64() { pass(2004i64); }; // bracketed paste mode
+
+// ═══════════════════════════════════════════════════════════════════════
+// Standard Mode Numbers (SM/RM — CSI Ps h/l, no ? prefix)
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:MODE_INSERT             = int64() { pass(4i64); };    // IRM: insert vs replace mode
+pub func:MODE_NEWLINE            = int64() { pass(20i64); };   // LNM: linefeed / newline mode
+
+// ═══════════════════════════════════════════════════════════════════════
+// Character Set IDs (used as data2 in ACT_SET_CHARSET)
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:CS_ASCII                = int64() { pass(0i64); };    // Standard US ASCII (designator 'B')
+pub func:CS_DEC_DRAWING          = int64() { pass(1i64); };    // DEC Special Graphics (designator '0')
+pub func:CS_UK                   = int64() { pass(2i64); };    // UK National (designator 'A')
+pub func:CS_DEC_TECHNICAL        = int64() { pass(3i64); };    // DEC Technical (designator '<')
+pub func:CS_DEC_SUPPLEMENTAL     = int64() { pass(4i64); };    // DEC Supplemental (designator '%')
+
+// ═══════════════════════════════════════════════════════════════════════
+// DEC Drawing Character Map
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Maps ASCII bytes 0x60–0x7E to Unicode box-drawing / special codepoints
+// when the G-set in use is DEC Special Graphics (CS_DEC_DRAWING).
+// The mapping is: ASCII byte b → DEC_DRAWING_UNICODE[b - 0x60]
+// Bytes outside 0x60–0x7E pass through unchanged.
+//
+// Key mappings (VT100 DEC Special Graphics):
+//   0x60 '`' → ◆  (U+25C6) solid diamond
+//   0x61 'a' → ▒  (U+2592) medium shade
+//   0x62 'b' → HT (U+0009) — pass-through
+//   0x63 'c' → FF (U+000C) — pass-through
+//   0x64 'd' → CR (U+000D) — pass-through
+//   0x65 'e' → LF (U+000A) — pass-through
+//   0x66 'f' → °  (U+00B0) degree sign
+//   0x67 'g' → ±  (U+00B1) plus-minus sign
+//   0x68 'h' → NL (U+2424) — pass-through (symbol for newline)
+//   0x69 'i' → VT (U+240B) — pass-through
+//   0x6A 'j' → ┘  (U+2518) box light up-and-left
+//   0x6B 'k' → ┐  (U+2510) box light down-and-left
+//   0x6C 'l' → ┌  (U+250C) box light down-and-right
+//   0x6D 'm' → └  (U+2514) box light up-and-right
+//   0x6E 'n' → ┼  (U+253C) box light vertical-and-horizontal
+//   0x6F 'o' → ⎺  (U+23BA) horizontal scan line 1
+//   0x70 'p' → ⎻  (U+23BB) horizontal scan line 3
+//   0x71 'q' → ─  (U+2500) box light horizontal
+//   0x72 'r' → ⎼  (U+23BC) horizontal scan line 7
+//   0x73 's' → ⎽  (U+23BD) horizontal scan line 9
+//   0x74 't' → ├  (U+251C) box light vertical-and-right
+//   0x75 'u' → ┤  (U+2524) box light vertical-and-left
+//   0x76 'v' → ┴  (U+2534) box light up-and-horizontal
+//   0x77 'w' → ┬  (U+252C) box light down-and-horizontal
+//   0x78 'x' → │  (U+2502) box light vertical
+//   0x79 'y' → ≤  (U+2264) less-than or equal to
+//   0x7A 'z' → ≥  (U+2265) greater-than or equal to
+//   0x7B '{' → π  (U+03C0) greek small letter pi
+//   0x7C '|' → ≠  (U+2260) not equal to
+//   0x7D '}' → £  (U+00A3) pound sign
+//   0x7E '~' → ·  (U+00B7) middle dot
+
+// dec_drawing_translate: translate a byte through the DEC Drawing map.
+// Returns the Unicode codepoint if b is in [0x60..0x7E], else returns b.
+pub func:dec_drawing_translate = int64(int64:b) {
+    if (b == 0x60i64) { pass(0x25C6i64); }  // ◆
+    if (b == 0x61i64) { pass(0x2592i64); }  // ▒
+    if (b == 0x66i64) { pass(0x00B0i64); }  // °
+    if (b == 0x67i64) { pass(0x00B1i64); }  // ±
+    if (b == 0x6Ai64) { pass(0x2518i64); }  // ┘
+    if (b == 0x6Bi64) { pass(0x2510i64); }  // ┐
+    if (b == 0x6Ci64) { pass(0x250Ci64); }  // ┌
+    if (b == 0x6Di64) { pass(0x2514i64); }  // └
+    if (b == 0x6Ei64) { pass(0x253Ci64); }  // ┼
+    if (b == 0x6Fi64) { pass(0x23BAi64); }  // ⎺
+    if (b == 0x70i64) { pass(0x23BBi64); }  // ⎻
+    if (b == 0x71i64) { pass(0x2500i64); }  // ─
+    if (b == 0x72i64) { pass(0x23BCi64); }  // ⎼
+    if (b == 0x73i64) { pass(0x23BDi64); }  // ⎽
+    if (b == 0x74i64) { pass(0x251Ci64); }  // ├
+    if (b == 0x75i64) { pass(0x2524i64); }  // ┤
+    if (b == 0x76i64) { pass(0x2534i64); }  // ┴
+    if (b == 0x77i64) { pass(0x252Ci64); }  // ┬
+    if (b == 0x78i64) { pass(0x2502i64); }  // │
+    if (b == 0x79i64) { pass(0x2264i64); }  // ≤
+    if (b == 0x7Ai64) { pass(0x2265i64); }  // ≥
+    if (b == 0x7Bi64) { pass(0x03C0i64); }  // π
+    if (b == 0x7Ci64) { pass(0x2260i64); }  // ≠
+    if (b == 0x7Di64) { pass(0x00A3i64); }  // £
+    if (b == 0x7Ei64) { pass(0x00B7i64); }  // ·
+    pass(b);  // pass-through for all others
+};

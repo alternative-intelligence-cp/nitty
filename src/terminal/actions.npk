@@ -99,6 +99,30 @@ pub func:ACT_DCS_IGNORED         = int64() { pass(50i64); };  // Unrecognized DC
 // PM / APC — string data consumed silently
 pub func:ACT_IGNORED             = int64() { pass(51i64); };  // PM, APC, unrecognized OSC
 
+// Terminal modes (v0.2.4)
+// data1 = mode number (DECSET param or standard mode param)
+// data2 = 1 (enable/set) or 0 (disable/reset)
+pub func:ACT_SET_MODE            = int64() { pass(52i64); };
+
+// Character set designation (v0.2.4)
+// data1 = G-set slot (0=G0, 1=G1, 2=G2, 3=G3)
+// data2 = CS_* charset id (see modes.npk)
+pub func:ACT_SET_CHARSET         = int64() { pass(53i64); };
+
+// Character set invocation (v0.2.4)
+// data1 = slot to invoke into GL (0=G0, 1=G1, 2=G2, 3=G3)
+pub func:ACT_INVOKE_CHARSET      = int64() { pass(54i64); };
+
+// Reset sequences (v0.2.4)
+pub func:ACT_SOFT_RESET          = int64() { pass(55i64); };  // DECSTR (CSI ! p)
+pub func:ACT_FULL_RESET          = int64() { pass(56i64); };  // RIS (ESC c)
+
+// Device status / attributes (v0.2.4)
+// data1 = query type (5=device status, 6=cursor position report)
+pub func:ACT_DEVICE_STATUS       = int64() { pass(57i64); };
+pub func:ACT_PRIMARY_DA          = int64() { pass(58i64); };  // CSI c  — primary device attributes
+pub func:ACT_SECONDARY_DA        = int64() { pass(59i64); };  // CSI > c — secondary device attributes
+
 // ═══════════════════════════════════════════════════════════════════════
 // Erase Mode Constants
 // ═══════════════════════════════════════════════════════════════════════

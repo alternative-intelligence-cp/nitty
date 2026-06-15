@@ -1,0 +1,233 @@
+// src/terminal/mode_dispatch.npk — Terminal mode sequence dispatcher
+//
+// v0.2.4: Handles DECSET/DECRST (CSI ? Ps h/l) and standard SM/RM
+// (CSI Ps h/l) sequences, emitting ACT_SET_MODE actions.
+//
+// Architecture:
+//   Each dispatch function iterates all params and calls set_mode_action()
+//   for each recognized param. The LAST recognized action is stored in
+//   module-level output state (mode_action_type, mode_action_data1/2).
+//   Unknown mode numbers leave action as ACT_NONE.
+//
+// Usage (from csi_dispatch.npk):
+//   drop(dispatch_decset(param_count));
+//   int64:act = raw mode_get_action_type();
+//   int64:mode = raw mode_get_action_data1();
+//   int64:enabled = raw mode_get_action_data2();
+
+use "escape_types.npk".*;
+use "actions.npk".*;
+use "vt_parser.npk".*;
+use "modes.npk".*;
+
+func:failsafe = int32(tbb32:err) { exit 1; };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Action Output State
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:mode_action_type  = 0i64;
+int64:mode_action_data1 = 0i64;
+int64:mode_action_data2 = 0i64;
+
+func:set_mode_action = NIL(int64:mode_num, int64:enabled) {
+    mode_action_type  = raw ACT_SET_MODE();
+    mode_action_data1 = mode_num;
+    mode_action_data2 = enabled;
+    pass(NIL);
+};
+
+pub func:mode_get_action_type  = int64() { pass(mode_action_type); };
+pub func:mode_get_action_data1 = int64() { pass(mode_action_data1); };
+pub func:mode_get_action_data2 = int64() { pass(mode_action_data2); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Mode Number Validation
+// ═══════════════════════════════════════════════════════════════════════
+
+// dec_mode_valid: returns 1 if num is a known DEC private mode, else 0.
+func:dec_mode_valid = int64(int64:num) {
+    if (num == 1i64)    { pass(1i64); }
+    if (num == 3i64)    { pass(1i64); }
+    if (num == 4i64)    { pass(1i64); }
+    if (num == 5i64)    { pass(1i64); }
+    if (num == 6i64)    { pass(1i64); }
+    if (num == 7i64)    { pass(1i64); }
+    if (num == 12i64)   { pass(1i64); }
+    if (num == 25i64)   { pass(1i64); }
+    if (num == 47i64)   { pass(1i64); }
+    if (num == 1000i64) { pass(1i64); }
+    if (num == 1002i64) { pass(1i64); }
+    if (num == 1003i64) { pass(1i64); }
+    if (num == 1006i64) { pass(1i64); }
+    if (num == 1049i64) { pass(1i64); }
+    if (num == 2004i64) { pass(1i64); }
+    pass(0i64);
+};
+
+// std_mode_valid: returns 1 if num is a known standard SM/RM mode, else 0.
+func:std_mode_valid = int64(int64:num) {
+    if (num == 4i64)  { pass(1i64); }
+    if (num == 20i64) { pass(1i64); }
+    pass(0i64);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Loop State (module-level for while body accumulation)
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:_md_idx     = 0i64;
+int64:_md_enabled = 0i64;
+
+// Helper: process one DEC private mode param.
+func:_md_proc_dec = NIL(int64:num, int64:enabled) {
+    if (raw dec_mode_valid(num) != 0i64) {
+        drop(set_mode_action(num, enabled));
+    }
+    pass(NIL);
+};
+
+// Helper: process one standard mode param.
+func:_md_proc_std = NIL(int64:num, int64:enabled) {
+    if (raw std_mode_valid(num) != 0i64) {
+        drop(set_mode_action(num, enabled));
+    }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// DECSET / DECRST — CSI ? Ps h / CSI ? Ps l
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:dispatch_decset = NIL(int64:param_count) {
+    mode_action_type  = raw ACT_NONE();
+    mode_action_data1 = 0i64;
+    mode_action_data2 = 0i64;
+    _md_idx = 0i64;
+    _md_enabled = 1i64;
+    while (_md_idx < param_count) {
+        int64:num = raw parser_get_csi_param(_md_idx);
+        drop(_md_proc_dec(num, _md_enabled));
+        _md_idx = _md_idx + 1i64;
+    }
+    pass(NIL);
+};
+
+pub func:dispatch_decrst = NIL(int64:param_count) {
+    mode_action_type  = raw ACT_NONE();
+    mode_action_data1 = 0i64;
+    mode_action_data2 = 0i64;
+    _md_idx = 0i64;
+    _md_enabled = 0i64;
+    while (_md_idx < param_count) {
+        int64:num = raw parser_get_csi_param(_md_idx);
+        drop(_md_proc_dec(num, _md_enabled));
+        _md_idx = _md_idx + 1i64;
+    }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Standard SM / RM — CSI Ps h / CSI Ps l
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:dispatch_sm = NIL(int64:param_count) {
+    mode_action_type  = raw ACT_NONE();
+    mode_action_data1 = 0i64;
+    mode_action_data2 = 0i64;
+    _md_idx = 0i64;
+    while (_md_idx < param_count) {
+        int64:num = raw parser_get_csi_param(_md_idx);
+        drop(_md_proc_std(num, 1i64));
+        _md_idx = _md_idx + 1i64;
+    }
+    pass(NIL);
+};
+
+pub func:dispatch_rm = NIL(int64:param_count) {
+    mode_action_type  = raw ACT_NONE();
+    mode_action_data1 = 0i64;
+    mode_action_data2 = 0i64;
+    _md_idx = 0i64;
+    while (_md_idx < param_count) {
+        int64:num = raw parser_get_csi_param(_md_idx);
+        drop(_md_proc_std(num, 0i64));
+        _md_idx = _md_idx + 1i64;
+    }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Charset Designation Dispatch (called from dispatch_esc)
+// ═══════════════════════════════════════════════════════════════════════
+
+// charset_byte_to_id: map designator final byte to CS_* constant.
+// Returns -1 for unknown designators.
+func:charset_byte_to_id = int64(int64:b) {
+    if (b == 0x42i64) { pass(0i64); }   // 'B' → CS_ASCII
+    if (b == 0x30i64) { pass(1i64); }   // '0' → CS_DEC_DRAWING
+    if (b == 0x41i64) { pass(2i64); }   // 'A' → CS_UK
+    if (b == 0x3Ci64) { pass(3i64); }   // '<' → CS_DEC_TECHNICAL
+    if (b == 0x25i64) { pass(4i64); }   // '%' → CS_DEC_SUPPLEMENTAL
+    pass(-1i64);
+};
+
+// charset_inter_to_slot: map intermediate byte to G-set slot (0–3).
+// Returns -1 for unknown.
+func:charset_inter_to_slot = int64(int64:b) {
+    if (b == 0x28i64) { pass(0i64); }   // '(' → G0
+    if (b == 0x29i64) { pass(1i64); }   // ')' → G1
+    if (b == 0x2Ai64) { pass(2i64); }   // '*' → G2
+    if (b == 0x2Bi64) { pass(3i64); }   // '+' → G3
+    pass(-1i64);
+};
+
+// dispatch_esc_charset: handle ESC G-set designation sequences.
+// Called when intermediate_count > 0. Sets mode output state to
+// ACT_SET_CHARSET(slot, charset_id) or leaves ACT_NONE if unknown.
+pub func:dispatch_esc_charset = NIL(int64:final_byte) {
+    mode_action_type  = raw ACT_NONE();
+    mode_action_data1 = 0i64;
+    mode_action_data2 = 0i64;
+    int64:inter0 = raw parser_get_intermediate(0i64);
+    int64:slot   = raw charset_inter_to_slot(inter0);
+    if (slot >= 0i64) {
+        int64:csid = raw charset_byte_to_id(final_byte);
+        if (csid >= 0i64) {
+            mode_action_type  = raw ACT_SET_CHARSET();
+            mode_action_data1 = slot;
+            mode_action_data2 = csid;
+        }
+    }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Combined h / l Routers (called from dispatch_csi)
+// ═══════════════════════════════════════════════════════════════════════
+
+// dispatch_mode_h: handles final byte 'h'.
+// If first intermediate is '?' → DECSET; otherwise → SM.
+pub func:dispatch_mode_h = NIL(int64:param_count) {
+    if (raw parser_get_intermediate_count() != 0i64) {
+        if (raw parser_get_intermediate(0i64) == 0x3Fi64) {
+            drop(dispatch_decset(param_count));
+            pass(NIL);
+        }
+    }
+    drop(dispatch_sm(param_count));
+    pass(NIL);
+};
+
+// dispatch_mode_l: handles final byte 'l'.
+// If first intermediate is '?' → DECRST; otherwise → RM.
+pub func:dispatch_mode_l = NIL(int64:param_count) {
+    if (raw parser_get_intermediate_count() != 0i64) {
+        if (raw parser_get_intermediate(0i64) == 0x3Fi64) {
+            drop(dispatch_decrst(param_count));
+            pass(NIL);
+        }
+    }
+    drop(dispatch_rm(param_count));
+    pass(NIL);
+};

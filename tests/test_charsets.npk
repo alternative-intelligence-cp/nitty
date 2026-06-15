@@ -1,0 +1,215 @@
+// tests/test_charsets.npk — Character set designation and invocation tests
+//
+// v0.2.4: Tests ESC ( B (G0←ASCII), ESC ( 0 (G0←DEC Drawing), etc.
+// Tests SI/SO invocation, and the DEC Drawing character translation map.
+//
+// Import: only csi_dispatch.npk (transitively provides everything else).
+
+use "../src/terminal/csi_dispatch.npk".*;
+use "../src/terminal/mode_dispatch.npk".*;
+use "../src/terminal/modes.npk".*;
+
+int64:STDOUT = 1i64;
+int64:pass_count = 0i64;
+int64:fail_count = 0i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:assert_eq = NIL(string:name, int64:actual, int64:expected) {
+    if (actual == expected) {
+        pass_count = pass_count + 1i64;
+        drop(write_stdout("[PASS] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    } else {
+        fail_count = fail_count + 1i64;
+        drop(write_stdout("[FAIL] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    }
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:err) {
+    drop(write_stdout("FAILSAFE\n"));
+    exit 1;
+};
+
+// ── ESC charset designation helper ───────────────────────────────────
+//
+// ESC sequences arrive as: parser state has intermediate[0] = slot_byte,
+// final_byte = charset_byte. We simulate this by feeding the raw bytes.
+//
+// ESC ( B  → G0 = ASCII
+// ESC ) 0  → G1 = DEC Drawing
+// etc.
+//
+// The parser accumulates intermediate bytes for ESC sequences.
+// Inter byte '(' = 0x28 selects G0, final 'B' = 0x42 selects ASCII.
+
+func:esc_charset = NIL(int64:inter_byte, int64:final_byte) {
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));      // ESC
+    drop(parser_feed_byte(inter_byte));   // ( ) * +
+    drop(parser_feed_byte(final_byte));   // B 0 A < %
+    drop(dispatch_esc(final_byte));
+    pass(NIL);
+};
+
+// ── C0 invocation helper ──────────────────────────────────────────────
+// SI (0x0F) → invoke G0; SO (0x0E) → invoke G1
+// These come as Execute events. The parser dispatches Execute events
+// when it sees C0 control bytes. We test via dispatch_esc with special
+// handling — actually SI/SO are NOT ESC sequences; they go through
+// the parser Execute path. For dispatch testing purposes we verify
+// through dispatch_esc with a simulated intermediate.
+//
+// Actually: SI and SO are handled as ACT_INVOKE_CHARSET from
+// dispatch_esc when we encode them as ESC N/O equivalents.
+// The actual C0 path is tested at the terminal integration level.
+// Here we test the ESC N (SS2) and ESC O (SS3) paths since those
+// ARE ESC sequences and test the ACT_INVOKE_CHARSET action type.
+
+func:esc_invoke = NIL(int64:final_byte) {
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(final_byte));
+    drop(dispatch_esc(final_byte));
+    pass(NIL);
+};
+
+// ── Main ──────────────────────────────────────────────────────────────
+
+func:main = int32() {
+    int64:SET_CHARSET    = raw ACT_SET_CHARSET();
+    int64:INVOKE_CHARSET = raw ACT_INVOKE_CHARSET();
+    int64:NONE           = raw ACT_NONE();
+    int64:ASCII          = raw CS_ASCII();
+    int64:DEC_DRAWING    = raw CS_DEC_DRAWING();
+    int64:UK             = raw CS_UK();
+    int64:DEC_TECH       = raw CS_DEC_TECHNICAL();
+    int64:DEC_SUPP       = raw CS_DEC_SUPPLEMENTAL();
+
+    drop(write_stdout("=== Charset Tests ===\n"));
+
+    // ── G0 Designation (intermediate '(' = 0x28) ──────────────────────
+
+    // T01: ESC ( B → G0 = ASCII
+    drop(esc_charset(0x28i64, 0x42i64));
+    drop(assert_eq("T01a ESC(B → SET_CHARSET", raw dispatch_get_action_type(), SET_CHARSET));
+    drop(assert_eq("T01b ESC(B → slot=0 (G0)", raw dispatch_get_action_data1(), 0i64));
+    drop(assert_eq("T01c ESC(B → charset=ASCII", raw dispatch_get_action_data2(), ASCII));
+
+    // T02: ESC ( 0 → G0 = DEC Drawing
+    drop(esc_charset(0x28i64, 0x30i64));
+    drop(assert_eq("T02a ESC(0 → SET_CHARSET", raw dispatch_get_action_type(), SET_CHARSET));
+    drop(assert_eq("T02b ESC(0 → slot=0 (G0)", raw dispatch_get_action_data1(), 0i64));
+    drop(assert_eq("T02c ESC(0 → charset=DEC_DRAWING", raw dispatch_get_action_data2(), DEC_DRAWING));
+
+    // T03: ESC ( A → G0 = UK
+    drop(esc_charset(0x28i64, 0x41i64));
+    drop(assert_eq("T03a ESC(A → SET_CHARSET", raw dispatch_get_action_type(), SET_CHARSET));
+    drop(assert_eq("T03b ESC(A → slot=0", raw dispatch_get_action_data1(), 0i64));
+    drop(assert_eq("T03c ESC(A → charset=UK", raw dispatch_get_action_data2(), UK));
+
+    // T04: ESC ( < → G0 = DEC Technical
+    drop(esc_charset(0x28i64, 0x3Ci64));
+    drop(assert_eq("T04a ESC(< → SET_CHARSET", raw dispatch_get_action_type(), SET_CHARSET));
+    drop(assert_eq("T04b ESC(< → charset=DEC_TECHNICAL", raw dispatch_get_action_data2(), DEC_TECH));
+
+    // T05: ESC ( % → G0 = DEC Supplemental
+    drop(esc_charset(0x28i64, 0x25i64));
+    drop(assert_eq("T05a ESC(% → SET_CHARSET", raw dispatch_get_action_type(), SET_CHARSET));
+    drop(assert_eq("T05b ESC(% → charset=DEC_SUPPLEMENTAL", raw dispatch_get_action_data2(), DEC_SUPP));
+
+    // ── G1 Designation (intermediate ')' = 0x29) ──────────────────────
+
+    // T06: ESC ) B → G1 = ASCII
+    drop(esc_charset(0x29i64, 0x42i64));
+    drop(assert_eq("T06a ESC)B → SET_CHARSET", raw dispatch_get_action_type(), SET_CHARSET));
+    drop(assert_eq("T06b ESC)B → slot=1 (G1)", raw dispatch_get_action_data1(), 1i64));
+    drop(assert_eq("T06c ESC)B → charset=ASCII", raw dispatch_get_action_data2(), ASCII));
+
+    // T07: ESC ) 0 → G1 = DEC Drawing
+    drop(esc_charset(0x29i64, 0x30i64));
+    drop(assert_eq("T07a ESC)0 → SET_CHARSET", raw dispatch_get_action_type(), SET_CHARSET));
+    drop(assert_eq("T07b ESC)0 → slot=1", raw dispatch_get_action_data1(), 1i64));
+    drop(assert_eq("T07c ESC)0 → charset=DEC_DRAWING", raw dispatch_get_action_data2(), DEC_DRAWING));
+
+    // ── G2 Designation (intermediate '*' = 0x2A) ──────────────────────
+
+    // T08: ESC * B → G2 = ASCII
+    drop(esc_charset(0x2Ai64, 0x42i64));
+    drop(assert_eq("T08a ESC*B → SET_CHARSET", raw dispatch_get_action_type(), SET_CHARSET));
+    drop(assert_eq("T08b ESC*B → slot=2 (G2)", raw dispatch_get_action_data1(), 2i64));
+    drop(assert_eq("T08c ESC*B → charset=ASCII", raw dispatch_get_action_data2(), ASCII));
+
+    // T09: ESC * 0 → G2 = DEC Drawing
+    drop(esc_charset(0x2Ai64, 0x30i64));
+    drop(assert_eq("T09a ESC*0 → SET_CHARSET", raw dispatch_get_action_type(), SET_CHARSET));
+    drop(assert_eq("T09b ESC*0 → slot=2", raw dispatch_get_action_data1(), 2i64));
+
+    // ── G3 Designation (intermediate '+' = 0x2B) ──────────────────────
+
+    // T10: ESC + B → G3 = ASCII
+    drop(esc_charset(0x2Bi64, 0x42i64));
+    drop(assert_eq("T10a ESC+B → SET_CHARSET", raw dispatch_get_action_type(), SET_CHARSET));
+    drop(assert_eq("T10b ESC+B → slot=3 (G3)", raw dispatch_get_action_data1(), 3i64));
+    drop(assert_eq("T10c ESC+B → charset=ASCII", raw dispatch_get_action_data2(), ASCII));
+
+    // T11: ESC + 0 → G3 = DEC Drawing
+    drop(esc_charset(0x2Bi64, 0x30i64));
+    drop(assert_eq("T11a ESC+0 → SET_CHARSET", raw dispatch_get_action_type(), SET_CHARSET));
+    drop(assert_eq("T11b ESC+0 → slot=3", raw dispatch_get_action_data1(), 3i64));
+
+    // ── Unknown charset → ACT_NONE ────────────────────────────────────
+
+    // T12: ESC ( X → unknown final byte → ACT_NONE
+    drop(esc_charset(0x28i64, 0x58i64));
+    drop(assert_eq("T12 ESC(X unknown charset → ACT_NONE", raw dispatch_get_action_type(), NONE));
+
+    // ── ESC N/O — SS2/SS3 (single-shift charset invocation) ──────────
+
+    // T13: ESC N → INVOKE_CHARSET slot=2 (SS2: single-shift G2)
+    drop(esc_invoke(0x4Ei64));
+    drop(assert_eq("T13a ESC N → INVOKE_CHARSET", raw dispatch_get_action_type(), INVOKE_CHARSET));
+    drop(assert_eq("T13b ESC N → slot=2 (G2)", raw dispatch_get_action_data1(), 2i64));
+
+    // T14: ESC O → INVOKE_CHARSET slot=3 (SS3: single-shift G3)
+    drop(esc_invoke(0x4Fi64));
+    drop(assert_eq("T14a ESC O → INVOKE_CHARSET", raw dispatch_get_action_type(), INVOKE_CHARSET));
+    drop(assert_eq("T14b ESC O → slot=3 (G3)", raw dispatch_get_action_data1(), 3i64));
+
+    // ── DEC Drawing character map ─────────────────────────────────────
+
+    // T15: Key DEC Drawing mappings via dec_drawing_translate
+    drop(assert_eq("T15a 'j'=0x6A → ┘ (U+2518)", raw dec_drawing_translate(0x6Ai64), 0x2518i64));
+    drop(assert_eq("T15b 'k'=0x6B → ┐ (U+2510)", raw dec_drawing_translate(0x6Bi64), 0x2510i64));
+    drop(assert_eq("T15c 'l'=0x6C → ┌ (U+250C)", raw dec_drawing_translate(0x6Ci64), 0x250Ci64));
+    drop(assert_eq("T15d 'm'=0x6D → └ (U+2514)", raw dec_drawing_translate(0x6Di64), 0x2514i64));
+    drop(assert_eq("T15e 'n'=0x6E → ┼ (U+253C)", raw dec_drawing_translate(0x6Ei64), 0x253Ci64));
+    drop(assert_eq("T15f 'q'=0x71 → ─ (U+2500)", raw dec_drawing_translate(0x71i64), 0x2500i64));
+    drop(assert_eq("T15g 't'=0x74 → ├ (U+251C)", raw dec_drawing_translate(0x74i64), 0x251Ci64));
+    drop(assert_eq("T15h 'u'=0x75 → ┤ (U+2524)", raw dec_drawing_translate(0x75i64), 0x2524i64));
+    drop(assert_eq("T15i 'v'=0x76 → ┴ (U+2534)", raw dec_drawing_translate(0x76i64), 0x2534i64));
+    drop(assert_eq("T15j 'w'=0x77 → ┬ (U+252C)", raw dec_drawing_translate(0x77i64), 0x252Ci64));
+    drop(assert_eq("T15k 'x'=0x78 → │ (U+2502)", raw dec_drawing_translate(0x78i64), 0x2502i64));
+    drop(assert_eq("T15l '`'=0x60 → ◆ (U+25C6)", raw dec_drawing_translate(0x60i64), 0x25C6i64));
+    drop(assert_eq("T15m 'f'=0x66 → ° (U+00B0)", raw dec_drawing_translate(0x66i64), 0x00B0i64));
+
+    // Pass-through: non-drawing byte returns unchanged
+    drop(assert_eq("T15n 'A'=0x41 pass-through", raw dec_drawing_translate(0x41i64), 0x41i64));
+    drop(assert_eq("T15o 0x20 pass-through", raw dec_drawing_translate(0x20i64), 0x20i64));
+
+    // ── Summary ───────────────────────────────────────────────────────
+    if (fail_count == 0i64) {
+        drop(write_stdout("All charset tests passed.\n\n"));
+        exit 0;
+    }
+    drop(write_stdout("SOME CHARSET TESTS FAILED.\n"));
+    exit 1;
+};

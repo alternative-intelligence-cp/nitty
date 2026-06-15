@@ -1,0 +1,272 @@
+// tests/test_special_sequences.npk — Special sequence tests
+//
+// v0.2.4: Tests cursor save/restore (DECSC/DECRC, CSI s/u), soft reset
+// (DECSTR via CSI ! p), full reset (RIS via ESC c), device status queries
+// (DSR, CPR, DA1, DA2), and DECSET 1049 compound mode behavior.
+
+use "../src/terminal/csi_dispatch.npk".*;
+use "../src/terminal/mode_dispatch.npk".*;
+
+int64:STDOUT = 1i64;
+int64:pass_count = 0i64;
+int64:fail_count = 0i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:assert_eq = NIL(string:name, int64:actual, int64:expected) {
+    if (actual == expected) {
+        pass_count = pass_count + 1i64;
+        drop(write_stdout("[PASS] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    } else {
+        fail_count = fail_count + 1i64;
+        drop(write_stdout("[FAIL] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    }
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:err) {
+    drop(write_stdout("FAILSAFE\n"));
+    exit 1;
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────
+
+// Feed CSI final_byte with no params and dispatch
+func:csi0 = NIL(int64:final_byte) {
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(final_byte));
+    drop(dispatch_csi(final_byte, 0i64));
+    pass(NIL);
+};
+
+// Feed CSI with one intermediate byte and final byte
+func:csi_inter = NIL(int64:inter_byte, int64:final_byte) {
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(inter_byte));
+    drop(parser_feed_byte(final_byte));
+    drop(dispatch_csi(final_byte, 0i64));
+    pass(NIL);
+};
+
+// Feed CSI with one param and final byte
+func:csi1 = NIL(int64:param0, int64:final_byte) {
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    // feed param digit
+    if (param0 >= 10i64) {
+        int64:d = param0 / 10i64;
+        drop(parser_feed_byte(0x30i64 + d));
+        int64:r = param0 - (d * 10i64);
+        drop(parser_feed_byte(0x30i64 + r));
+    }
+    if (param0 < 10i64) {
+        drop(parser_feed_byte(0x30i64 + param0));
+    }
+    drop(parser_feed_byte(final_byte));
+    drop(dispatch_csi(final_byte, 1i64));
+    pass(NIL);
+};
+
+// Feed ESC final_byte and dispatch
+func:esc1 = NIL(int64:final_byte) {
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(final_byte));
+    drop(dispatch_esc(final_byte));
+    pass(NIL);
+};
+
+// Feed digit digits for mode number (module-level state to avoid shadowing)
+int64:_ds_n       = 0i64;
+int64:_ds_base    = 0i64;
+int64:_ds_digit   = 0i64;
+int64:_ds_started = 0i64;
+
+func:_ds_emit_and_start = NIL(int64:d) {
+    drop(parser_feed_byte(0x30i64 + d));
+    _ds_started = 1i64;
+    pass(NIL);
+};
+
+func:_ds_maybe_zero = NIL() {
+    if (_ds_started > 0i64) {
+        drop(parser_feed_byte(0x30i64));
+    }
+    pass(NIL);
+};
+
+func:feed_priv_mode_digits = NIL(int64:num) {
+    _ds_n       = num;
+    _ds_started = 0i64;
+    _ds_base    = 1000i64;
+    while (_ds_base >= 10i64) {
+        _ds_digit = _ds_n / _ds_base;
+        if (_ds_digit > 0i64) {
+            drop(_ds_emit_and_start(_ds_digit));
+        }
+        if (_ds_digit == 0i64) {
+            drop(_ds_maybe_zero());
+        }
+        _ds_n    = _ds_n - (_ds_digit * _ds_base);
+        _ds_base = _ds_base / 10i64;
+    }
+    drop(parser_feed_byte(0x30i64 + _ds_n));
+    pass(NIL);
+};
+
+// Feed CSI ? Ps h (DECSET) and dispatch
+func:decset = NIL(int64:ps) {
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x3Fi64));
+    drop(feed_priv_mode_digits(ps));
+    drop(parser_feed_byte(0x68i64));
+    drop(dispatch_csi(0x68i64, 1i64));
+    pass(NIL);
+};
+
+// Feed CSI ? Ps l (DECRST) and dispatch
+func:decrst = NIL(int64:ps) {
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x3Fi64));
+    drop(feed_priv_mode_digits(ps));
+    drop(parser_feed_byte(0x6Ci64));
+    drop(dispatch_csi(0x6Ci64, 1i64));
+    pass(NIL);
+};
+
+// ── Main ──────────────────────────────────────────────────────────────
+
+func:main = int32() {
+    int64:SAVE    = raw ACT_CURSOR_SAVE();
+    int64:RESTORE = raw ACT_CURSOR_RESTORE();
+    int64:SOFT    = raw ACT_SOFT_RESET();
+    int64:FULL    = raw ACT_FULL_RESET();
+    int64:DSR     = raw ACT_DEVICE_STATUS();
+    int64:PDA     = raw ACT_PRIMARY_DA();
+    int64:SDA     = raw ACT_SECONDARY_DA();
+    int64:SETMODE = raw ACT_SET_MODE();
+
+    drop(write_stdout("=== Special Sequence Tests ===\n"));
+
+    // ── Cursor Save / Restore ─────────────────────────────────────────
+
+    // T01: ESC 7 → DECSC (save cursor)
+    drop(esc1(0x37i64));
+    drop(assert_eq("T01 ESC 7 → CURSOR_SAVE", raw dispatch_get_action_type(), SAVE));
+
+    // T02: ESC 8 → DECRC (restore cursor)
+    drop(esc1(0x38i64));
+    drop(assert_eq("T02 ESC 8 → CURSOR_RESTORE", raw dispatch_get_action_type(), RESTORE));
+
+    // T03: CSI s → ANSI save cursor
+    drop(csi0(0x73i64));
+    drop(assert_eq("T03 CSI s → CURSOR_SAVE", raw dispatch_get_action_type(), SAVE));
+
+    // T04: CSI u → ANSI restore cursor
+    drop(csi0(0x75i64));
+    drop(assert_eq("T04 CSI u → CURSOR_RESTORE", raw dispatch_get_action_type(), RESTORE));
+
+    // ── Soft Reset (DECSTR) ───────────────────────────────────────────
+
+    // T05: CSI ! p → SOFT_RESET
+    drop(csi_inter(0x21i64, 0x70i64));
+    drop(assert_eq("T05 CSI ! p → SOFT_RESET", raw dispatch_get_action_type(), SOFT));
+
+    // T06: CSI p (no '!') → ACT_NONE (not a DECSTR)
+    drop(csi0(0x70i64));
+    drop(assert_eq("T06 CSI p (no '!') → ACT_NONE", raw dispatch_get_action_type(), raw ACT_NONE()));
+
+    // ── Full Reset (RIS) ──────────────────────────────────────────────
+
+    // T07: ESC c → FULL_RESET
+    drop(esc1(0x63i64));
+    drop(assert_eq("T07 ESC c → FULL_RESET", raw dispatch_get_action_type(), FULL));
+
+    // ── Device Status Report ──────────────────────────────────────────
+
+    // T08: CSI 5 n → DEVICE_STATUS query=5
+    drop(csi1(5i64, 0x6Ei64));
+    drop(assert_eq("T08a CSI 5 n → DEVICE_STATUS", raw dispatch_get_action_type(), DSR));
+    drop(assert_eq("T08b CSI 5 n → query=5", raw dispatch_get_action_data1(), 5i64));
+
+    // T09: CSI 6 n → DEVICE_STATUS query=6 (CPR)
+    drop(csi1(6i64, 0x6Ei64));
+    drop(assert_eq("T09a CSI 6 n → DEVICE_STATUS", raw dispatch_get_action_type(), DSR));
+    drop(assert_eq("T09b CSI 6 n → query=6", raw dispatch_get_action_data1(), 6i64));
+
+    // T10: CSI n (no param, defaults to 5) → DEVICE_STATUS query=5
+    drop(csi0(0x6Ei64));
+    drop(assert_eq("T10a CSI n (default) → DEVICE_STATUS", raw dispatch_get_action_type(), DSR));
+    drop(assert_eq("T10b CSI n default → query=5", raw dispatch_get_action_data1(), 5i64));
+
+    // ── Device Attributes ─────────────────────────────────────────────
+
+    // T11: CSI c → PRIMARY_DA
+    drop(csi0(0x63i64));
+    drop(assert_eq("T11 CSI c → PRIMARY_DA", raw dispatch_get_action_type(), PDA));
+
+    // T12: CSI 0 c → PRIMARY_DA (same as no-param)
+    drop(csi1(0i64, 0x63i64));
+    drop(assert_eq("T12 CSI 0 c → PRIMARY_DA", raw dispatch_get_action_type(), PDA));
+
+    // T13: CSI > c → SECONDARY_DA (intermediate '>' = 0x3E)
+    drop(csi_inter(0x3Ei64, 0x63i64));
+    drop(assert_eq("T13 CSI > c → SECONDARY_DA", raw dispatch_get_action_type(), SDA));
+
+    // ── DECSET 1049 (alt screen) ──────────────────────────────────────
+
+    // T14: DECSET 1049 → SET_MODE(1049, enabled=1)
+    drop(decset(1049i64));
+    drop(assert_eq("T14a DECSET 1049 → SET_MODE", raw dispatch_get_action_type(), SETMODE));
+    drop(assert_eq("T14b DECSET 1049 mode=1049", raw dispatch_get_action_data1(), 1049i64));
+    drop(assert_eq("T14c DECSET 1049 enabled=1", raw dispatch_get_action_data2(), 1i64));
+
+    // T15: DECRST 1049 → SET_MODE(1049, enabled=0)
+    drop(decrst(1049i64));
+    drop(assert_eq("T15a DECRST 1049 → SET_MODE", raw dispatch_get_action_type(), SETMODE));
+    drop(assert_eq("T15b DECRST 1049 mode=1049", raw dispatch_get_action_data1(), 1049i64));
+    drop(assert_eq("T15c DECRST 1049 enabled=0", raw dispatch_get_action_data2(), 0i64));
+
+    // ── ESC index/special sequences (regression) ──────────────────────
+
+    // T16: ESC D → INDEX
+    drop(esc1(0x44i64));
+    drop(assert_eq("T16 ESC D → INDEX", raw dispatch_get_action_type(), raw ACT_INDEX()));
+
+    // T17: ESC M → REVERSE_INDEX
+    drop(esc1(0x4Di64));
+    drop(assert_eq("T17 ESC M → REVERSE_INDEX", raw dispatch_get_action_type(), raw ACT_REVERSE_INDEX()));
+
+    // T18: ESC E → NEXT_LINE
+    drop(esc1(0x45i64));
+    drop(assert_eq("T18 ESC E → NEXT_LINE", raw dispatch_get_action_type(), raw ACT_NEXT_LINE()));
+
+    // T19: ESC H → SET_TAB_STOP
+    drop(esc1(0x48i64));
+    drop(assert_eq("T19 ESC H → SET_TAB_STOP", raw dispatch_get_action_type(), raw ACT_SET_TAB_STOP()));
+
+    // ── Summary ───────────────────────────────────────────────────────
+    if (fail_count == 0i64) {
+        drop(write_stdout("All special sequence tests passed.\n\n"));
+        exit 0;
+    }
+    drop(write_stdout("SOME SPECIAL SEQUENCE TESTS FAILED.\n"));
+    exit 1;
+};

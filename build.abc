@@ -188,3 +188,27 @@ deps = []
 flags = []
 link_libraries = []
 link_paths = []
+
+[target.test_mode_dispatch]
+type = "binary"
+sources = ["tests/test_mode_dispatch.npk"]
+deps = []
+flags = []
+link_libraries = []
+link_paths = []
+
+[target.test_charsets]
+type = "binary"
+sources = ["tests/test_charsets.npk"]
+deps = []
+flags = []
+link_libraries = []
+link_paths = []
+
+[target.test_special_sequences]
+type = "binary"
+sources = ["tests/test_special_sequences.npk"]
+deps = []
+flags = []
+link_libraries = []
+link_paths = []

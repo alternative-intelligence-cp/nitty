@@ -1,0 +1,281 @@
+// tests/test_mode_dispatch.npk — Unit tests for mode and special sequence dispatch
+//
+// v0.2.4: Tests DECSET/DECRST (CSI ? Ps h/l) and standard SM/RM (CSI Ps h/l).
+// Verifies ACT_SET_MODE is produced with correct mode number and enable flag.
+// Unknown mode numbers produce ACT_NONE.
+//
+// Import: only csi_dispatch.npk (transitively provides vt_parser, actions, modes).
+
+use "../src/terminal/csi_dispatch.npk".*;
+use "../src/terminal/mode_dispatch.npk".*;
+
+int64:STDOUT = 1i64;
+int64:pass_count = 0i64;
+int64:fail_count = 0i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:assert_eq = NIL(string:name, int64:actual, int64:expected) {
+    if (actual == expected) {
+        pass_count = pass_count + 1i64;
+        drop(write_stdout("[PASS] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    } else {
+        fail_count = fail_count + 1i64;
+        drop(write_stdout("[FAIL] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    }
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:err) {
+    drop(write_stdout("FAILSAFE\n"));
+    exit 1;
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────
+
+// Feed param digits for a 1-4 digit number.
+// All module-level mutations happen at function body level (never inside if blocks).
+int64:_fd_n       = 0i64;
+int64:_fd_base    = 0i64;
+int64:_fd_digit   = 0i64;
+int64:_fd_started = 0i64;
+
+// Emit one digit byte and mark started.
+func:_fd_emit_and_start = NIL(int64:d) {
+    drop(parser_feed_byte(0x30i64 + d));
+    _fd_started = 1i64;
+    pass(NIL);
+};
+
+// Emit a zero if already started (for interior zeros).
+func:_fd_maybe_zero = NIL() {
+    if (_fd_started > 0i64) {
+        drop(parser_feed_byte(0x30i64));
+    }
+    pass(NIL);
+};
+
+func:feed_digits = NIL(int64:num) {
+    _fd_n       = num;
+    _fd_started = 0i64;
+    _fd_base    = 1000i64;
+    while (_fd_base >= 10i64) {
+        _fd_digit = _fd_n / _fd_base;
+        // At while-body level: call helpers to emit digit or zero
+        if (_fd_digit > 0i64) {
+            drop(_fd_emit_and_start(_fd_digit));
+        }
+        if (_fd_digit == 0i64) {
+            drop(_fd_maybe_zero());
+        }
+        _fd_n    = _fd_n - (_fd_digit * _fd_base);
+        _fd_base = _fd_base / 10i64;
+    }
+    // Always feed ones digit
+    drop(parser_feed_byte(0x30i64 + _fd_n));
+    pass(NIL);
+};
+
+// Feed CSI ? Ps h  (DECSET — enable private mode Ps)
+func:decset = NIL(int64:ps) {
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));   // ESC
+    drop(parser_feed_byte(0x5Bi64));   // [
+    drop(parser_feed_byte(0x3Fi64));   // ?
+    drop(feed_digits(ps));
+    drop(parser_feed_byte(0x68i64));   // h
+    drop(dispatch_csi(0x68i64, 1i64));
+    pass(NIL);
+};
+
+// Feed CSI ? Ps l  (DECRST — disable private mode Ps)
+func:decrst = NIL(int64:ps) {
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x3Fi64));
+    drop(feed_digits(ps));
+    drop(parser_feed_byte(0x6Ci64));   // l
+    drop(dispatch_csi(0x6Ci64, 1i64));
+    pass(NIL);
+};
+
+// Feed CSI Ps h  (SM — enable standard mode Ps)
+func:sm = NIL(int64:ps) {
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(feed_digits(ps));
+    drop(parser_feed_byte(0x68i64));
+    drop(dispatch_csi(0x68i64, 1i64));
+    pass(NIL);
+};
+
+// Feed CSI Ps l  (RM — disable standard mode Ps)
+func:rm = NIL(int64:ps) {
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));
+    drop(parser_feed_byte(0x5Bi64));
+    drop(feed_digits(ps));
+    drop(parser_feed_byte(0x6Ci64));
+    drop(dispatch_csi(0x6Ci64, 1i64));
+    pass(NIL);
+};
+
+// ── Main ──────────────────────────────────────────────────────────────
+
+func:main = int32() {
+    int64:SET_MODE = raw ACT_SET_MODE();
+    int64:NONE     = raw ACT_NONE();
+
+    drop(write_stdout("=== Mode Dispatch Tests ===\n"));
+
+    // ── DECSET: enable DEC private modes ──────────────────────────────
+
+    // T01: MODE_CURSOR_KEYS (1)
+    drop(decset(1i64));
+    drop(assert_eq("T01a DECSET 1 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
+    drop(assert_eq("T01b DECSET 1 mode=1", raw dispatch_get_action_data1(), 1i64));
+    drop(assert_eq("T01c DECSET 1 enabled=1", raw dispatch_get_action_data2(), 1i64));
+
+    // T02: MODE_ORIGIN (6)
+    drop(decset(6i64));
+    drop(assert_eq("T02a DECSET 6 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
+    drop(assert_eq("T02b DECSET 6 mode=6", raw dispatch_get_action_data1(), 6i64));
+    drop(assert_eq("T02c DECSET 6 enabled=1", raw dispatch_get_action_data2(), 1i64));
+
+    // T03: MODE_AUTO_WRAP (7)
+    drop(decset(7i64));
+    drop(assert_eq("T03a DECSET 7 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
+    drop(assert_eq("T03b DECSET 7 mode=7", raw dispatch_get_action_data1(), 7i64));
+    drop(assert_eq("T03c DECSET 7 enabled=1", raw dispatch_get_action_data2(), 1i64));
+
+    // T04: MODE_CURSOR_VISIBLE (25)
+    drop(decset(25i64));
+    drop(assert_eq("T04a DECSET 25 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
+    drop(assert_eq("T04b DECSET 25 mode=25", raw dispatch_get_action_data1(), 25i64));
+    drop(assert_eq("T04c DECSET 25 enabled=1", raw dispatch_get_action_data2(), 1i64));
+
+    // T05: MODE_ALT_SCREEN_FULL (1049)
+    drop(decset(1049i64));
+    drop(assert_eq("T05a DECSET 1049 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
+    drop(assert_eq("T05b DECSET 1049 mode=1049", raw dispatch_get_action_data1(), 1049i64));
+    drop(assert_eq("T05c DECSET 1049 enabled=1", raw dispatch_get_action_data2(), 1i64));
+
+    // T06: MODE_BRACKETED_PASTE (2004)
+    drop(decset(2004i64));
+    drop(assert_eq("T06a DECSET 2004 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
+    drop(assert_eq("T06b DECSET 2004 mode=2004", raw dispatch_get_action_data1(), 2004i64));
+    drop(assert_eq("T06c DECSET 2004 enabled=1", raw dispatch_get_action_data2(), 1i64));
+
+    // T07: MODE_MOUSE_BUTTON (1000)
+    drop(decset(1000i64));
+    drop(assert_eq("T07a DECSET 1000 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
+    drop(assert_eq("T07b DECSET 1000 mode=1000", raw dispatch_get_action_data1(), 1000i64));
+
+    // T08: MODE_MOUSE_SGR (1006)
+    drop(decset(1006i64));
+    drop(assert_eq("T08a DECSET 1006 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
+    drop(assert_eq("T08b DECSET 1006 mode=1006", raw dispatch_get_action_data1(), 1006i64));
+
+    // ── DECRST: disable DEC private modes ─────────────────────────────
+
+    // T09: DECRST 25 (hide cursor)
+    drop(decrst(25i64));
+    drop(assert_eq("T09a DECRST 25 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
+    drop(assert_eq("T09b DECRST 25 mode=25", raw dispatch_get_action_data1(), 25i64));
+    drop(assert_eq("T09c DECRST 25 enabled=0", raw dispatch_get_action_data2(), 0i64));
+
+    // T10: DECRST 1049 (exit alt screen)
+    drop(decrst(1049i64));
+    drop(assert_eq("T10a DECRST 1049 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
+    drop(assert_eq("T10b DECRST 1049 mode=1049", raw dispatch_get_action_data1(), 1049i64));
+    drop(assert_eq("T10c DECRST 1049 enabled=0", raw dispatch_get_action_data2(), 0i64));
+
+    // T11: DECRST 7 (disable auto-wrap)
+    drop(decrst(7i64));
+    drop(assert_eq("T11a DECRST 7 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
+    drop(assert_eq("T11b DECRST 7 enabled=0", raw dispatch_get_action_data2(), 0i64));
+
+    // ── Unknown mode → ACT_NONE ───────────────────────────────────────
+
+    // T12: Unknown mode 9999
+    drop(decset(9999i64));
+    drop(assert_eq("T12 DECSET 9999 unknown → ACT_NONE", raw dispatch_get_action_type(), NONE));
+
+    // T13: Unknown mode 99
+    drop(decset(99i64));
+    drop(assert_eq("T13 DECSET 99 unknown → ACT_NONE", raw dispatch_get_action_type(), NONE));
+
+    // ── Standard SM/RM ────────────────────────────────────────────────
+
+    // T14: SM 4 (IRM — insert mode on)
+    drop(sm(4i64));
+    drop(assert_eq("T14a SM 4 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
+    drop(assert_eq("T14b SM 4 mode=4", raw dispatch_get_action_data1(), 4i64));
+    drop(assert_eq("T14c SM 4 enabled=1", raw dispatch_get_action_data2(), 1i64));
+
+    // T15: RM 4 (IRM — insert mode off)
+    drop(rm(4i64));
+    drop(assert_eq("T15a RM 4 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
+    drop(assert_eq("T15b RM 4 mode=4", raw dispatch_get_action_data1(), 4i64));
+    drop(assert_eq("T15c RM 4 enabled=0", raw dispatch_get_action_data2(), 0i64));
+
+    // T16: SM 20 (LNM — newline mode on)
+    drop(sm(20i64));
+    drop(assert_eq("T16a SM 20 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
+    drop(assert_eq("T16b SM 20 mode=20", raw dispatch_get_action_data1(), 20i64));
+    drop(assert_eq("T16c SM 20 enabled=1", raw dispatch_get_action_data2(), 1i64));
+
+    // T17: RM 20 (LNM off)
+    drop(rm(20i64));
+    drop(assert_eq("T17a RM 20 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
+    drop(assert_eq("T17b RM 20 mode=20", raw dispatch_get_action_data1(), 20i64));
+    drop(assert_eq("T17c RM 20 enabled=0", raw dispatch_get_action_data2(), 0i64));
+
+    // T18: SM 99 (unknown standard mode → ACT_NONE)
+    drop(sm(99i64));
+    drop(assert_eq("T18 SM 99 unknown → ACT_NONE", raw dispatch_get_action_type(), NONE));
+
+    // ── Additional DEC modes ───────────────────────────────────────────
+
+    // T19: DECSET 3 (DECCOLM)
+    drop(decset(3i64));
+    drop(assert_eq("T19 DECSET 3 mode=3", raw dispatch_get_action_data1(), 3i64));
+
+    // T20: DECSET 5 (reverse video)
+    drop(decset(5i64));
+    drop(assert_eq("T20 DECSET 5 mode=5", raw dispatch_get_action_data1(), 5i64));
+
+    // T21: DECSET 12 (blink cursor)
+    drop(decset(12i64));
+    drop(assert_eq("T21 DECSET 12 mode=12", raw dispatch_get_action_data1(), 12i64));
+
+    // T22: DECSET 47 (basic alt screen)
+    drop(decset(47i64));
+    drop(assert_eq("T22 DECSET 47 mode=47", raw dispatch_get_action_data1(), 47i64));
+
+    // T23: DECSET 1002 (mouse drag)
+    drop(decset(1002i64));
+    drop(assert_eq("T23 DECSET 1002 mode=1002", raw dispatch_get_action_data1(), 1002i64));
+
+    // T24: DECSET 1003 (all mouse events)
+    drop(decset(1003i64));
+    drop(assert_eq("T24 DECSET 1003 mode=1003", raw dispatch_get_action_data1(), 1003i64));
+
+    // ── Summary ───────────────────────────────────────────────────────
+    if (fail_count == 0i64) {
+        drop(write_stdout("All mode dispatch tests passed.\n\n"));
+        exit 0;
+    }
+    drop(write_stdout("SOME MODE DISPATCH TESTS FAILED.\n"));
+    exit 1;
+};
