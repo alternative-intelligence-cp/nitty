@@ -1,0 +1,651 @@
+// src/terminal/terminal_state_apply.npk — Action application layer
+//
+// v0.2.5: Applies TerminalAction events to the ts_* state.
+// All state reads/writes go through the ts_get_*/ts_set_* API since
+// module-level variables from imported modules are not directly
+// accessible in Nitpick — only functions are exported.
+//
+// Entry points:
+//   ts_print(codepoint)                 — write a visible character
+//   ts_execute(byte)                    — apply one C0 control byte
+//   ts_apply_action(type, data1, data2) — apply one decoded action
+//
+// Depends on: terminal_state.npk, grid.npk, grid_resize.npk,
+//             cell.npk, attributes.npk, modes.npk, actions.npk
+
+use "terminal_state.npk".*;
+use "grid.npk".*;
+use "grid_resize.npk".*;
+use "cell.npk".*;
+use "attributes.npk".*;
+use "modes.npk".*;
+use "actions.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Auto-Wrap Helper
+// ═══════════════════════════════════════════════════════════════════════
+
+// Handle pending wrap: if at right margin and auto-wrap on, advance row.
+func:ts_do_wrap = NIL() {
+    if (raw ts_get_pending_wrap() == 0i64) { pass(NIL); }
+    if (raw ts_get_mode_auto_wrap() == 0i64) { pass(NIL); }
+    drop(ts_set_cursor_col(0i64));
+    drop(ts_set_pending_wrap(0i64));
+    int64:row = raw ts_get_cursor_row();
+    int64:sbot = raw ts_get_scroll_bottom();
+    if (row < sbot) {
+        drop(ts_set_cursor_row(row + 1i64));
+        pass(NIL);
+    }
+    // At bottom of scroll region — scroll up, keep cursor on last row
+    drop(grid_scroll_up(raw ts_get_scroll_top(), sbot, 1i64));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Character Output
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Write a Unicode codepoint at the current cursor position.
+pub func:ts_print = NIL(int64:cp) {
+    // Resolve charset translation
+    int64:gl = raw ts_get_gl();
+    int64:charset = raw ts_get_g0();
+    if (gl == 1i64) { charset = raw ts_get_g1(); }
+    if (gl == 2i64) { charset = raw ts_get_g2(); }
+    if (gl == 3i64) { charset = raw ts_get_g3(); }
+
+    int64:out_cp = cp;
+    if (charset == 1i64) {
+        // CS_DEC_DRAWING = 1
+        if (cp >= 0x60i64) {
+            if (cp <= 0x7Ei64) {
+                out_cp = raw dec_drawing_translate(cp);
+            }
+        }
+    }
+
+    drop(ts_do_wrap());
+
+    int64:row = raw ts_get_cursor_row();
+    int64:col = raw ts_get_cursor_col();
+    int64:cols = raw ts_get_cols();
+
+    // Insert mode: shift cells right before writing
+    if (raw ts_get_mode_insert() != 0i64) {
+        drop(grid_insert_chars(row, col, 1i64));
+    }
+
+    // Write cell
+    int64:attrs = raw ts_current_cell_attrs();
+    int64:flags = raw ts_current_cell_flags();
+    drop(grid_set(row, col, out_cp, attrs, flags));
+
+    // Advance cursor
+    if (col >= cols - 1i64) {
+        drop(ts_set_pending_wrap(1i64));
+        pass(NIL);
+    }
+    drop(ts_set_cursor_col(col + 1i64));
+    drop(ts_set_pending_wrap(0i64));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Line Feed Helper (shared by ts_execute and ACT_INDEX)
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:ts_apply_lf = NIL() {
+    drop(ts_set_pending_wrap(0i64));
+    if (raw ts_get_mode_newline() != 0i64) { drop(ts_set_cursor_col(0i64)); }
+    int64:row = raw ts_get_cursor_row();
+    int64:sbot = raw ts_get_scroll_bottom();
+    if (row < sbot) {
+        drop(ts_set_cursor_row(row + 1i64));
+        pass(NIL);
+    }
+    drop(grid_scroll_up(raw ts_get_scroll_top(), sbot, 1i64));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// C0 Control Execution
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Execute one C0 control byte (0x00–0x1F).
+pub func:ts_execute = NIL(int64:byte) {
+    // BEL: 0x07
+    if (byte == 0x07i64) {
+        drop(ts_set_bell_pending(1i64));
+        pass(NIL);
+    }
+    // BS: 0x08 — move cursor back one column
+    if (byte == 0x08i64) {
+        int64:col = raw ts_get_cursor_col();
+        if (col > 0i64) { drop(ts_set_cursor_col(col - 1i64)); }
+        drop(ts_set_pending_wrap(0i64));
+        pass(NIL);
+    }
+    // HT: 0x09 — advance to next tab stop
+    if (byte == 0x09i64) {
+        int64:next = raw ts_tab_next(raw ts_get_cursor_col());
+        int64:cols = raw ts_get_cols();
+        if (next < cols) { drop(ts_set_cursor_col(next)); }
+        if (next >= cols) { drop(ts_set_cursor_col(cols - 1i64)); }
+        drop(ts_set_pending_wrap(0i64));
+        pass(NIL);
+    }
+    // LF/VT/FF: 0x0A, 0x0B, 0x0C
+    if (byte == 0x0Ai64) { drop(ts_apply_lf()); pass(NIL); }
+    if (byte == 0x0Bi64) { drop(ts_apply_lf()); pass(NIL); }
+    if (byte == 0x0Ci64) { drop(ts_apply_lf()); pass(NIL); }
+    // CR: 0x0D
+    if (byte == 0x0Di64) {
+        drop(ts_set_cursor_col(0i64));
+        drop(ts_set_pending_wrap(0i64));
+        pass(NIL);
+    }
+    // SO: 0x0E — invoke G1 as GL
+    if (byte == 0x0Ei64) { drop(ts_set_gl(1i64)); pass(NIL); }
+    // SI: 0x0F — invoke G0 as GL
+    if (byte == 0x0Fi64) { drop(ts_set_gl(0i64)); pass(NIL); }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cursor Movement Helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+func:ts_cursor_up_n = NIL(int64:n) {
+    int64:clamp = 0i64;
+    if (raw ts_get_mode_origin() != 0i64) { clamp = raw ts_get_scroll_top(); }
+    int64:row = raw ts_get_cursor_row() - n;
+    if (row < clamp) { row = clamp; }
+    drop(ts_set_cursor_row(row));
+    drop(ts_set_pending_wrap(0i64));
+    pass(NIL);
+};
+
+func:ts_cursor_down_n = NIL(int64:n) {
+    int64:clamp = raw ts_get_rows() - 1i64;
+    if (raw ts_get_mode_origin() != 0i64) { clamp = raw ts_get_scroll_bottom(); }
+    int64:row = raw ts_get_cursor_row() + n;
+    if (row > clamp) { row = clamp; }
+    drop(ts_set_cursor_row(row));
+    drop(ts_set_pending_wrap(0i64));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Erase Helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+func:ts_erase_display = NIL(int64:mode) {
+    int64:row = raw ts_get_cursor_row();
+    int64:col = raw ts_get_cursor_col();
+    int64:rows = raw ts_get_rows();
+    int64:cols = raw ts_get_cols();
+    // mode 0: erase from cursor to end of screen
+    if (mode == 0i64) {
+        drop(grid_clear_region(row, col, row, cols - 1i64));
+        if (row + 1i64 < rows) {
+            drop(grid_clear_region(row + 1i64, 0i64, rows - 1i64, cols - 1i64));
+        }
+        pass(NIL);
+    }
+    // mode 1: erase from beginning to cursor
+    if (mode == 1i64) {
+        if (row > 0i64) {
+            drop(grid_clear_region(0i64, 0i64, row - 1i64, cols - 1i64));
+        }
+        drop(grid_clear_region(row, 0i64, row, col));
+        pass(NIL);
+    }
+    // mode 2 or 3: erase entire visible screen
+    drop(grid_clear_region(0i64, 0i64, rows - 1i64, cols - 1i64));
+    pass(NIL);
+};
+
+func:ts_erase_line = NIL(int64:mode) {
+    int64:row = raw ts_get_cursor_row();
+    int64:col = raw ts_get_cursor_col();
+    int64:cols = raw ts_get_cols();
+    // mode 0: cursor to end of line
+    if (mode == 0i64) {
+        drop(grid_clear_region(row, col, row, cols - 1i64));
+        pass(NIL);
+    }
+    // mode 1: beginning to cursor
+    if (mode == 1i64) {
+        drop(grid_clear_region(row, 0i64, row, col));
+        pass(NIL);
+    }
+    // mode 2: entire line
+    drop(grid_clear_row(row));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Mode Application Helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+func:ts_apply_dec_mode = NIL(int64:idx, int64:enabled) {
+    if (idx == 1i64)    { drop(ts_set_mode_cursor_keys(enabled));    pass(NIL); }
+    if (idx == 3i64)    { drop(ts_set_mode_column_132(enabled));     pass(NIL); }
+    if (idx == 4i64)    { drop(ts_set_mode_smooth_scroll(enabled));  pass(NIL); }
+    if (idx == 5i64)    { drop(ts_set_mode_reverse_video(enabled));  pass(NIL); }
+    if (idx == 6i64) {
+        drop(ts_set_mode_origin(enabled));
+        drop(ts_set_cursor_row(0i64));
+        drop(ts_set_cursor_col(0i64));
+        drop(ts_set_pending_wrap(0i64));
+        pass(NIL);
+    }
+    if (idx == 7i64)    { drop(ts_set_mode_auto_wrap(enabled));      pass(NIL); }
+    if (idx == 12i64)   { drop(ts_set_mode_blink_cursor(enabled));   pass(NIL); }
+    if (idx == 25i64)   { drop(ts_set_mode_cursor_visible(enabled)); pass(NIL); }
+    if (idx == 47i64)   { drop(ts_switch_screen(enabled));           pass(NIL); }
+    if (idx == 1000i64) { drop(ts_set_mode_mouse_button(enabled));   pass(NIL); }
+    if (idx == 1002i64) { drop(ts_set_mode_mouse_drag(enabled));     pass(NIL); }
+    if (idx == 1003i64) { drop(ts_set_mode_mouse_all(enabled));      pass(NIL); }
+    if (idx == 1006i64) { drop(ts_set_mode_mouse_sgr(enabled));      pass(NIL); }
+    if (idx == 1049i64) { drop(ts_switch_screen_1049(enabled));      pass(NIL); }
+    if (idx == 2004i64) { drop(ts_set_mode_bracketed_paste(enabled)); pass(NIL); }
+    pass(NIL);
+};
+
+func:ts_apply_ansi_mode = NIL(int64:idx, int64:enabled) {
+    if (idx == 4i64)  { drop(ts_set_mode_insert(enabled));  pass(NIL); }
+    if (idx == 20i64) { drop(ts_set_mode_newline(enabled)); pass(NIL); }
+    pass(NIL);
+};
+
+// Screen switch helpers
+func:ts_switch_screen = NIL(int64:to_alt) {
+    if (to_alt != 0i64) {
+        drop(ts_set_mode_alt_screen(1i64));
+        drop(grid_set_active(1i64));
+        pass(NIL);
+    }
+    drop(ts_set_mode_alt_screen(0i64));
+    drop(grid_set_active(0i64));
+    pass(NIL);
+};
+
+func:ts_switch_screen_1049 = NIL(int64:to_alt) {
+    int64:rows = raw ts_get_rows();
+    int64:cols = raw ts_get_cols();
+    if (to_alt != 0i64) {
+        drop(ts_save_cursor());
+        drop(ts_set_mode_alt_screen_full(1i64));
+        drop(grid_set_active(1i64));
+        drop(grid_clear_region(0i64, 0i64, rows - 1i64, cols - 1i64));
+        drop(ts_set_cursor_row(0i64));
+        drop(ts_set_cursor_col(0i64));
+        drop(ts_set_pending_wrap(0i64));
+        pass(NIL);
+    }
+    drop(ts_set_mode_alt_screen_full(0i64));
+    drop(grid_set_active(0i64));
+    drop(ts_restore_cursor());
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Device Status Response Helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+// Write a positive decimal integer to the response buffer (max 5 digits).
+func:ts_response_push_int = NIL(int64:n) {
+    if (n == 0i64) { drop(ts_response_push(0x30i64)); pass(NIL); }
+    int64:v = n;
+    int64:d4 = v / 10000i64; v = v - (d4 * 10000i64);
+    int64:d3 = v / 1000i64;  v = v - (d3 * 1000i64);
+    int64:d2 = v / 100i64;   v = v - (d2 * 100i64);
+    int64:d1 = v / 10i64;
+    int64:d0 = v - (d1 * 10i64);
+    int64:started = 0i64;
+    if (d4 > 0i64) { drop(ts_response_push(d4 + 0x30i64)); started = 1i64; }
+    if (started != 0i64) { drop(ts_response_push(d3 + 0x30i64)); }
+    if (d3 > 0i64) { started = 1i64; }
+    if (started != 0i64) { drop(ts_response_push(d2 + 0x30i64)); }
+    if (d2 > 0i64) { started = 1i64; }
+    if (started != 0i64) { drop(ts_response_push(d1 + 0x30i64)); }
+    if (d1 > 0i64) { started = 1i64; }
+    drop(ts_response_push(d0 + 0x30i64));
+    pass(NIL);
+};
+
+// Generate CPR response: ESC [ row ; col R  (1-based)
+func:ts_cpr_response = NIL() {
+    drop(ts_response_clear());
+    drop(ts_response_push(0x1Bi64));
+    drop(ts_response_push(0x5Bi64));
+    drop(ts_response_push_int(raw ts_get_cursor_row() + 1i64));
+    drop(ts_response_push(0x3Bi64));
+    drop(ts_response_push_int(raw ts_get_cursor_col() + 1i64));
+    drop(ts_response_push(0x52i64));
+    pass(NIL);
+};
+
+// Generate Primary DA: ESC [ ? 62 ; 22 c
+func:ts_primary_da_response = NIL() {
+    drop(ts_response_clear());
+    drop(ts_response_push(0x1Bi64));
+    drop(ts_response_push(0x5Bi64));
+    drop(ts_response_push(0x3Fi64));
+    drop(ts_response_push(0x36i64));
+    drop(ts_response_push(0x32i64));
+    drop(ts_response_push(0x3Bi64));
+    drop(ts_response_push(0x32i64));
+    drop(ts_response_push(0x32i64));
+    drop(ts_response_push(0x63i64));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Master Action Dispatcher
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Apply a single decoded terminal action to the current state.
+pub func:ts_apply_action = NIL(int64:type, int64:data1, int64:data2) {
+    int64:n    = 0i64;
+    int64:row  = 0i64;
+    int64:col  = 0i64;
+    int64:rows = 0i64;
+    int64:cols = 0i64;
+
+    // ── ACT_CURSOR_UP (1) ──────────────────────────────────
+    if (type == 1i64) {
+        n = data1;
+        if (n < 1i64) { n = 1i64; }
+        drop(ts_cursor_up_n(n));
+        pass(NIL);
+    }
+    // ── ACT_CURSOR_DOWN (2) ────────────────────────────────
+    if (type == 2i64) {
+        n = data1;
+        if (n < 1i64) { n = 1i64; }
+        drop(ts_cursor_down_n(n));
+        pass(NIL);
+    }
+    // ── ACT_CURSOR_FORWARD (3) ─────────────────────────────
+    if (type == 3i64) {
+        n = data1;
+        if (n < 1i64) { n = 1i64; }
+        cols = raw ts_get_cols();
+        col = raw ts_get_cursor_col() + n;
+        if (col >= cols) { col = cols - 1i64; }
+        drop(ts_set_cursor_col(col));
+        drop(ts_set_pending_wrap(0i64));
+        pass(NIL);
+    }
+    // ── ACT_CURSOR_BACK (4) ────────────────────────────────
+    if (type == 4i64) {
+        n = data1;
+        if (n < 1i64) { n = 1i64; }
+        col = raw ts_get_cursor_col() - n;
+        if (col < 0i64) { col = 0i64; }
+        drop(ts_set_cursor_col(col));
+        drop(ts_set_pending_wrap(0i64));
+        pass(NIL);
+    }
+    // ── ACT_CURSOR_POS (5) — CUP/HVP, 1-based ─────────────
+    if (type == 5i64) {
+        rows = raw ts_get_rows();
+        cols = raw ts_get_cols();
+        row = data1 - 1i64;
+        col = data2 - 1i64;
+        if (row < 0i64) { row = 0i64; }
+        if (col < 0i64) { col = 0i64; }
+        if (raw ts_get_mode_origin() != 0i64) {
+            row = row + raw ts_get_scroll_top();
+        }
+        if (row >= rows) { row = rows - 1i64; }
+        if (col >= cols) { col = cols - 1i64; }
+        drop(ts_set_cursor_row(row));
+        drop(ts_set_cursor_col(col));
+        drop(ts_set_pending_wrap(0i64));
+        pass(NIL);
+    }
+    // ── ACT_CURSOR_COL (6) — HPA, 1-based ─────────────────
+    if (type == 6i64) {
+        cols = raw ts_get_cols();
+        col = data1 - 1i64;
+        if (col < 0i64)    { col = 0i64; }
+        if (col >= cols)   { col = cols - 1i64; }
+        drop(ts_set_cursor_col(col));
+        drop(ts_set_pending_wrap(0i64));
+        pass(NIL);
+    }
+    // ── ACT_CURSOR_ROW (7) — VPA, 1-based ─────────────────
+    if (type == 7i64) {
+        rows = raw ts_get_rows();
+        row = data1 - 1i64;
+        if (row < 0i64)    { row = 0i64; }
+        if (row >= rows)   { row = rows - 1i64; }
+        drop(ts_set_cursor_row(row));
+        drop(ts_set_pending_wrap(0i64));
+        pass(NIL);
+    }
+    // ── ACT_CURSOR_NEXT_LINE (8) — CNL ────────────────────
+    if (type == 8i64) {
+        n = data1;
+        if (n < 1i64) { n = 1i64; }
+        drop(ts_cursor_down_n(n));
+        drop(ts_set_cursor_col(0i64));
+        pass(NIL);
+    }
+    // ── ACT_CURSOR_PREV_LINE (9) — CPL ────────────────────
+    if (type == 9i64) {
+        n = data1;
+        if (n < 1i64) { n = 1i64; }
+        drop(ts_cursor_up_n(n));
+        drop(ts_set_cursor_col(0i64));
+        pass(NIL);
+    }
+    // ── ACT_CURSOR_SAVE (10) — DECSC ──────────────────────
+    if (type == 10i64) { drop(ts_save_cursor());    pass(NIL); }
+    // ── ACT_CURSOR_RESTORE (11) — DECRC ───────────────────
+    if (type == 11i64) { drop(ts_restore_cursor()); pass(NIL); }
+
+    // ── ACT_ERASE_DISPLAY (12) — ED ───────────────────────
+    if (type == 12i64) { drop(ts_erase_display(data1)); pass(NIL); }
+    // ── ACT_ERASE_LINE (13) — EL ──────────────────────────
+    if (type == 13i64) { drop(ts_erase_line(data1)); pass(NIL); }
+    // ── ACT_ERASE_CHARS (14) — ECH ────────────────────────
+    if (type == 14i64) {
+        n = data1;
+        if (n < 1i64) { n = 1i64; }
+        cols = raw ts_get_cols();
+        col = raw ts_get_cursor_col();
+        int64:end_col = col + n - 1i64;
+        if (end_col >= cols) { end_col = cols - 1i64; }
+        drop(grid_clear_region(raw ts_get_cursor_row(), col,
+                               raw ts_get_cursor_row(), end_col));
+        pass(NIL);
+    }
+
+    // ── ACT_INSERT_LINES (15) — IL ────────────────────────
+    if (type == 15i64) {
+        n = data1;
+        if (n < 1i64) { n = 1i64; }
+        drop(grid_insert_lines(raw ts_get_cursor_row(), n,
+                               raw ts_get_scroll_bottom()));
+        pass(NIL);
+    }
+    // ── ACT_DELETE_LINES (16) — DL ────────────────────────
+    if (type == 16i64) {
+        n = data1;
+        if (n < 1i64) { n = 1i64; }
+        drop(grid_delete_lines(raw ts_get_cursor_row(), n,
+                               raw ts_get_scroll_bottom()));
+        pass(NIL);
+    }
+    // ── ACT_INSERT_CHARS (17) — ICH ───────────────────────
+    if (type == 17i64) {
+        n = data1;
+        if (n < 1i64) { n = 1i64; }
+        drop(grid_insert_chars(raw ts_get_cursor_row(),
+                               raw ts_get_cursor_col(), n));
+        pass(NIL);
+    }
+    // ── ACT_DELETE_CHARS (18) — DCH ───────────────────────
+    if (type == 18i64) {
+        n = data1;
+        if (n < 1i64) { n = 1i64; }
+        drop(grid_delete_chars(raw ts_get_cursor_row(),
+                               raw ts_get_cursor_col(), n));
+        pass(NIL);
+    }
+
+    // ── ACT_SCROLL_UP (19) — SU ───────────────────────────
+    if (type == 19i64) {
+        n = data1;
+        if (n < 1i64) { n = 1i64; }
+        drop(grid_scroll_up(raw ts_get_scroll_top(),
+                            raw ts_get_scroll_bottom(), n));
+        pass(NIL);
+    }
+    // ── ACT_SCROLL_DOWN (20) — SD ─────────────────────────
+    if (type == 20i64) {
+        n = data1;
+        if (n < 1i64) { n = 1i64; }
+        drop(grid_scroll_down(raw ts_get_scroll_top(),
+                              raw ts_get_scroll_bottom(), n));
+        pass(NIL);
+    }
+    // ── ACT_SET_SCROLL_REGION (21) — DECSTBM ──────────────
+    if (type == 21i64) {
+        rows = raw ts_get_rows();
+        int64:stop = data1;
+        int64:sbot = data2;
+        if (stop == 0i64) { stop = 1i64; }
+        if (sbot == 0i64) { sbot = rows; }
+        stop = stop - 1i64;
+        sbot = sbot - 1i64;
+        if (stop < 0i64)     { stop = 0i64; }
+        if (sbot >= rows)    { sbot = rows - 1i64; }
+        if (stop >= sbot)    { pass(NIL); }  // invalid range
+        drop(ts_set_scroll_top(stop));
+        drop(ts_set_scroll_bottom(sbot));
+        drop(ts_set_cursor_col(0i64));
+        row = 0i64;
+        if (raw ts_get_mode_origin() != 0i64) { row = stop; }
+        drop(ts_set_cursor_row(row));
+        drop(ts_set_pending_wrap(0i64));
+        pass(NIL);
+    }
+
+    // ── ACT_SET_TAB_STOP (22) — HTS ───────────────────────
+    if (type == 22i64) {
+        drop(ts_tab_set(raw ts_get_cursor_col()));
+        pass(NIL);
+    }
+    // ── ACT_CLEAR_TAB_STOP (23) — TBC ─────────────────────
+    if (type == 23i64) {
+        if (data1 == 0i64) { drop(ts_tab_clear(raw ts_get_cursor_col())); }
+        if (data1 == 3i64) { drop(ts_tab_clear_all()); }
+        pass(NIL);
+    }
+    // ── ACT_CURSOR_FORWARD_TAB (24) — CHT ─────────────────
+    if (type == 24i64) {
+        n = data1;
+        if (n < 1i64) { n = 1i64; }
+        cols = raw ts_get_cols();
+        col = raw ts_get_cursor_col();
+        int64:i = 0i64;
+        while (i < n) {
+            col = raw ts_tab_next(col);
+            i = i + 1i64;
+        }
+        if (col >= cols) { col = cols - 1i64; }
+        drop(ts_set_cursor_col(col));
+        drop(ts_set_pending_wrap(0i64));
+        pass(NIL);
+    }
+    // ── ACT_CURSOR_BACKWARD_TAB (25) — CBT ────────────────
+    if (type == 25i64) {
+        n = data1;
+        if (n < 1i64) { n = 1i64; }
+        col = raw ts_get_cursor_col();
+        int64:i = 0i64;
+        while (i < n) {
+            col = raw ts_tab_prev(col);
+            i = i + 1i64;
+        }
+        if (col < 0i64) { col = 0i64; }
+        drop(ts_set_cursor_col(col));
+        drop(ts_set_pending_wrap(0i64));
+        pass(NIL);
+    }
+
+    // ── ACT_INDEX (26) — ESC D ────────────────────────────
+    if (type == 26i64) { drop(ts_apply_lf()); pass(NIL); }
+    // ── ACT_REVERSE_INDEX (27) — ESC M ────────────────────
+    if (type == 27i64) {
+        drop(ts_set_pending_wrap(0i64));
+        row = raw ts_get_cursor_row();
+        int64:stop = raw ts_get_scroll_top();
+        if (row > stop) {
+            drop(ts_set_cursor_row(row - 1i64));
+            pass(NIL);
+        }
+        drop(grid_scroll_down(stop, raw ts_get_scroll_bottom(), 1i64));
+        pass(NIL);
+    }
+    // ── ACT_NEXT_LINE (28) — ESC E ────────────────────────
+    if (type == 28i64) {
+        drop(ts_set_cursor_col(0i64));
+        drop(ts_set_pending_wrap(0i64));
+        drop(ts_apply_lf());
+        pass(NIL);
+    }
+
+    // ── ACT_SET_ATTRS (29) / ACT_RESET_ATTRS (30) ─────────
+    // sgr_dispatch already applied changes directly to attributes.npk.
+    // Nothing to do here.
+
+    // ── ACT_SET_MODE (52) ─────────────────────────────────
+    if (type == 52i64) {
+        // data1=mode_number, data2=is_dec*2+enabled
+        int64:idx     = data1;
+        int64:is_dec  = data2 / 2i64;
+        int64:enabled = data2 - (is_dec * 2i64);
+        if (is_dec != 0i64) { drop(ts_apply_dec_mode(idx, enabled)); }
+        if (is_dec == 0i64) { drop(ts_apply_ansi_mode(idx, enabled)); }
+        pass(NIL);
+    }
+
+    // ── ACT_SET_CHARSET (53) ──────────────────────────────
+    if (type == 53i64) {
+        if (data1 == 0i64) { drop(ts_set_g0(data2)); }
+        if (data1 == 1i64) { drop(ts_set_g1(data2)); }
+        if (data1 == 2i64) { drop(ts_set_g2(data2)); }
+        if (data1 == 3i64) { drop(ts_set_g3(data2)); }
+        pass(NIL);
+    }
+    // ── ACT_INVOKE_CHARSET (54) ───────────────────────────
+    if (type == 54i64) {
+        if (data1 >= 0i64) {
+            if (data1 <= 3i64) { drop(ts_set_gl(data1)); }
+        }
+        pass(NIL);
+    }
+
+    // ── ACT_SOFT_RESET (55) — DECSTR ──────────────────────
+    if (type == 55i64) { drop(ts_reset_soft()); pass(NIL); }
+    // ── ACT_FULL_RESET (56) — RIS ─────────────────────────
+    if (type == 56i64) { drop(ts_reset_hard()); pass(NIL); }
+
+    // ── ACT_DEVICE_STATUS (57) — DSR ──────────────────────
+    if (type == 57i64) {
+        if (data1 == 6i64) { drop(ts_cpr_response()); }
+        pass(NIL);
+    }
+    // ── ACT_PRIMARY_DA (58) ───────────────────────────────
+    if (type == 58i64) { drop(ts_primary_da_response()); pass(NIL); }
+
+    // All other action types: silently ignored.
+    pass(NIL);
+};

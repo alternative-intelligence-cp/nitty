@@ -505,3 +505,72 @@ pub func:ts_response_clear = NIL() {
     ts_response_len = 0i64;
     pass(NIL);
 };
+
+// ═══════════════════════════════════════════════════════════════════════
+// State Getters — for external modules and tests
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:ts_get_rows         = int64() { pass(ts_rows); };
+pub func:ts_get_cols         = int64() { pass(ts_cols); };
+pub func:ts_get_cursor_row   = int64() { pass(ts_cursor_row); };
+pub func:ts_get_cursor_col   = int64() { pass(ts_cursor_col); };
+pub func:ts_get_pending_wrap = int64() { pass(ts_pending_wrap); };
+pub func:ts_get_scroll_top   = int64() { pass(ts_scroll_top); };
+pub func:ts_get_scroll_bottom = int64() { pass(ts_scroll_bottom); };
+pub func:ts_get_bell_pending = int64() { pass(ts_bell_pending); };
+pub func:ts_get_response_len = int64() { pass(ts_response_len); };
+pub func:ts_get_title_len    = int64() { pass(ts_title_len); };
+pub func:ts_get_gl           = int64() { pass(ts_gl); };
+pub func:ts_get_g0           = int64() { pass(ts_g0); };
+pub func:ts_get_g1           = int64() { pass(ts_g1); };
+pub func:ts_get_g2           = int64() { pass(ts_g2); };
+pub func:ts_get_g3           = int64() { pass(ts_g3); };
+
+// Mode getters
+pub func:ts_get_mode_cursor_keys     = int64() { pass(ts_mode_cursor_keys); };
+pub func:ts_get_mode_origin          = int64() { pass(ts_mode_origin); };
+pub func:ts_get_mode_auto_wrap       = int64() { pass(ts_mode_auto_wrap); };
+pub func:ts_get_mode_insert          = int64() { pass(ts_mode_insert); };
+pub func:ts_get_mode_newline         = int64() { pass(ts_mode_newline); };
+pub func:ts_get_mode_cursor_visible  = int64() { pass(ts_mode_cursor_visible); };
+pub func:ts_get_mode_reverse_video   = int64() { pass(ts_mode_reverse_video); };
+pub func:ts_get_mode_alt_screen      = int64() { pass(ts_mode_alt_screen); };
+pub func:ts_get_mode_alt_screen_full = int64() { pass(ts_mode_alt_screen_full); };
+pub func:ts_get_mode_mouse_button    = int64() { pass(ts_mode_mouse_button); };
+pub func:ts_get_mode_mouse_sgr       = int64() { pass(ts_mode_mouse_sgr); };
+pub func:ts_get_mode_bracketed_paste = int64() { pass(ts_mode_bracketed_paste); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// State Setters — for terminal_state_apply.npk
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:ts_set_cursor_row    = NIL(int64:v) { ts_cursor_row    = v; pass(NIL); };
+pub func:ts_set_cursor_col    = NIL(int64:v) { ts_cursor_col    = v; pass(NIL); };
+pub func:ts_set_pending_wrap  = NIL(int64:v) { ts_pending_wrap  = v; pass(NIL); };
+pub func:ts_set_scroll_top    = NIL(int64:v) { ts_scroll_top    = v; pass(NIL); };
+pub func:ts_set_scroll_bottom = NIL(int64:v) { ts_scroll_bottom = v; pass(NIL); };
+pub func:ts_set_bell_pending  = NIL(int64:v) { ts_bell_pending  = v; pass(NIL); };
+pub func:ts_set_gl            = NIL(int64:v) { ts_gl = v;            pass(NIL); };
+pub func:ts_set_g0            = NIL(int64:v) { ts_g0 = v;            pass(NIL); };
+pub func:ts_set_g1            = NIL(int64:v) { ts_g1 = v;            pass(NIL); };
+pub func:ts_set_g2            = NIL(int64:v) { ts_g2 = v;            pass(NIL); };
+pub func:ts_set_g3            = NIL(int64:v) { ts_g3 = v;            pass(NIL); };
+
+// Mode setters
+pub func:ts_set_mode_cursor_keys     = NIL(int64:v) { ts_mode_cursor_keys     = v; pass(NIL); };
+pub func:ts_set_mode_column_132      = NIL(int64:v) { ts_mode_column_132      = v; pass(NIL); };
+pub func:ts_set_mode_smooth_scroll   = NIL(int64:v) { ts_mode_smooth_scroll   = v; pass(NIL); };
+pub func:ts_set_mode_reverse_video   = NIL(int64:v) { ts_mode_reverse_video   = v; pass(NIL); };
+pub func:ts_set_mode_origin          = NIL(int64:v) { ts_mode_origin          = v; pass(NIL); };
+pub func:ts_set_mode_auto_wrap       = NIL(int64:v) { ts_mode_auto_wrap       = v; pass(NIL); };
+pub func:ts_set_mode_blink_cursor    = NIL(int64:v) { ts_mode_blink_cursor    = v; pass(NIL); };
+pub func:ts_set_mode_cursor_visible  = NIL(int64:v) { ts_mode_cursor_visible  = v; pass(NIL); };
+pub func:ts_set_mode_alt_screen      = NIL(int64:v) { ts_mode_alt_screen      = v; pass(NIL); };
+pub func:ts_set_mode_mouse_button    = NIL(int64:v) { ts_mode_mouse_button    = v; pass(NIL); };
+pub func:ts_set_mode_mouse_drag      = NIL(int64:v) { ts_mode_mouse_drag      = v; pass(NIL); };
+pub func:ts_set_mode_mouse_all       = NIL(int64:v) { ts_mode_mouse_all       = v; pass(NIL); };
+pub func:ts_set_mode_mouse_sgr       = NIL(int64:v) { ts_mode_mouse_sgr       = v; pass(NIL); };
+pub func:ts_set_mode_alt_screen_full = NIL(int64:v) { ts_mode_alt_screen_full = v; pass(NIL); };
+pub func:ts_set_mode_bracketed_paste = NIL(int64:v) { ts_mode_bracketed_paste = v; pass(NIL); };
+pub func:ts_set_mode_insert          = NIL(int64:v) { ts_mode_insert          = v; pass(NIL); };
+pub func:ts_set_mode_newline         = NIL(int64:v) { ts_mode_newline         = v; pass(NIL); };
