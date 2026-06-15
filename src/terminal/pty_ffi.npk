@@ -1,0 +1,29 @@
+// src/terminal/pty_ffi.npk — Nitpick-side extern declarations for PTY C shim
+//
+// v0.1.0: PTY allocation, slave access, winsize, and configuration.
+//
+// Matches shim/pty/nitty_pty_shim.h signatures exactly.
+// All PTY pointers and fds are opaque int64.
+
+extern "nitty_pty_shim" {
+
+    // ═══════════════════════════════════════════════════════════════════
+    // PTY allocation
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_pty_openpt    = int64();
+    func:nitty_pty_grantpt   = int64(int64:master_fd);
+    func:nitty_pty_unlockpt  = int64(int64:master_fd);
+    func:nitty_pty_get_slave_path = int64(int64:master_fd, int64:buf_ptr);
+    func:nitty_pty_open_slave     = int64(int64:path_ptr);
+    func:nitty_pty_get_slave_path_str = string(int64:master_fd);
+
+    // ═══════════════════════════════════════════════════════════════════
+    // PTY configuration
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_pty_set_nonblock  = int64(int64:fd);
+    func:nitty_pty_set_winsize   = int64(int64:fd, int64:rows, int64:cols, int64:xpixel, int64:ypixel);
+    func:nitty_pty_get_winsize   = int64(int64:fd);
+    func:nitty_pty_close         = int64(int64:fd);
+}

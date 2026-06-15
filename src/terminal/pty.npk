@@ -1,0 +1,143 @@
+// src/terminal/pty.npk — PTY allocation and management for Nitty
+//
+// v0.1.0: Wraps the C-side PTY shim for high-level use.
+//
+// PTY allocation sequence:
+//   1. pty_allocate()  → master fd (runs openpt + grantpt + unlockpt)
+//   2. pty_set_size()  → set terminal dimensions
+//   3. pty_get_size()  → query terminal dimensions
+//   4. pty_close()     → close the master fd
+//
+// The slave path is retrieved automatically during allocation and
+// can be queried via pty_slave_path().
+
+use "pty_ffi.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════
+// Module state — master fd is stored after allocation
+// ═══════════════════════════════════════════════════════════════════
+
+// We store the master fd in a module-level variable.
+// -1 = not allocated.
+int64:g_master_fd = -1i64;
+
+// ═══════════════════════════════════════════════════════════════════
+// PTY allocation
+// ═══════════════════════════════════════════════════════════════════
+
+/// Allocate a new PTY pair. Performs the full allocation sequence:
+///   posix_openpt → grantpt → unlockpt → get slave path
+/// Returns master fd on success (>= 0), -1 on failure.
+/// On failure, cleans up any partially-allocated resources.
+pub func:pty_allocate = int64() {
+    // Step 1: Open master PTY
+    int64:master = nitty_pty_openpt();
+    if (master < 0i64) {
+        pass(-1i64);
+    }
+
+    // Step 2: Grant permissions on slave
+    int64:grant_r = nitty_pty_grantpt(master);
+    if (grant_r != 0i64) {
+        nitty_pty_close(master);
+        pass(-1i64);
+    }
+
+    // Step 3: Unlock slave
+    int64:unlock_r = nitty_pty_unlockpt(master);
+    if (unlock_r != 0i64) {
+        nitty_pty_close(master);
+        pass(-1i64);
+    }
+
+    // Step 4: Get slave path (into internal static buffer)
+    int64:path_len = nitty_pty_get_slave_path(master, 0i64);
+    if (path_len < 0i64) {
+        nitty_pty_close(master);
+        pass(-1i64);
+    }
+
+    // Store master fd
+    g_master_fd = master;
+
+    pass(master);
+};
+
+/// Get the master fd of the allocated PTY.
+/// Returns -1 if no PTY is allocated.
+pub func:pty_get_master_fd = int64() {
+    pass(g_master_fd);
+};
+
+/// Get the slave device path (e.g. "/dev/pts/5").
+/// Returns the path string, or empty string if not allocated.
+pub func:pty_slave_path = string() {
+    if (g_master_fd < 0i64) {
+        pass("");
+    }
+    string:path = nitty_pty_get_slave_path_str(g_master_fd);
+    pass(path);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Terminal size
+// ═══════════════════════════════════════════════════════════════════
+
+/// Set the terminal window size on the master PTY.
+/// Returns 0 on success, -1 on error.
+pub func:pty_set_size = int64(int64:rows, int64:cols) {
+    if (g_master_fd < 0i64) { pass(-1i64); }
+    int64:result = nitty_pty_set_winsize(g_master_fd, rows, cols, 0i64, 0i64);
+    pass(result);
+};
+
+/// Get the terminal window size from the master PTY.
+/// Returns encoded: rows * 65536 + cols.
+/// Returns -1 on error.
+pub func:pty_get_size = int64() {
+    if (g_master_fd < 0i64) { pass(-1i64); }
+    int64:packed = nitty_pty_get_winsize(g_master_fd);
+    pass(packed);
+};
+
+/// Extract rows from encoded winsize.
+/// Encoding: (rows << 48) | (cols << 32) | ...
+pub func:pty_size_rows = int64(int64:encoded) {
+    // Shift right 48 and mask 16 bits
+    int64:shifted = encoded >> 48i64;
+    int64:rows = shifted & 0xFFFFi64;
+    pass(rows);
+};
+
+/// Extract cols from encoded winsize.
+pub func:pty_size_cols = int64(int64:encoded) {
+    int64:shifted = encoded >> 32i64;
+    int64:cols = shifted & 0xFFFFi64;
+    pass(cols);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Configuration
+// ═══════════════════════════════════════════════════════════════════
+
+/// Set the master fd to non-blocking I/O.
+/// Returns 0 on success, -1 on error.
+pub func:pty_set_nonblock = int64() {
+    if (g_master_fd < 0i64) { pass(-1i64); }
+    int64:result = nitty_pty_set_nonblock(g_master_fd);
+    pass(result);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Cleanup
+// ═══════════════════════════════════════════════════════════════════
+
+/// Close the master PTY fd and reset state.
+/// Returns 0 on success, -1 if not allocated or close fails.
+/// Safe to call multiple times.
+pub func:pty_close = int64() {
+    if (g_master_fd < 0i64) { pass(0i64); }
+    int64:result = nitty_pty_close(g_master_fd);
+    g_master_fd = -1i64;
+    pass(result);
+};

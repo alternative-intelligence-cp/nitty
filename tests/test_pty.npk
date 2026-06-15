@@ -1,0 +1,105 @@
+// tests/test_pty.npk — PTY allocation unit tests for Nitty v0.1.0
+//
+// Tests the PTY allocation, winsize, and cleanup lifecycle.
+//
+// T01: pty_allocate returns valid fd (>= 0)
+// T02: pty_slave_path returns /dev/pts/ path
+// T03: pty_set_size(24, 80) succeeds
+// T04: pty_get_size returns 24 rows, 80 cols after set
+// T05: pty_set_size(50, 120) and verify
+// T06: pty_set_nonblock succeeds
+// T07: pty_close succeeds
+// T08: double close is safe
+
+use "../src/terminal/pty.npk".*;
+
+int64:STDOUT = 1i64;
+
+func:print_line = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+func:main = int32() {
+
+    // T01: pty_allocate returns valid fd
+    Result<int64>:t01 = pty_allocate();
+    int64:master = t01 ? -1i64;
+    if (master >= 0i64) { drop(print_line("[PASS] T01 pty_allocate returns valid fd\n")); }
+    if (master < 0i64) { drop(print_line("[FAIL] T01 pty_allocate\n")); exit 1i32; }
+
+    // T02: pty_slave_path returns /dev/pts/ path
+    Result<string>:t02 = pty_slave_path();
+    string:path = t02 ? "";
+    int64:plen = string_length(path);
+    // /dev/pts/ is 9 chars, so path should be >= 10 (/dev/pts/N)
+    if (plen >= 10i64) {
+        drop(print_line("[PASS] T02 pty_slave_path returns valid path\n"));
+    }
+    if (plen < 10i64) {
+        drop(print_line("[FAIL] T02 pty_slave_path too short\n"));
+        exit 2i32;
+    }
+
+    // T03: pty_set_size(24, 80) succeeds
+    Result<int64>:t03 = pty_set_size(24i64, 80i64);
+    int64:sz_r = t03 ? -1i64;
+    if (sz_r == 0i64) { drop(print_line("[PASS] T03 pty_set_size(24,80)\n")); }
+    if (sz_r != 0i64) { drop(print_line("[FAIL] T03 set_size\n")); exit 3i32; }
+
+    // T04: pty_get_size returns 24 rows, 80 cols
+    Result<int64>:t04 = pty_get_size();
+    int64:packed = t04 ? -1i64;
+    Result<int64>:t04r = pty_size_rows(packed);
+    int64:rows = t04r ? 0i64;
+    Result<int64>:t04c = pty_size_cols(packed);
+    int64:cols = t04c ? 0i64;
+    if (rows == 24i64 && cols == 80i64) {
+        drop(print_line("[PASS] T04 pty_get_size = 24x80\n"));
+    }
+    if (rows != 24i64 || cols != 80i64) {
+        drop(print_line("[FAIL] T04 get_size wrong\n"));
+        exit 4i32;
+    }
+
+    // T05: pty_set_size(50, 120) and verify
+    Result<int64>:t05a = pty_set_size(50i64, 120i64);
+    int64:sz2_r = t05a ? -1i64;
+    Result<int64>:t05b = pty_get_size();
+    int64:packed2 = t05b ? -1i64;
+    Result<int64>:t05r = pty_size_rows(packed2);
+    int64:rows2 = t05r ? 0i64;
+    Result<int64>:t05c = pty_size_cols(packed2);
+    int64:cols2 = t05c ? 0i64;
+    if (sz2_r == 0i64 && rows2 == 50i64 && cols2 == 120i64) {
+        drop(print_line("[PASS] T05 pty_set_size(50,120) verified\n"));
+    }
+    if (sz2_r != 0i64 || rows2 != 50i64 || cols2 != 120i64) {
+        drop(print_line("[FAIL] T05 set/get 50x120\n"));
+        exit 5i32;
+    }
+
+    // T06: pty_set_nonblock succeeds
+    Result<int64>:t06 = pty_set_nonblock();
+    int64:nb_r = t06 ? -1i64;
+    if (nb_r == 0i64) { drop(print_line("[PASS] T06 pty_set_nonblock\n")); }
+    if (nb_r != 0i64) { drop(print_line("[FAIL] T06 nonblock\n")); exit 6i32; }
+
+    // T07: pty_close succeeds
+    Result<int64>:t07 = pty_close();
+    int64:cl_r = t07 ? -1i64;
+    if (cl_r == 0i64) { drop(print_line("[PASS] T07 pty_close\n")); }
+    if (cl_r != 0i64) { drop(print_line("[FAIL] T07 close\n")); exit 7i32; }
+
+    // T08: double close is safe (returns 0, not error)
+    Result<int64>:t08 = pty_close();
+    int64:cl2_r = t08 ? -1i64;
+    if (cl2_r == 0i64) { drop(print_line("[PASS] T08 double close safe\n")); }
+    if (cl2_r != 0i64) { drop(print_line("[FAIL] T08 double close\n")); exit 8i32; }
+
+    drop(print_line("All PTY tests passed.\n"));
+    exit 0i32;
+};
