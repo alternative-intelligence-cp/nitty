@@ -1,0 +1,765 @@
+// src/terminal/vt_parser.npk — VT100/xterm escape sequence parser
+//
+// v0.2.0: 14-state machine following Paul Flo Williams' vt100.net
+// DEC ANSI parser reference. Processes raw PTY bytes one at a time
+// and emits structured events (Print, Execute, CSI, ESC, OSC, DCS).
+//
+// Design: Module-level state (single parser instance). Each call to
+// parser_feed_byte() processes one byte and may emit one event, which
+// is stored in module-level output fields. The caller queries the
+// event via parser_get_event_*() functions.
+//
+// Note: Constants from escape_types.npk are pub funcs. For performance
+// in the hot path, we cache them as module-level variables at init.
+//
+// Reference: https://vt100.net/emu/dec_ansi_parser
+
+use "escape_types.npk".*;
+use "utf8.npk".*;
+
+func:failsafe = int32(tbb32:err) { exit 1; };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cached Constants (initialized in parser_init)
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:K_ESC = 0x1Bi64;
+int64:K_CAN = 0x18i64;
+int64:K_SUB = 0x1Ai64;
+int64:K_BEL = 0x07i64;
+int64:K_DEL = 0x7Fi64;
+
+int64:S_GROUND              = 0i64;
+int64:S_ESCAPE              = 1i64;
+int64:S_ESCAPE_INTERMEDIATE = 2i64;
+int64:S_CSI_ENTRY           = 3i64;
+int64:S_CSI_PARAM           = 4i64;
+int64:S_CSI_INTERMEDIATE    = 5i64;
+int64:S_CSI_IGNORE          = 6i64;
+int64:S_OSC_STRING          = 7i64;
+int64:S_DCS_ENTRY           = 8i64;
+int64:S_DCS_PARAM           = 9i64;
+int64:S_DCS_INTERMEDIATE    = 10i64;
+int64:S_DCS_PASSTHROUGH     = 11i64;
+int64:S_DCS_IGNORE          = 12i64;
+int64:S_SOS_PM_APC_STRING   = 13i64;
+
+int64:E_NONE    = 0i64;
+int64:E_PRINT   = 1i64;
+int64:E_EXECUTE = 2i64;
+int64:E_CSI     = 3i64;
+int64:E_ESC     = 4i64;
+int64:E_OSC     = 5i64;
+int64:E_DCS     = 6i64;
+
+int64:LIM_PARAMS  = 16i64;
+int64:LIM_VALUE   = 65535i64;
+int64:LIM_INTER   = 4i64;
+int64:LIM_OSC     = 4096i64;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Parser State
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:p_state = 0i64;
+
+// CSI parameter accumulation
+int64[16]:p_csi_params;
+int64:p_csi_param_count = 0i64;
+int64:p_csi_current_param = 0i64;
+int64:p_csi_has_digit = 0i64;
+int64:p_csi_final = 0i64;
+
+// Intermediate bytes (0x20–0x2F)
+int64[4]:p_intermediates;
+int64:p_intermediate_count = 0i64;
+
+// OSC/DCS data accumulation
+int64[4096]:p_osc_data;
+int64:p_osc_data_len = 0i64;
+int64:p_osc_cmd = -1i64;
+int64:p_osc_parsing_cmd = 1i64;
+
+// ESC sequence tracking
+int64:p_esc_final = 0i64;
+
+// ST detection: ESC seen inside string state
+int64:p_esc_in_string = 0i64;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Event Output (last emitted event)
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:p_event_type  = 0i64;
+int64:p_event_data1 = 0i64;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Initialization
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:parser_init = NIL() {
+    p_state = S_GROUND;
+    p_csi_param_count = 0i64;
+    p_csi_current_param = 0i64;
+    p_csi_has_digit = 0i64;
+    p_csi_final = 0i64;
+    p_intermediate_count = 0i64;
+    p_osc_data_len = 0i64;
+    p_osc_cmd = -1i64;
+    p_osc_parsing_cmd = 1i64;
+    p_esc_final = 0i64;
+    p_esc_in_string = 0i64;
+    p_event_type = E_NONE;
+    p_event_data1 = 0i64;
+    drop(utf8_reset());
+    pass(NIL);
+};
+
+pub func:parser_reset = NIL() {
+    drop(parser_init());
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Internal Helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+func:clear_event = NIL() {
+    p_event_type  = E_NONE;
+    p_event_data1 = 0i64;
+    pass(NIL);
+};
+
+func:emit_print = NIL(int64:codepoint) {
+    p_event_type  = E_PRINT;
+    p_event_data1 = codepoint;
+    pass(NIL);
+};
+
+func:emit_execute = NIL(int64:byte) {
+    p_event_type  = E_EXECUTE;
+    p_event_data1 = byte;
+    pass(NIL);
+};
+
+func:emit_csi = NIL(int64:final_byte) {
+    if (p_csi_has_digit == 1i64) {
+        if (p_csi_param_count < LIM_PARAMS) {
+            p_csi_params[p_csi_param_count] = p_csi_current_param;
+            p_csi_param_count = p_csi_param_count + 1i64;
+        }
+    }
+    p_csi_final   = final_byte;
+    p_event_type  = E_CSI;
+    p_event_data1 = final_byte;
+    pass(NIL);
+};
+
+func:emit_esc = NIL(int64:final_byte) {
+    p_esc_final   = final_byte;
+    p_event_type  = E_ESC;
+    p_event_data1 = final_byte;
+    pass(NIL);
+};
+
+func:emit_osc = NIL() {
+    p_event_type  = E_OSC;
+    p_event_data1 = p_osc_cmd;
+    pass(NIL);
+};
+
+func:clear_csi = NIL() {
+    p_csi_param_count   = 0i64;
+    p_csi_current_param = 0i64;
+    p_csi_has_digit     = 0i64;
+    p_csi_final         = 0i64;
+    p_intermediate_count = 0i64;
+    pass(NIL);
+};
+
+func:clear_string_data = NIL() {
+    p_osc_data_len    = 0i64;
+    p_osc_cmd         = -1i64;
+    p_osc_parsing_cmd = 1i64;
+    p_esc_in_string   = 0i64;
+    pass(NIL);
+};
+
+func:collect_intermediate = NIL(int64:byte) {
+    if (p_intermediate_count < LIM_INTER) {
+        p_intermediates[p_intermediate_count] = byte;
+        p_intermediate_count = p_intermediate_count + 1i64;
+    }
+    pass(NIL);
+};
+
+func:collect_osc_byte = NIL(int64:byte) {
+    if (p_osc_parsing_cmd == 1i64) {
+        if (byte >= 0x30i64) {
+            if (byte <= 0x39i64) {
+                if (p_osc_cmd < 0i64) {
+                    p_osc_cmd = 0i64;
+                }
+                p_osc_cmd = p_osc_cmd * 10i64 + (byte - 0x30i64);
+                pass(NIL);
+            }
+        }
+        if (byte == 0x3Bi64) {
+            p_osc_parsing_cmd = 0i64;
+            pass(NIL);
+        }
+        p_osc_parsing_cmd = 0i64;
+    }
+
+    if (p_osc_data_len < LIM_OSC) {
+        p_osc_data[p_osc_data_len] = byte;
+        p_osc_data_len = p_osc_data_len + 1i64;
+    }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// CSI Parameter Processing
+// ═══════════════════════════════════════════════════════════════════════
+
+func:csi_process_byte = NIL(int64:byte) {
+    if (byte >= 0x30i64) {
+        if (byte <= 0x39i64) {
+            p_csi_has_digit = 1i64;
+            int64:digit = byte - 0x30i64;
+            p_csi_current_param = p_csi_current_param * 10i64 + digit;
+            if (p_csi_current_param > LIM_VALUE) {
+                p_csi_current_param = LIM_VALUE;
+            }
+            pass(NIL);
+        }
+    }
+
+    if (byte == 0x3Bi64) {
+        if (p_csi_param_count < LIM_PARAMS) {
+            if (p_csi_has_digit == 1i64) {
+                p_csi_params[p_csi_param_count] = p_csi_current_param;
+            } else {
+                p_csi_params[p_csi_param_count] = 0i64;
+            }
+            p_csi_param_count = p_csi_param_count + 1i64;
+        }
+        p_csi_current_param = 0i64;
+        p_csi_has_digit     = 0i64;
+        pass(NIL);
+    }
+
+    if (byte == 0x3Ai64) {
+        pass(NIL);
+    }
+
+    if (byte == 0x3Fi64) {
+        drop(collect_intermediate(byte));
+        pass(NIL);
+    }
+
+    if (byte == 0x3Ei64) {
+        drop(collect_intermediate(byte));
+        pass(NIL);
+    }
+
+    if (byte == 0x21i64) {
+        drop(collect_intermediate(byte));
+        pass(NIL);
+    }
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// State Handlers
+// ═══════════════════════════════════════════════════════════════════════
+
+func:handle_ground = NIL(int64:byte) {
+    // C0 controls (0x00–0x1F)
+    if (byte <= 0x1Fi64) {
+        drop(emit_execute(byte));
+        pass(NIL);
+    }
+
+    // DEL — ignore
+    if (byte == K_DEL) {
+        pass(NIL);
+    }
+
+    // Printable range (0x20–0x7E) → direct Print
+    if (byte >= 0x20i64) {
+        if (byte <= 0x7Ei64) {
+            drop(emit_print(byte));
+            pass(NIL);
+        }
+    }
+
+    // High bytes (0x80–0xFF) → UTF-8 / C1
+    if (byte >= 0x80i64) {
+        // C1 controls (0x80–0x9F)
+        if (byte <= 0x9Fi64) {
+            if (byte == 0x9Bi64) {
+                p_state = S_CSI_ENTRY;
+                drop(clear_csi());
+                pass(NIL);
+            }
+            if (byte == 0x9Di64) {
+                p_state = S_OSC_STRING;
+                drop(clear_string_data());
+                pass(NIL);
+            }
+            if (byte == 0x90i64) {
+                p_state = S_DCS_ENTRY;
+                drop(clear_csi());
+                drop(clear_string_data());
+                pass(NIL);
+            }
+            drop(emit_execute(byte));
+            pass(NIL);
+        }
+
+        // UTF-8 multi-byte sequence
+        int64:cp = raw utf8_decode_byte(byte);
+        if (cp > 0i64) {
+            drop(emit_print(cp));
+        }
+        pass(NIL);
+    }
+
+    pass(NIL);
+};
+
+func:handle_escape = NIL(int64:byte) {
+    if (byte == 0x5Bi64) {
+        p_state = S_CSI_ENTRY;
+        drop(clear_csi());
+        pass(NIL);
+    }
+    if (byte == 0x5Di64) {
+        p_state = S_OSC_STRING;
+        drop(clear_string_data());
+        pass(NIL);
+    }
+    if (byte == 0x50i64) {
+        p_state = S_DCS_ENTRY;
+        drop(clear_csi());
+        drop(clear_string_data());
+        pass(NIL);
+    }
+    if (byte == 0x5Ei64) {
+        p_state = S_SOS_PM_APC_STRING;
+        drop(clear_string_data());
+        pass(NIL);
+    }
+    if (byte == 0x5Fi64) {
+        p_state = S_SOS_PM_APC_STRING;
+        drop(clear_string_data());
+        pass(NIL);
+    }
+    if (byte == 0x58i64) {
+        p_state = S_SOS_PM_APC_STRING;
+        drop(clear_string_data());
+        pass(NIL);
+    }
+
+    // Intermediate bytes (0x20–0x2F)
+    if (byte >= 0x20i64) {
+        if (byte <= 0x2Fi64) {
+            p_state = S_ESCAPE_INTERMEDIATE;
+            drop(collect_intermediate(byte));
+            pass(NIL);
+        }
+    }
+
+    // Final bytes (0x30–0x7E) → ESC sequence
+    if (byte >= 0x30i64) {
+        if (byte <= 0x7Ei64) {
+            drop(emit_esc(byte));
+            p_state = S_GROUND;
+            pass(NIL);
+        }
+    }
+
+    // C0 controls in Escape → execute
+    if (byte <= 0x1Fi64) {
+        drop(emit_execute(byte));
+        pass(NIL);
+    }
+
+    // DEL — ignore
+    if (byte == K_DEL) {
+        pass(NIL);
+    }
+
+    // Anything else → Ground
+    p_state = S_GROUND;
+    pass(NIL);
+};
+
+func:handle_escape_intermediate = NIL(int64:byte) {
+    if (byte >= 0x20i64) {
+        if (byte <= 0x2Fi64) {
+            drop(collect_intermediate(byte));
+            pass(NIL);
+        }
+    }
+    if (byte >= 0x30i64) {
+        if (byte <= 0x7Ei64) {
+            drop(emit_esc(byte));
+            p_state = S_GROUND;
+            pass(NIL);
+        }
+    }
+    if (byte <= 0x1Fi64) {
+        drop(emit_execute(byte));
+        pass(NIL);
+    }
+    if (byte == K_DEL) {
+        pass(NIL);
+    }
+    p_state = S_GROUND;
+    pass(NIL);
+};
+
+func:handle_csi_param = NIL(int64:byte) {
+    // Param bytes (0x30–0x3F)
+    if (byte >= 0x30i64) {
+        if (byte <= 0x3Fi64) {
+            drop(csi_process_byte(byte));
+            pass(NIL);
+        }
+    }
+
+    // Intermediate bytes (0x20–0x2F)
+    if (byte >= 0x20i64) {
+        if (byte <= 0x2Fi64) {
+            p_state = S_CSI_INTERMEDIATE;
+            drop(collect_intermediate(byte));
+            pass(NIL);
+        }
+    }
+
+    // Final bytes (0x40–0x7E)
+    if (byte >= 0x40i64) {
+        if (byte <= 0x7Ei64) {
+            drop(emit_csi(byte));
+            p_state = S_GROUND;
+            pass(NIL);
+        }
+    }
+
+    // C0 controls → execute (stay in CSI state)
+    if (byte <= 0x1Fi64) {
+        drop(emit_execute(byte));
+        pass(NIL);
+    }
+
+    // DEL — ignore
+    if (byte == K_DEL) {
+        pass(NIL);
+    }
+
+    // Invalid → CSI Ignore
+    p_state = S_CSI_IGNORE;
+    pass(NIL);
+};
+
+func:handle_csi_intermediate = NIL(int64:byte) {
+    if (byte >= 0x20i64) {
+        if (byte <= 0x2Fi64) {
+            drop(collect_intermediate(byte));
+            pass(NIL);
+        }
+    }
+    if (byte >= 0x40i64) {
+        if (byte <= 0x7Ei64) {
+            drop(emit_csi(byte));
+            p_state = S_GROUND;
+            pass(NIL);
+        }
+    }
+    if (byte >= 0x30i64) {
+        if (byte <= 0x3Fi64) {
+            p_state = S_CSI_IGNORE;
+            pass(NIL);
+        }
+    }
+    if (byte <= 0x1Fi64) {
+        drop(emit_execute(byte));
+        pass(NIL);
+    }
+    if (byte == K_DEL) {
+        pass(NIL);
+    }
+    p_state = S_CSI_IGNORE;
+    pass(NIL);
+};
+
+func:handle_csi_ignore = NIL(int64:byte) {
+    if (byte >= 0x40i64) {
+        if (byte <= 0x7Ei64) {
+            p_state = S_GROUND;
+            pass(NIL);
+        }
+    }
+    if (byte <= 0x1Fi64) {
+        drop(emit_execute(byte));
+        pass(NIL);
+    }
+    pass(NIL);
+};
+
+func:handle_osc_string = NIL(int64:byte) {
+    if (byte == K_BEL) {
+        drop(emit_osc());
+        p_state = S_GROUND;
+        pass(NIL);
+    }
+    if (byte >= 0x20i64) {
+        drop(collect_osc_byte(byte));
+    }
+    pass(NIL);
+};
+
+func:handle_dcs_param = NIL(int64:byte) {
+    if (byte >= 0x30i64) {
+        if (byte <= 0x3Fi64) {
+            drop(csi_process_byte(byte));
+            pass(NIL);
+        }
+    }
+    if (byte >= 0x20i64) {
+        if (byte <= 0x2Fi64) {
+            p_state = S_DCS_INTERMEDIATE;
+            drop(collect_intermediate(byte));
+            pass(NIL);
+        }
+    }
+    if (byte >= 0x40i64) {
+        if (byte <= 0x7Ei64) {
+            p_csi_final = byte;
+            p_state = S_DCS_PASSTHROUGH;
+            pass(NIL);
+        }
+    }
+    if (byte <= 0x1Fi64) {
+        drop(emit_execute(byte));
+        pass(NIL);
+    }
+    p_state = S_DCS_IGNORE;
+    pass(NIL);
+};
+
+func:handle_dcs_intermediate = NIL(int64:byte) {
+    if (byte >= 0x20i64) {
+        if (byte <= 0x2Fi64) {
+            drop(collect_intermediate(byte));
+            pass(NIL);
+        }
+    }
+    if (byte >= 0x40i64) {
+        if (byte <= 0x7Ei64) {
+            p_csi_final = byte;
+            p_state = S_DCS_PASSTHROUGH;
+            pass(NIL);
+        }
+    }
+    if (byte >= 0x30i64) {
+        if (byte <= 0x3Fi64) {
+            p_state = S_DCS_IGNORE;
+            pass(NIL);
+        }
+    }
+    p_state = S_DCS_IGNORE;
+    pass(NIL);
+};
+
+func:handle_dcs_passthrough = NIL(int64:byte) {
+    if (byte >= 0x20i64) {
+        drop(collect_osc_byte(byte));
+    }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Main Byte Dispatch
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:parser_feed_byte = NIL(int64:byte) {
+    drop(clear_event());
+
+    // ── "Anywhere" transitions ──────────────────────────────────────
+    if (byte == K_ESC) {
+        // ESC inside string states → might be ST (ESC \)
+        if (p_state == S_OSC_STRING) {
+            p_esc_in_string = 1i64;
+            pass(NIL);
+        }
+        if (p_state == S_DCS_PASSTHROUGH) {
+            p_esc_in_string = 1i64;
+            pass(NIL);
+        }
+        if (p_state == S_SOS_PM_APC_STRING) {
+            p_esc_in_string = 1i64;
+            pass(NIL);
+        }
+        if (p_state == S_DCS_IGNORE) {
+            p_esc_in_string = 1i64;
+            pass(NIL);
+        }
+        p_state = S_ESCAPE;
+        p_intermediate_count = 0i64;
+        p_esc_in_string = 0i64;
+        pass(NIL);
+    }
+
+    // CAN and SUB cancel → Ground
+    if (byte == K_CAN) {
+        p_state = S_GROUND;
+        drop(emit_execute(byte));
+        pass(NIL);
+    }
+    if (byte == K_SUB) {
+        p_state = S_GROUND;
+        drop(emit_execute(byte));
+        pass(NIL);
+    }
+
+    // ── String Terminator check (ESC \) ─────────────────────────────
+    if (p_esc_in_string == 1i64) {
+        p_esc_in_string = 0i64;
+        if (byte == 0x5Ci64) {
+            if (p_state == S_OSC_STRING) {
+                drop(emit_osc());
+            }
+            p_state = S_GROUND;
+            pass(NIL);
+        } else {
+            if (p_state == S_OSC_STRING) {
+                drop(emit_osc());
+            }
+            p_state = S_ESCAPE;
+            p_intermediate_count = 0i64;
+            // Fall through to process in Escape state
+        }
+    }
+
+    // ── State dispatch ──────────────────────────────────────────────
+    if (p_state == S_GROUND) {
+        drop(handle_ground(byte));
+        pass(NIL);
+    }
+    if (p_state == S_ESCAPE) {
+        drop(handle_escape(byte));
+        pass(NIL);
+    }
+    if (p_state == S_ESCAPE_INTERMEDIATE) {
+        drop(handle_escape_intermediate(byte));
+        pass(NIL);
+    }
+    if (p_state == S_CSI_ENTRY) {
+        p_state = S_CSI_PARAM;
+        drop(handle_csi_param(byte));
+        pass(NIL);
+    }
+    if (p_state == S_CSI_PARAM) {
+        drop(handle_csi_param(byte));
+        pass(NIL);
+    }
+    if (p_state == S_CSI_INTERMEDIATE) {
+        drop(handle_csi_intermediate(byte));
+        pass(NIL);
+    }
+    if (p_state == S_CSI_IGNORE) {
+        drop(handle_csi_ignore(byte));
+        pass(NIL);
+    }
+    if (p_state == S_OSC_STRING) {
+        drop(handle_osc_string(byte));
+        pass(NIL);
+    }
+    if (p_state == S_DCS_ENTRY) {
+        p_state = S_DCS_PARAM;
+        drop(handle_dcs_param(byte));
+        pass(NIL);
+    }
+    if (p_state == S_DCS_PARAM) {
+        drop(handle_dcs_param(byte));
+        pass(NIL);
+    }
+    if (p_state == S_DCS_INTERMEDIATE) {
+        drop(handle_dcs_intermediate(byte));
+        pass(NIL);
+    }
+    if (p_state == S_DCS_PASSTHROUGH) {
+        drop(handle_dcs_passthrough(byte));
+        pass(NIL);
+    }
+    if (p_state == S_DCS_IGNORE) {
+        pass(NIL);
+    }
+    if (p_state == S_SOS_PM_APC_STRING) {
+        if (byte >= 0x20i64) {
+            drop(collect_osc_byte(byte));
+        }
+        pass(NIL);
+    }
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Event Query API
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:parser_get_event_type = int64() {
+    pass(p_event_type);
+};
+
+pub func:parser_get_event_data = int64() {
+    pass(p_event_data1);
+};
+
+pub func:parser_get_csi_param_count = int64() {
+    pass(p_csi_param_count);
+};
+
+pub func:parser_get_csi_param = int64(int64:index) {
+    if (index >= 0i64) {
+        if (index < p_csi_param_count) {
+            pass(p_csi_params[index]);
+        }
+    }
+    pass(0i64);
+};
+
+pub func:parser_get_intermediate_count = int64() {
+    pass(p_intermediate_count);
+};
+
+pub func:parser_get_intermediate = int64(int64:index) {
+    if (index >= 0i64) {
+        if (index < p_intermediate_count) {
+            pass(p_intermediates[index]);
+        }
+    }
+    pass(0i64);
+};
+
+pub func:parser_get_state = int64() {
+    pass(p_state);
+};
+
+pub func:parser_get_osc_data_len = int64() {
+    pass(p_osc_data_len);
+};
+
+pub func:parser_get_osc_data_byte = int64(int64:index) {
+    if (index >= 0i64) {
+        if (index < p_osc_data_len) {
+            pass(p_osc_data[index]);
+        }
+    }
+    pass(0i64);
+};

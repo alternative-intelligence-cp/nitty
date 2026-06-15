@@ -1,0 +1,167 @@
+// src/terminal/utf8.npk — Streaming UTF-8 byte decoder
+//
+// v0.2.0: Decodes a stream of bytes into Unicode codepoints one byte at
+// a time. Designed for terminal emulation where bytes arrive incrementally
+// from a PTY.
+//
+// Returns:
+//   > 0  → completed codepoint (U+0001 – U+10FFFF)
+//   0    → pending (need more continuation bytes)
+//   -1   → invalid byte sequence (caller should skip or substitute)
+//   -2   → NUL codepoint (U+0000) — valid but distinct from pending
+//
+// Reference: RFC 3629 (UTF-8)
+
+// ═══════════════════════════════════════════════════════════════════════
+// Decoder State (module-level — one decoder per process)
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:utf8_acc       = 0i64;    // Accumulated codepoint value
+int64:utf8_remaining = 0i64;    // Continuation bytes still expected
+int64:utf8_expected  = 0i64;    // Total bytes in this sequence (2, 3, or 4)
+
+// ═══════════════════════════════════════════════════════════════════════
+// Public API
+// ═══════════════════════════════════════════════════════════════════════
+
+// Reset decoder to initial state (e.g., on parser reset)
+pub func:utf8_reset = NIL() {
+    utf8_acc       = 0i64;
+    utf8_remaining = 0i64;
+    utf8_expected  = 0i64;
+    pass(NIL);
+};
+
+// Decode one byte. Returns codepoint (>0), 0 (pending), -1 (invalid), -2 (NUL).
+pub func:utf8_decode_byte = int64(int64:byte) {
+
+    // ── Continuation byte (10xxxxxx = 0x80–0xBF) ────────────────────
+    if (byte >= 0x80i64) {
+        if (byte <= 0xBFi64) {
+            // Continuation byte
+            if (utf8_remaining == 0i64) {
+                // Unexpected continuation — no sequence in progress
+                pass(-1i64);
+            }
+
+            // Accumulate: shift left 6, OR in low 6 bits
+            int64:bits = byte & 0x3Fi64;
+            utf8_acc = (utf8_acc * 64i64) + bits;
+            utf8_remaining = utf8_remaining - 1i64;
+
+            if (utf8_remaining == 0i64) {
+                // Sequence complete — validate
+                int64:cp = utf8_acc;
+                utf8_acc = 0i64;
+
+                // Reject overlong encodings
+                if (utf8_expected == 2i64) {
+                    if (cp < 0x80i64) {
+                        pass(-1i64);
+                    }
+                }
+                if (utf8_expected == 3i64) {
+                    if (cp < 0x800i64) {
+                        pass(-1i64);
+                    }
+                }
+                if (utf8_expected == 4i64) {
+                    if (cp < 0x10000i64) {
+                        pass(-1i64);
+                    }
+                }
+
+                // Reject surrogates (U+D800–U+DFFF)
+                if (cp >= 0xD800i64) {
+                    if (cp <= 0xDFFFi64) {
+                        pass(-1i64);
+                    }
+                }
+
+                // Reject beyond U+10FFFF
+                if (cp > 0x10FFFFi64) {
+                    pass(-1i64);
+                }
+
+                // Valid codepoint
+                if (cp == 0i64) {
+                    pass(-2i64);  // NUL codepoint — valid but distinct
+                }
+                pass(cp);
+            }
+
+            // Still pending
+            pass(0i64);
+        }
+    }
+
+    // ── Start byte — abort any in-progress sequence ─────────────────
+    if (utf8_remaining > 0i64) {
+        // Truncated sequence — reset and fall through to process this byte
+        utf8_acc       = 0i64;
+        utf8_remaining = 0i64;
+        utf8_expected  = 0i64;
+        // Note: we do NOT return -1 here — we re-process this byte as a
+        // new start byte. The caller gets the next valid decode. For strict
+        // error reporting, the caller can track state changes.
+    }
+
+    // ── ASCII (0x00–0x7F) ───────────────────────────────────────────
+    if (byte >= 0i64) {
+        if (byte <= 0x7Fi64) {
+            if (byte == 0i64) {
+                pass(-2i64);  // NUL
+            }
+            pass(byte);   // Direct ASCII codepoint
+        }
+    }
+
+    // ── 2-byte start (110xxxxx = 0xC0–0xDF) ─────────────────────────
+    if (byte >= 0xC0i64) {
+        if (byte <= 0xDFi64) {
+            // Reject overlong 2-byte for 0xC0, 0xC1 (would encode 0x00–0x7F)
+            if (byte < 0xC2i64) {
+                pass(-1i64);
+            }
+            utf8_acc       = byte & 0x1Fi64;   // Low 5 bits
+            utf8_remaining = 1i64;
+            utf8_expected  = 2i64;
+            pass(0i64);  // Pending
+        }
+    }
+
+    // ── 3-byte start (1110xxxx = 0xE0–0xEF) ─────────────────────────
+    if (byte >= 0xE0i64) {
+        if (byte <= 0xEFi64) {
+            utf8_acc       = byte & 0x0Fi64;   // Low 4 bits
+            utf8_remaining = 2i64;
+            utf8_expected  = 3i64;
+            pass(0i64);  // Pending
+        }
+    }
+
+    // ── 4-byte start (11110xxx = 0xF0–0xF7) ─────────────────────────
+    if (byte >= 0xF0i64) {
+        if (byte <= 0xF7i64) {
+            // Reject 0xF5–0xF7 (would encode beyond U+10FFFF)
+            if (byte >= 0xF5i64) {
+                pass(-1i64);
+            }
+            utf8_acc       = byte & 0x07i64;   // Low 3 bits
+            utf8_remaining = 3i64;
+            utf8_expected  = 4i64;
+            pass(0i64);  // Pending
+        }
+    }
+
+    // ── Invalid start byte (0xF8–0xFF, or 0x80–0xBF handled above) ──
+    pass(-1i64);
+};
+
+// Check if decoder is in the middle of a multi-byte sequence
+pub func:utf8_is_pending = int64() {
+    if (utf8_remaining > 0i64) {
+        pass(1i64);
+    }
+    pass(0i64);
+};

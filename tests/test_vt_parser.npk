@@ -1,0 +1,329 @@
+// tests/test_vt_parser.npk — VT parser state machine unit tests
+//
+// v0.2.0: Tests the 14-state VT100/xterm parser for correct event
+// emission across all major sequence types.
+
+use "../src/terminal/escape_types.npk".*;
+use "../src/terminal/vt_parser.npk".*;
+
+int64:STDOUT = 1i64;
+int64:pass_count = 0i64;
+int64:fail_count = 0i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:assert_eq = NIL(string:name, int64:actual, int64:expected) {
+    if (actual == expected) {
+        pass_count = pass_count + 1i64;
+        drop(write_stdout("[PASS] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    } else {
+        fail_count = fail_count + 1i64;
+        drop(write_stdout("[FAIL] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    }
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:err) {
+    drop(write_stdout("FAILSAFE: test aborted\n"));
+    exit 1;
+};
+
+// Feed a byte and return the event type
+func:feed = int64(int64:byte) {
+    drop(parser_feed_byte(byte));
+    int64:evt = raw parser_get_event_type();
+    pass(evt);
+};
+
+func:main = int32() {
+    drop(write_stdout("=== VT Parser Tests ===\n"));
+
+    // Cache event type constants for fast comparison
+    int64:PRINT   = raw EVT_PRINT();
+    int64:EXEC    = raw EVT_EXECUTE();
+    int64:CSI     = raw EVT_CSI();
+    int64:ESC_EVT = raw EVT_ESC();
+    int64:OSC     = raw EVT_OSC();
+    int64:NONE    = raw EVT_NONE();
+    int64:GND     = raw ST_GROUND();
+
+    // ── T01: Plain text → Print events ──────────────────────────────
+    drop(parser_init());
+    int64:r01a = raw feed(0x48i64);  // 'H'
+    drop(assert_eq("T01a Print 'H'", r01a, PRINT));
+
+    int64:r01b = raw feed(0x65i64);  // 'e'
+    drop(assert_eq("T01b Print 'e'", r01b, PRINT));
+
+    int64:r01c = raw feed(0x6Ci64);  // 'l'
+    drop(assert_eq("T01c Print 'l'", r01c, PRINT));
+
+    // Check codepoint
+    int64:data01 = raw parser_get_event_data();
+    drop(assert_eq("T01d data = 'l'", data01, 0x6Ci64));
+
+    // ── T02: C0 controls → Execute events ───────────────────────────
+    drop(parser_init());
+    int64:r02a = raw feed(0x0Ai64);  // LF
+    drop(assert_eq("T02a Execute LF", r02a, EXEC));
+    int64:d02a = raw parser_get_event_data();
+    drop(assert_eq("T02b LF data = 0x0A", d02a, 0x0Ai64));
+
+    int64:r02c = raw feed(0x0Di64);  // CR
+    drop(assert_eq("T02c Execute CR", r02c, EXEC));
+
+    int64:r02d = raw feed(0x08i64);  // BS
+    drop(assert_eq("T02d Execute BS", r02d, EXEC));
+
+    int64:r02e = raw feed(0x09i64);  // HT
+    drop(assert_eq("T02e Execute HT", r02e, EXEC));
+
+    int64:r02f = raw feed(0x07i64);  // BEL
+    drop(assert_eq("T02f Execute BEL", r02f, EXEC));
+
+    // ── T03: CSI sequence — ESC [ 1 0 ; 2 0 H ──────────────────────
+    drop(parser_init());
+    int64:r03a = raw feed(0x1Bi64);  // ESC
+    drop(assert_eq("T03a ESC no event", r03a, NONE));
+
+    int64:r03b = raw feed(0x5Bi64);  // [
+    drop(assert_eq("T03b [ no event", r03b, NONE));
+
+    int64:r03c = raw feed(0x31i64);  // '1'
+    drop(assert_eq("T03c digit no event", r03c, NONE));
+
+    int64:r03d = raw feed(0x30i64);  // '0'
+    drop(assert_eq("T03d digit no event", r03d, NONE));
+
+    int64:r03e = raw feed(0x3Bi64);  // ';'
+    drop(assert_eq("T03e ; no event", r03e, NONE));
+
+    drop(parser_feed_byte(0x32i64));  // '2'
+    drop(parser_feed_byte(0x30i64));  // '0'
+
+    // 'H' (0x48) — final byte
+    drop(parser_feed_byte(0x48i64));
+    int64:r03h = raw parser_get_event_type();
+    drop(assert_eq("T03f CSI event", r03h, CSI));
+
+    int64:r03i = raw parser_get_event_data();
+    drop(assert_eq("T03g CSI final = 'H'", r03i, 0x48i64));
+
+    int64:r03j = raw parser_get_csi_param_count();
+    drop(assert_eq("T03h CSI 2 params", r03j, 2i64));
+
+    int64:r03k = raw parser_get_csi_param(0i64);
+    drop(assert_eq("T03i param[0] = 10", r03k, 10i64));
+
+    int64:r03l = raw parser_get_csi_param(1i64);
+    drop(assert_eq("T03j param[1] = 20", r03l, 20i64));
+
+    // ── T04: CSI with no params — ESC [ H (cursor home) ─────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));  // ESC
+    drop(parser_feed_byte(0x5Bi64));  // [
+    drop(parser_feed_byte(0x48i64));  // H
+
+    int64:r04a = raw parser_get_event_type();
+    drop(assert_eq("T04a CSI event", r04a, CSI));
+
+    int64:r04b = raw parser_get_csi_param_count();
+    drop(assert_eq("T04b 0 params", r04b, 0i64));
+
+    int64:r04c = raw parser_get_event_data();
+    drop(assert_eq("T04c final = 'H'", r04c, 0x48i64));
+
+    // ── T05: SGR — ESC [ 3 1 m (set red foreground) ─────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));  // ESC
+    drop(parser_feed_byte(0x5Bi64));  // [
+    drop(parser_feed_byte(0x33i64));  // '3'
+    drop(parser_feed_byte(0x31i64));  // '1'
+    drop(parser_feed_byte(0x6Di64));  // 'm'
+
+    int64:r05a = raw parser_get_event_type();
+    drop(assert_eq("T05a SGR event", r05a, CSI));
+
+    int64:r05b = raw parser_get_event_data();
+    drop(assert_eq("T05b final = 'm'", r05b, 0x6Di64));
+
+    int64:r05c = raw parser_get_csi_param_count();
+    drop(assert_eq("T05c 1 param", r05c, 1i64));
+
+    int64:r05d = raw parser_get_csi_param(0i64);
+    drop(assert_eq("T05d param[0] = 31", r05d, 31i64));
+
+    // ── T06: ESC sequence — ESC 7 (save cursor, DECSC) ──────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));  // ESC
+    drop(parser_feed_byte(0x37i64));  // '7'
+
+    int64:r06a = raw parser_get_event_type();
+    drop(assert_eq("T06a ESC event", r06a, ESC_EVT));
+
+    int64:r06b = raw parser_get_event_data();
+    drop(assert_eq("T06b final = '7'", r06b, 0x37i64));
+
+    // ── T07: ESC sequence — ESC M (reverse index) ───────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));  // ESC
+    drop(parser_feed_byte(0x4Di64));  // 'M'
+
+    int64:r07a = raw parser_get_event_type();
+    drop(assert_eq("T07a ESC M event", r07a, ESC_EVT));
+    int64:r07b = raw parser_get_event_data();
+    drop(assert_eq("T07b final = 'M'", r07b, 0x4Di64));
+
+    // ── T08: OSC — ESC ] 0 ; t i t l e BEL ─────────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));  // ESC
+    drop(parser_feed_byte(0x5Di64));  // ]
+
+    int64:r08z = raw parser_get_event_type();
+    drop(assert_eq("T08a no event after ]", r08z, NONE));
+
+    drop(parser_feed_byte(0x30i64));  // '0'
+    drop(parser_feed_byte(0x3Bi64));  // ';'
+    drop(parser_feed_byte(0x74i64));  // 't'
+    drop(parser_feed_byte(0x65i64));  // 'e'
+    drop(parser_feed_byte(0x73i64));  // 's'
+    drop(parser_feed_byte(0x74i64));  // 't'
+    drop(parser_feed_byte(0x07i64));  // BEL (terminates OSC)
+
+    int64:r08a = raw parser_get_event_type();
+    drop(assert_eq("T08b OSC event", r08a, OSC));
+
+    int64:r08b = raw parser_get_event_data();
+    drop(assert_eq("T08c OSC cmd = 0", r08b, 0i64));
+
+    int64:r08c = raw parser_get_osc_data_len();
+    drop(assert_eq("T08d OSC data len = 4", r08c, 4i64));
+
+    int64:r08d = raw parser_get_osc_data_byte(0i64);
+    drop(assert_eq("T08e OSC data[0] = 't'", r08d, 0x74i64));
+
+    // ── T09: OSC with ST — ESC ] 2 ; X Y ESC \ ──────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));  // ESC
+    drop(parser_feed_byte(0x5Di64));  // ]
+    drop(parser_feed_byte(0x32i64));  // '2'
+    drop(parser_feed_byte(0x3Bi64));  // ';'
+    drop(parser_feed_byte(0x58i64));  // 'X'
+    drop(parser_feed_byte(0x59i64));  // 'Y'
+    drop(parser_feed_byte(0x1Bi64));  // ESC (start of ST)
+    drop(parser_feed_byte(0x5Ci64));  // '\' (end of ST)
+
+    int64:r09a = raw parser_get_event_type();
+    drop(assert_eq("T09a OSC via ST", r09a, OSC));
+    int64:r09b = raw parser_get_event_data();
+    drop(assert_eq("T09b OSC cmd = 2", r09b, 2i64));
+
+    // ── T10: Interrupted sequence — ESC [ 1 ESC [ 2 J ────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));  // ESC
+    drop(parser_feed_byte(0x5Bi64));  // [
+    drop(parser_feed_byte(0x31i64));  // '1'
+    drop(parser_feed_byte(0x1Bi64));  // ESC (interrupts first CSI)
+    drop(parser_feed_byte(0x5Bi64));  // [ (new CSI)
+    drop(parser_feed_byte(0x32i64));  // '2'
+    drop(parser_feed_byte(0x4Ai64));  // 'J'
+
+    int64:r10a = raw parser_get_event_type();
+    drop(assert_eq("T10a interrupted = CSI", r10a, CSI));
+    int64:r10b = raw parser_get_event_data();
+    drop(assert_eq("T10b final = 'J'", r10b, 0x4Ai64));
+    int64:r10c = raw parser_get_csi_param(0i64);
+    drop(assert_eq("T10c param = 2 (second CSI)", r10c, 2i64));
+
+    // ── T11: CAN cancellation — ESC [ 1 CAN A ───────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));  // ESC
+    drop(parser_feed_byte(0x5Bi64));  // [
+    drop(parser_feed_byte(0x31i64));  // '1'
+    drop(parser_feed_byte(0x18i64));  // CAN (cancel)
+
+    int64:r11a = raw parser_get_event_type();
+    drop(assert_eq("T11a CAN = Execute", r11a, EXEC));
+
+    // 'A' should now be in Ground state → Print
+    int64:r11b = raw feed(0x41i64);
+    drop(assert_eq("T11b after CAN = Print", r11b, PRINT));
+
+    int64:r11c = raw parser_get_state();
+    drop(assert_eq("T11c back to Ground", r11c, GND));
+
+    // ── T12: CSI with 3 params — ESC [ 1 ; 2 ; 3 m ─────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));  // ESC
+    drop(parser_feed_byte(0x5Bi64));  // [
+    drop(parser_feed_byte(0x31i64));  // '1'
+    drop(parser_feed_byte(0x3Bi64));  // ';'
+    drop(parser_feed_byte(0x32i64));  // '2'
+    drop(parser_feed_byte(0x3Bi64));  // ';'
+    drop(parser_feed_byte(0x33i64));  // '3'
+    drop(parser_feed_byte(0x6Di64));  // 'm'
+
+    int64:r12a = raw parser_get_csi_param_count();
+    drop(assert_eq("T12a 3 params", r12a, 3i64));
+
+    int64:r12b = raw parser_get_csi_param(0i64);
+    drop(assert_eq("T12b param[0] = 1", r12b, 1i64));
+
+    int64:r12c = raw parser_get_csi_param(1i64);
+    drop(assert_eq("T12c param[1] = 2", r12c, 2i64));
+
+    int64:r12d = raw parser_get_csi_param(2i64);
+    drop(assert_eq("T12d param[2] = 3", r12d, 3i64));
+
+    // ── T13: CSI private mode — ESC [ ? 2 5 h (show cursor) ─────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64));  // ESC
+    drop(parser_feed_byte(0x5Bi64));  // [
+    drop(parser_feed_byte(0x3Fi64));  // '?'
+    drop(parser_feed_byte(0x32i64));  // '2'
+    drop(parser_feed_byte(0x35i64));  // '5'
+    drop(parser_feed_byte(0x68i64));  // 'h'
+
+    int64:r13a = raw parser_get_event_type();
+    drop(assert_eq("T13a CSI private", r13a, CSI));
+
+    int64:r13b = raw parser_get_event_data();
+    drop(assert_eq("T13b final = 'h'", r13b, 0x68i64));
+
+    int64:r13c = raw parser_get_intermediate_count();
+    drop(assert_eq("T13c has intermediate", r13c, 1i64));
+
+    int64:r13d = raw parser_get_intermediate(0i64);
+    drop(assert_eq("T13d intermediate = '?'", r13d, 0x3Fi64));
+
+    // ── T14: State returns to Ground after events ────────────────────
+    drop(parser_init());
+    drop(parser_feed_byte(0x41i64));  // 'A'
+    int64:r14a = raw parser_get_state();
+    drop(assert_eq("T14a Ground after Print", r14a, GND));
+
+    // ── T15: Mixed text and control ─────────────────────────────────
+    drop(parser_init());
+    int64:r15a = raw feed(0x41i64);
+    drop(assert_eq("T15a Print 'A'", r15a, PRINT));
+    int64:r15b = raw feed(0x0Ai64);
+    drop(assert_eq("T15b Execute LF", r15b, EXEC));
+    int64:r15c = raw feed(0x42i64);
+    drop(assert_eq("T15c Print 'B'", r15c, PRINT));
+
+    // ── Summary ─────────────────────────────────────────────────────
+    if (fail_count == 0i64) {
+        drop(write_stdout("All VT parser tests passed.\n"));
+        exit 0;
+    }
+    drop(write_stdout("SOME VT PARSER TESTS FAILED.\n"));
+    exit 1;
+};

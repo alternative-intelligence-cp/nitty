@@ -1,0 +1,183 @@
+// tests/test_utf8.npk — UTF-8 decoder unit tests
+//
+// v0.2.0: Tests streaming UTF-8 decode for ASCII, multi-byte sequences,
+// error cases (overlong, surrogates, beyond U+10FFFF), and recovery.
+
+use "../src/terminal/utf8.npk".*;
+
+int64:STDOUT = 1i64;
+int64:pass_count = 0i64;
+int64:fail_count = 0i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:assert_eq = NIL(string:name, int64:actual, int64:expected) {
+    if (actual == expected) {
+        pass_count = pass_count + 1i64;
+        drop(write_stdout("[PASS] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    } else {
+        fail_count = fail_count + 1i64;
+        drop(write_stdout("[FAIL] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    }
+    pass(NIL);
+};
+
+pub func:failsafe = int32(tbb32:err) {
+    drop(write_stdout("FAILSAFE: test aborted\n"));
+    exit 1;
+};
+
+pub func:main = int32() {
+    drop(write_stdout("=== UTF-8 Decoder Tests ===\n"));
+
+    // ── T01: ASCII passthrough ──────────────────────────────────────
+    drop(utf8_reset());
+    int64:r01a = raw utf8_decode_byte(0x41i64);  // 'A'
+    drop(assert_eq("T01a ASCII 'A' = 0x41", r01a, 0x41i64));
+
+    int64:r01b = raw utf8_decode_byte(0x20i64);  // space
+    drop(assert_eq("T01b ASCII space = 0x20", r01b, 0x20i64));
+
+    int64:r01c = raw utf8_decode_byte(0x7Ei64);  // '~'
+    drop(assert_eq("T01c ASCII '~' = 0x7E", r01c, 0x7Ei64));
+
+    int64:r01d = raw utf8_decode_byte(0x01i64);  // SOH
+    drop(assert_eq("T01d ASCII SOH = 0x01", r01d, 0x01i64));
+
+    // ── T02: NUL byte ───────────────────────────────────────────────
+    drop(utf8_reset());
+    int64:r02 = raw utf8_decode_byte(0x00i64);
+    drop(assert_eq("T02 NUL returns -2", r02, -2i64));
+
+    // ── T03: 2-byte sequence (é = U+00E9 = 0xC3 0xA9) ──────────────
+    drop(utf8_reset());
+    int64:r03a = raw utf8_decode_byte(0xC3i64);
+    drop(assert_eq("T03a 2-byte start pending", r03a, 0i64));
+
+    int64:r03b = raw utf8_decode_byte(0xA9i64);
+    drop(assert_eq("T03b 2-byte complete = 0xE9", r03b, 0xE9i64));
+
+    // ── T04: 2-byte sequence (£ = U+00A3 = 0xC2 0xA3) ──────────────
+    drop(utf8_reset());
+    int64:r04a = raw utf8_decode_byte(0xC2i64);
+    drop(assert_eq("T04a pound start pending", r04a, 0i64));
+
+    int64:r04b = raw utf8_decode_byte(0xA3i64);
+    drop(assert_eq("T04b pound complete = 0xA3", r04b, 0xA3i64));
+
+    // ── T05: 3-byte sequence (中 = U+4E2D = 0xE4 0xB8 0xAD) ────────
+    drop(utf8_reset());
+    int64:r05a = raw utf8_decode_byte(0xE4i64);
+    drop(assert_eq("T05a 3-byte start pending", r05a, 0i64));
+
+    int64:r05b = raw utf8_decode_byte(0xB8i64);
+    drop(assert_eq("T05b 3-byte mid pending", r05b, 0i64));
+
+    int64:r05c = raw utf8_decode_byte(0xADi64);
+    drop(assert_eq("T05c 3-byte complete = 0x4E2D", r05c, 0x4E2Di64));
+
+    // ── T06: 3-byte sequence (€ = U+20AC = 0xE2 0x82 0xAC) ─────────
+    drop(utf8_reset());
+    int64:r06a = raw utf8_decode_byte(0xE2i64);
+    int64:r06b = raw utf8_decode_byte(0x82i64);
+    int64:r06c = raw utf8_decode_byte(0xACi64);
+    drop(assert_eq("T06 euro = 0x20AC", r06c, 0x20ACi64));
+
+    // ── T07: 4-byte sequence (𝄞 = U+1D11E = 0xF0 0x9D 0x84 0x9E) ──
+    drop(utf8_reset());
+    int64:r07a = raw utf8_decode_byte(0xF0i64);
+    drop(assert_eq("T07a 4-byte start pending", r07a, 0i64));
+
+    int64:r07b = raw utf8_decode_byte(0x9Di64);
+    drop(assert_eq("T07b 4-byte b2 pending", r07b, 0i64));
+
+    int64:r07c = raw utf8_decode_byte(0x84i64);
+    drop(assert_eq("T07c 4-byte b3 pending", r07c, 0i64));
+
+    int64:r07d = raw utf8_decode_byte(0x9Ei64);
+    drop(assert_eq("T07d 4-byte complete = 0x1D11E", r07d, 0x1D11Ei64));
+
+    // ── T08: 4-byte sequence (😀 = U+1F600 = 0xF0 0x9F 0x98 0x80) ──
+    drop(utf8_reset());
+    int64:r08a = raw utf8_decode_byte(0xF0i64);
+    int64:r08b = raw utf8_decode_byte(0x9Fi64);
+    int64:r08c = raw utf8_decode_byte(0x98i64);
+    int64:r08d = raw utf8_decode_byte(0x80i64);
+    drop(assert_eq("T08 smiley = 0x1F600", r08d, 0x1F600i64));
+
+    // ── T09: Overlong 2-byte rejection (0xC0 0x80 = overlong NUL) ───
+    drop(utf8_reset());
+    int64:r09 = raw utf8_decode_byte(0xC0i64);
+    drop(assert_eq("T09 overlong 0xC0 = invalid", r09, -1i64));
+
+    // ── T10: Overlong 2-byte rejection (0xC1) ───────────────────────
+    drop(utf8_reset());
+    int64:r10 = raw utf8_decode_byte(0xC1i64);
+    drop(assert_eq("T10 overlong 0xC1 = invalid", r10, -1i64));
+
+    // ── T11: Invalid start byte (0xF5+) ─────────────────────────────
+    drop(utf8_reset());
+    int64:r11a = raw utf8_decode_byte(0xF5i64);
+    drop(assert_eq("T11a 0xF5 = invalid", r11a, -1i64));
+
+    int64:r11b = raw utf8_decode_byte(0xFFi64);
+    drop(assert_eq("T11b 0xFF = invalid", r11b, -1i64));
+
+    // ── T12: Unexpected continuation byte ────────────────────────────
+    drop(utf8_reset());
+    int64:r12 = raw utf8_decode_byte(0x80i64);
+    drop(assert_eq("T12 bare continuation = invalid", r12, -1i64));
+
+    int64:r12b = raw utf8_decode_byte(0xBFi64);
+    drop(assert_eq("T12b bare continuation 0xBF = invalid", r12b, -1i64));
+
+    // ── T13: Truncated sequence recovery ────────────────────────────
+    // Start a 2-byte sequence then send ASCII — should recover
+    drop(utf8_reset());
+    int64:r13a = raw utf8_decode_byte(0xC3i64);  // Start 2-byte
+    drop(assert_eq("T13a start pending", r13a, 0i64));
+
+    // Send ASCII instead of continuation — should reset and decode ASCII
+    int64:r13b = raw utf8_decode_byte(0x41i64);  // 'A'
+    drop(assert_eq("T13b truncated recovery = 0x41", r13b, 0x41i64));
+
+    // ── T14: Reset clears state ─────────────────────────────────────
+    drop(utf8_reset());
+    int64:r14a = raw utf8_decode_byte(0xE4i64);  // Start 3-byte
+    drop(assert_eq("T14a start pending", r14a, 0i64));
+
+    int64:pend = raw utf8_is_pending();
+    drop(assert_eq("T14b is pending", pend, 1i64));
+
+    drop(utf8_reset());
+    int64:pend2 = raw utf8_is_pending();
+    drop(assert_eq("T14c reset clears pending", pend2, 0i64));
+
+    // ── T15: Sequential multi-byte decodes ──────────────────────────
+    drop(utf8_reset());
+    // é then 中 back to back
+    int64:r15a = raw utf8_decode_byte(0xC3i64);
+    int64:r15b = raw utf8_decode_byte(0xA9i64);
+    drop(assert_eq("T15a é = 0xE9", r15b, 0xE9i64));
+
+    int64:r15c = raw utf8_decode_byte(0xE4i64);
+    int64:r15d = raw utf8_decode_byte(0xB8i64);
+    int64:r15e = raw utf8_decode_byte(0xADi64);
+    drop(assert_eq("T15b 中 = 0x4E2D", r15e, 0x4E2Di64));
+
+    // ── Summary ─────────────────────────────────────────────────────
+    if (fail_count == 0i64) {
+        drop(write_stdout("All UTF-8 tests passed.\n"));
+        exit 0;
+    }
+    drop(write_stdout("SOME UTF-8 TESTS FAILED.\n"));
+    exit 1;
+};

@@ -1,0 +1,136 @@
+// src/terminal/escape_types.npk — VT100/xterm escape sequence constants
+//
+// v0.2.0: Defines all control codes, parser states, and event type tags
+// used by the VT parser state machine.
+//
+// Note: All constants are module-level variables. When imported via
+// `use "escape_types.npk".*;` they become accessible in the importer.
+//
+// Reference: Paul Flo Williams' vt100.net DEC ANSI parser state diagram
+//            ECMA-48 (control functions for coded character sets)
+
+func:failsafe = int32(tbb32:err) { exit 1; };
+
+// ═══════════════════════════════════════════════════════════════════════
+// C0 Control Codes (0x00–0x1F)
+// ═══════════════════════════════════════════════════════════════════════
+
+// C0 control code constants — used for byte matching in parser
+pub func:C0_NUL = int64() { pass(0x00i64); };
+pub func:C0_SOH = int64() { pass(0x01i64); };
+pub func:C0_STX = int64() { pass(0x02i64); };
+pub func:C0_ETX = int64() { pass(0x03i64); };
+pub func:C0_EOT = int64() { pass(0x04i64); };
+pub func:C0_ENQ = int64() { pass(0x05i64); };
+pub func:C0_ACK = int64() { pass(0x06i64); };
+pub func:C0_BEL = int64() { pass(0x07i64); };
+pub func:C0_BS  = int64() { pass(0x08i64); };
+pub func:C0_HT  = int64() { pass(0x09i64); };
+pub func:C0_LF  = int64() { pass(0x0Ai64); };
+pub func:C0_VT  = int64() { pass(0x0Bi64); };
+pub func:C0_FF  = int64() { pass(0x0Ci64); };
+pub func:C0_CR  = int64() { pass(0x0Di64); };
+pub func:C0_SO  = int64() { pass(0x0Ei64); };
+pub func:C0_SI  = int64() { pass(0x0Fi64); };
+pub func:C0_DLE = int64() { pass(0x10i64); };
+pub func:C0_DC1 = int64() { pass(0x11i64); };
+pub func:C0_DC2 = int64() { pass(0x12i64); };
+pub func:C0_DC3 = int64() { pass(0x13i64); };
+pub func:C0_DC4 = int64() { pass(0x14i64); };
+pub func:C0_NAK = int64() { pass(0x15i64); };
+pub func:C0_SYN = int64() { pass(0x16i64); };
+pub func:C0_ETB = int64() { pass(0x17i64); };
+pub func:C0_CAN = int64() { pass(0x18i64); };
+pub func:C0_EM  = int64() { pass(0x19i64); };
+pub func:C0_SUB = int64() { pass(0x1Ai64); };
+pub func:C0_ESC = int64() { pass(0x1Bi64); };
+pub func:C0_FS  = int64() { pass(0x1Ci64); };
+pub func:C0_GS  = int64() { pass(0x1Di64); };
+pub func:C0_RS  = int64() { pass(0x1Ei64); };
+pub func:C0_US  = int64() { pass(0x1Fi64); };
+pub func:C0_DEL = int64() { pass(0x7Fi64); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// C1 Control Codes (7-bit equivalents via ESC + byte)
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:C1_IND = int64() { pass(0x44i64); };
+pub func:C1_NEL = int64() { pass(0x45i64); };
+pub func:C1_HTS = int64() { pass(0x48i64); };
+pub func:C1_RI  = int64() { pass(0x4Di64); };
+pub func:C1_SS2 = int64() { pass(0x4Ei64); };
+pub func:C1_SS3 = int64() { pass(0x4Fi64); };
+pub func:C1_DCS = int64() { pass(0x50i64); };
+pub func:C1_SPA = int64() { pass(0x56i64); };
+pub func:C1_EPA = int64() { pass(0x57i64); };
+pub func:C1_SOS = int64() { pass(0x58i64); };
+pub func:C1_CSI = int64() { pass(0x5Bi64); };
+pub func:C1_ST  = int64() { pass(0x5Ci64); };
+pub func:C1_OSC = int64() { pass(0x5Di64); };
+pub func:C1_PM  = int64() { pass(0x5Ei64); };
+pub func:C1_APC = int64() { pass(0x5Fi64); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Parser States (14 states following vt100.net reference)
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:ST_GROUND              = int64() { pass(0i64); };
+pub func:ST_ESCAPE              = int64() { pass(1i64); };
+pub func:ST_ESCAPE_INTERMEDIATE = int64() { pass(2i64); };
+pub func:ST_CSI_ENTRY           = int64() { pass(3i64); };
+pub func:ST_CSI_PARAM           = int64() { pass(4i64); };
+pub func:ST_CSI_INTERMEDIATE    = int64() { pass(5i64); };
+pub func:ST_CSI_IGNORE          = int64() { pass(6i64); };
+pub func:ST_OSC_STRING          = int64() { pass(7i64); };
+pub func:ST_DCS_ENTRY           = int64() { pass(8i64); };
+pub func:ST_DCS_PARAM           = int64() { pass(9i64); };
+pub func:ST_DCS_INTERMEDIATE    = int64() { pass(10i64); };
+pub func:ST_DCS_PASSTHROUGH     = int64() { pass(11i64); };
+pub func:ST_DCS_IGNORE          = int64() { pass(12i64); };
+pub func:ST_SOS_PM_APC_STRING   = int64() { pass(13i64); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Event Type Tags
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:EVT_NONE    = int64() { pass(0i64); };
+pub func:EVT_PRINT   = int64() { pass(1i64); };
+pub func:EVT_EXECUTE = int64() { pass(2i64); };
+pub func:EVT_CSI     = int64() { pass(3i64); };
+pub func:EVT_ESC     = int64() { pass(4i64); };
+pub func:EVT_OSC     = int64() { pass(5i64); };
+pub func:EVT_DCS     = int64() { pass(6i64); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Parser Limits
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:MAX_CSI_PARAMS    = int64() { pass(16i64); };
+pub func:MAX_PARAM_VALUE   = int64() { pass(65535i64); };
+pub func:MAX_INTERMEDIATES = int64() { pass(4i64); };
+pub func:MAX_OSC_DATA      = int64() { pass(4096i64); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Common CSI Final Bytes (for reference — used by terminal state model)
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:CSI_CUU = int64() { pass(0x41i64); };
+pub func:CSI_CUD = int64() { pass(0x42i64); };
+pub func:CSI_CUF = int64() { pass(0x43i64); };
+pub func:CSI_CUB = int64() { pass(0x44i64); };
+pub func:CSI_CNL = int64() { pass(0x45i64); };
+pub func:CSI_CPL = int64() { pass(0x46i64); };
+pub func:CSI_CHA = int64() { pass(0x47i64); };
+pub func:CSI_CUP = int64() { pass(0x48i64); };
+pub func:CSI_ED  = int64() { pass(0x4Ai64); };
+pub func:CSI_EL  = int64() { pass(0x4Bi64); };
+pub func:CSI_IL  = int64() { pass(0x4Ci64); };
+pub func:CSI_DL  = int64() { pass(0x4Di64); };
+pub func:CSI_DCH = int64() { pass(0x50i64); };
+pub func:CSI_SU  = int64() { pass(0x53i64); };
+pub func:CSI_SD  = int64() { pass(0x54i64); };
+pub func:CSI_SGR = int64() { pass(0x6Di64); };
+pub func:CSI_DSR = int64() { pass(0x6Ei64); };
+pub func:CSI_SM  = int64() { pass(0x68i64); };
+pub func:CSI_RM  = int64() { pass(0x6Ci64); };
+pub func:CSI_DECSTBM = int64() { pass(0x72i64); };
