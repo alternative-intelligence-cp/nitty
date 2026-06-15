@@ -93,6 +93,12 @@ extern "nitty_gtk4_shim" {
     func:nitty_render_get_font_baseline = int64();
 
     // ═══════════════════════════════════════════════════════════════════
+    // v0.3.2: Per-cell attribute flags (bold, italic, underline, blink, etc.)
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_render_set_cell_flags = NIL(int64:col, int64:row, int64:flags);
+
+    // ═══════════════════════════════════════════════════════════════════
     // v0.0.2: Scale factor (HiDPI)
     // ═══════════════════════════════════════════════════════════════════
 

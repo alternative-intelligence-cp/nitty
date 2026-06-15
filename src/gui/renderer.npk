@@ -1,4 +1,4 @@
-// src/gui/renderer.npk — Terminal cell grid renderer (v0.3.1)
+// src/gui/renderer.npk — Terminal cell grid renderer (v0.3.2)
 //
 // The sync layer between the Nitpick-side terminal state (terminal_state.npk,
 // grid.npk) and the C-side Cairo/Pango paint engine (nitty_render.c).
@@ -11,6 +11,8 @@
 //     and grid_get_cp) and pushes each non-space cell to nitty_render_set_cell_cp()
 //     before each frame.
 //   - v0.3.1: also pushes per-cell fg/bg colors via nitty_render_set_cell_fg/bg().
+//   - v0.3.2: also pushes per-cell attribute flags via nitty_render_set_cell_flags()
+//     for bold/italic fonts, underline styles, strikethrough, overline, blink.
 //   - renderer_sync_frame() is called from the idle/draw callback.
 //
 // Coordinate system:
@@ -120,13 +122,18 @@ pub func:renderer_get_rows = int64() { pass(g_rend_rows); };
 ///   1. Clear all C-side grid cells (blank slate).
 ///   2. Query TerminalState for rows and cols.
 ///   3. For each cell: read codepoint, attrs (fg/bg), flags (bold/inverse/etc.)
-///      and push to C renderer with per-cell color overrides.
+///      and push to C renderer with per-cell color and attribute overrides.
 ///
 /// v0.3.1 color integration:
 ///   - Reads grid_get_attrs(r,c) and grid_get_flags(r,c) per cell.
 ///   - Resolves fg/bg colors via color_resolve.npk (bold-bright, dim, inverse, etc.)
 ///   - Skips bg call for cells with default background (optimization).
 ///   - Screen-wide reverse video (DECSCNM) queried each frame.
+///
+/// v0.3.2 attribute flag integration:
+///   - Pushes flags to nitty_render_set_cell_flags() for all cells with non-zero
+///     flags, so the C renderer can apply bold/italic fonts, draw underline
+///     (all 5 styles), strikethrough, overline, and manage blink suppression.
 ///
 /// Called from the GTK idle/draw callback before nitty_render_frame()
 /// is invoked internally by the C draw callback.
@@ -178,6 +185,11 @@ pub func:renderer_sync_frame = NIL() {
                     }
                     nitty_render_set_cell_cp(c, r, cp);
                 }
+            }
+            // v0.3.2: Push attribute flags for decoration rendering
+            // (includes space cells — underlined/overlined spaces need decorations)
+            if (flags != 0i64) {
+                nitty_render_set_cell_flags(c, r, flags);
             }
             c = c + 1i64;
         }

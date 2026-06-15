@@ -768,6 +768,12 @@ static guint g_fd_watch_id = 0;
 static guint g_idle_id = 0;
 static void (*g_idle_callback)(void) = NULL;
 
+/* v0.3.2: Text blink timer state */
+#include "nitty_render.h"
+static guint g_blink_timer_id  = 0;
+static int   g_blink_phase     = 1; /* 1=visible, 0=hidden */
+static gboolean on_blink_tick(gpointer user_data); /* forward decl */
+
 /* GLib fd watch callback — fires when PTY fd is readable */
 static gboolean on_fd_readable(gint fd, GIOCondition condition, gpointer user_data)
 {
@@ -819,6 +825,12 @@ static gboolean on_idle_tick(gpointer user_data)
     if (g_idle_callback != NULL) {
         g_idle_callback();
     }
+    /* v0.3.2: start blink timer if any blink cells are present */
+    if (nitty_render_has_blink_cells() && g_blink_timer_id == 0) {
+        g_blink_phase = 1;
+        nitty_render_set_blink_visible(1);
+        g_blink_timer_id = g_timeout_add(500, (GSourceFunc)on_blink_tick, NULL);
+    }
     return G_SOURCE_CONTINUE;
 }
 
@@ -836,4 +848,20 @@ void nitty_gtk4_queue_redraw(void)
     if (g_drawing_area != NULL) {
         gtk_widget_queue_draw(g_drawing_area);
     }
+}
+
+/* v0.3.2: Text blink timer callback — fires every 500ms */
+static gboolean on_blink_tick(gpointer user_data)
+{
+    (void)user_data;
+    g_blink_phase = !g_blink_phase;
+    nitty_render_set_blink_visible(g_blink_phase);
+    nitty_gtk4_queue_redraw();
+    /* Stop timer if no more blink cells */
+    if (!nitty_render_has_blink_cells()) {
+        g_blink_timer_id = 0;
+        nitty_render_set_blink_visible(1); /* restore visible for next time */
+        return G_SOURCE_REMOVE;
+    }
+    return G_SOURCE_CONTINUE;
 }

@@ -1,0 +1,162 @@
+// tests/test_text_attributes.npk — Text attribute flag packing and extraction tests for Nitty v0.3.2
+//
+// Tests the cell.npk flag packing/extraction API that drives the v0.3.2 text
+// attribute rendering pipeline. Verifies:
+//   - Individual flag extraction (cell_flag_bold/italic/underline/blink/etc.)
+//   - Full round-trip: cell_pack_flags → extract each flag
+//   - Underline style bits: cell_flag_ul_style for all 5 styles
+//   - Flag independence: setting one flag does not corrupt others
+//   - Combined flags (bold+italic+underline+blink simultaneously)
+//
+// All pass → exit 0.
+
+use "../src/terminal/cell.npk".*;
+
+int64:STDOUT = 1i64;
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:_e) {
+    drop(write_stdout("[FATAL] Unexpected runtime error\n"));
+    exit 1i32;
+};
+
+// Print tag only on failure
+func:check = NIL(string:tag, int64:got, int64:expected) {
+    if (got == expected) { g_pass = g_pass + 1i64; pass(NIL); }
+    drop(write_stdout("[FAIL] "));
+    drop(write_stdout(tag));
+    drop(write_stdout("\n"));
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T01-T12: Individual flag extraction — verify bit positions
+// ─────────────────────────────────────────────────────────────────────────────
+func:run_individual_flag_tests = NIL() {
+    drop(check("T01 CELL_BOLD   == 0x001", raw CELL_BOLD(),        0x001i64));
+    drop(check("T02 CELL_DIM    == 0x002", raw CELL_DIM(),         0x002i64));
+    drop(check("T03 CELL_ITALIC == 0x004", raw CELL_ITALIC(),      0x004i64));
+    drop(check("T04 CELL_UNDERLINE == 0x008", raw CELL_UNDERLINE(), 0x008i64));
+    drop(check("T05 CELL_BLINK  == 0x010", raw CELL_BLINK(),       0x010i64));
+    drop(check("T06 CELL_RAPID_BLINK == 0x020", raw CELL_RAPID_BLINK(), 0x020i64));
+    drop(check("T07 CELL_INVERSE == 0x040", raw CELL_INVERSE(),    0x040i64));
+    drop(check("T08 CELL_HIDDEN == 0x080", raw CELL_HIDDEN(),      0x080i64));
+    drop(check("T09 CELL_STRIKE == 0x100", raw CELL_STRIKE(),      0x100i64));
+    drop(check("T10 CELL_OVERLINE == 0x200", raw CELL_OVERLINE(),  0x200i64));
+    drop(check("T11 UL_STYLE_SHIFT == 12", raw CELL_UL_STYLE_SHIFT(), 12i64));
+    drop(check("T12 UL_STYLE_MASK == 0x7000", raw CELL_UL_STYLE_MASK(), 0x7000i64));
+    pass(NIL);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T13-T22: cell_flag_* extractors — single-flag words
+// ─────────────────────────────────────────────────────────────────────────────
+func:run_extractor_tests = NIL() {
+    drop(check("T13 flag_bold(CELL_BOLD)    == 1", raw cell_flag_bold(0x001i64),        1i64));
+    drop(check("T14 flag_bold(0)            == 0", raw cell_flag_bold(0i64),             0i64));
+    drop(check("T15 flag_italic(CELL_ITALIC) == 1", raw cell_flag_italic(0x004i64),     1i64));
+    drop(check("T16 flag_italic(0)          == 0", raw cell_flag_italic(0i64),           0i64));
+    drop(check("T17 flag_underline(CELL_UL) == 1", raw cell_flag_underline(0x008i64),   1i64));
+    drop(check("T18 flag_underline(0)       == 0", raw cell_flag_underline(0i64),        0i64));
+    drop(check("T19 flag_blink(CELL_BLINK)  == 1", raw cell_flag_blink(0x010i64),       1i64));
+    drop(check("T20 flag_strike(CELL_STRIKE) == 1", raw cell_flag_strike(0x100i64),     1i64));
+    drop(check("T21 flag_overline(CELL_OL)  == 1", raw cell_flag_overline(0x200i64),    1i64));
+    drop(check("T22 flag_rapid_blink        == 1", raw cell_flag_rapid_blink(0x020i64), 1i64));
+    pass(NIL);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T23-T32: cell_flag_ul_style — all 5 underline styles
+// ─────────────────────────────────────────────────────────────────────────────
+func:run_ul_style_tests = NIL() {
+    // Style 0 = single (default when underline bit set, style bits = 0)
+    int64:f0 = raw cell_pack_flags(0i64,0i64,0i64,1i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64);
+    drop(check("T23 ul_style single (0) correct", raw cell_flag_ul_style(f0), 0i64));
+    drop(check("T24 underline bit set for style 0", raw cell_flag_underline(f0), 1i64));
+    // Style 1 = double
+    int64:f1 = raw cell_pack_flags(0i64,0i64,0i64,1i64,0i64,0i64,0i64,0i64,0i64,0i64,1i64);
+    drop(check("T25 ul_style double (1) correct", raw cell_flag_ul_style(f1), 1i64));
+    drop(check("T26 underline bit set for style 1", raw cell_flag_underline(f1), 1i64));
+    // Style 2 = curly
+    int64:f2 = raw cell_pack_flags(0i64,0i64,0i64,1i64,0i64,0i64,0i64,0i64,0i64,0i64,2i64);
+    drop(check("T27 ul_style curly (2) correct", raw cell_flag_ul_style(f2), 2i64));
+    // Style 3 = dotted
+    int64:f3 = raw cell_pack_flags(0i64,0i64,0i64,1i64,0i64,0i64,0i64,0i64,0i64,0i64,3i64);
+    drop(check("T28 ul_style dotted (3) correct", raw cell_flag_ul_style(f3), 3i64));
+    // Style 4 = dashed
+    int64:f4 = raw cell_pack_flags(0i64,0i64,0i64,1i64,0i64,0i64,0i64,0i64,0i64,0i64,4i64);
+    drop(check("T29 ul_style dashed (4) correct", raw cell_flag_ul_style(f4), 4i64));
+    // Style bits without underline flag
+    int64:f_style_only = raw cell_pack_flags(0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,3i64);
+    drop(check("T30 ul_style bits stored even without underline", raw cell_flag_ul_style(f_style_only), 3i64));
+    drop(check("T31 underline flag NOT set when passed 0", raw cell_flag_underline(f_style_only), 0i64));
+    // Sanity: style 0 with no underline = 0 flags
+    int64:f_none = raw cell_pack_flags(0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64);
+    drop(check("T32 all-zero pack_flags = 0", f_none, 0i64));
+    pass(NIL);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T33-T44: Round-trip tests — pack all flags, verify each extractor
+// ─────────────────────────────────────────────────────────────────────────────
+func:run_roundtrip_tests = NIL() {
+    // Pack: bold=1, dim=1, italic=1, underline=1, blink=1, rapid_blink=1,
+    //       inverse=1, hidden=1, strike=1, overline=1, ul_style=2 (curly)
+    int64:all = raw cell_pack_flags(1i64,1i64,1i64,1i64,1i64,1i64,1i64,1i64,1i64,1i64,2i64);
+    drop(check("T33 round-trip: bold",        raw cell_flag_bold(all),        1i64));
+    drop(check("T34 round-trip: dim",         raw cell_flag_dim(all),         1i64));
+    drop(check("T35 round-trip: italic",      raw cell_flag_italic(all),      1i64));
+    drop(check("T36 round-trip: underline",   raw cell_flag_underline(all),   1i64));
+    drop(check("T37 round-trip: blink",       raw cell_flag_blink(all),       1i64));
+    drop(check("T38 round-trip: rapid_blink", raw cell_flag_rapid_blink(all), 1i64));
+    drop(check("T39 round-trip: inverse",     raw cell_flag_inverse(all),     1i64));
+    drop(check("T40 round-trip: hidden",      raw cell_flag_hidden(all),      1i64));
+    drop(check("T41 round-trip: strike",      raw cell_flag_strike(all),      1i64));
+    drop(check("T42 round-trip: overline",    raw cell_flag_overline(all),    1i64));
+    drop(check("T43 round-trip: ul_style=2",  raw cell_flag_ul_style(all),    2i64));
+    // Pack only bold+italic — verify others are 0
+    int64:bi = raw cell_pack_flags(1i64,0i64,1i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64);
+    drop(check("T44 bold+italic: underline==0", raw cell_flag_underline(bi), 0i64));
+    pass(NIL);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T45-T52: Flag independence — setting one flag should not pollute others
+// ─────────────────────────────────────────────────────────────────────────────
+func:run_independence_tests = NIL() {
+    // Bold only
+    int64:b = raw cell_pack_flags(1i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64);
+    drop(check("T45 bold only: italic==0",    raw cell_flag_italic(b),    0i64));
+    drop(check("T46 bold only: underline==0", raw cell_flag_underline(b), 0i64));
+    drop(check("T47 bold only: strike==0",    raw cell_flag_strike(b),    0i64));
+    drop(check("T48 bold only: overline==0",  raw cell_flag_overline(b),  0i64));
+    // Underline with curly style, no bold
+    int64:uc = raw cell_pack_flags(0i64,0i64,0i64,1i64,0i64,0i64,0i64,0i64,0i64,0i64,2i64);
+    drop(check("T49 ul+curly: bold==0",   raw cell_flag_bold(uc),   0i64));
+    drop(check("T50 ul+curly: italic==0", raw cell_flag_italic(uc), 0i64));
+    drop(check("T51 ul+curly: blink==0",  raw cell_flag_blink(uc),  0i64));
+    drop(check("T52 ul+curly: strike==0", raw cell_flag_strike(uc), 0i64));
+    pass(NIL);
+};
+
+func:main = int32() {
+    drop(run_individual_flag_tests());
+    drop(run_extractor_tests());
+    drop(run_ul_style_tests());
+    drop(run_roundtrip_tests());
+    drop(run_independence_tests());
+    if (g_fail > 0i64) {
+        drop(write_stdout("FAILED: some text attribute tests failed.\n"));
+        exit 1i32;
+    }
+    drop(write_stdout("All text attribute flag tests passed.\n"));
+    exit 0i32;
+};

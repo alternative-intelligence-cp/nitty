@@ -1,6 +1,7 @@
 /*
  * nitty_render.h — Terminal grid rendering for Nitty
  *
+ * v0.3.2: Added nitty_render_set_cell_flags(), nitty_render_set_blink_visible(), nitty_render_has_blink_cells().
  * v0.3.0: Added nitty_render_clear_grid() and nitty_render_get_font_baseline().
  * Nitpick configures the render state, then the C draw callback paints it.
  *
@@ -108,6 +109,28 @@ int64_t nitty_render_get_font_baseline(void);
  * Call before each frame sync to prevent stale characters from persisting.
  */
 void nitty_render_clear_grid(void);
+
+/**
+ * Set per-cell attribute flags (bold, italic, underline, blink, etc.).
+ * The flags bitmask matches cell.npk CELL_* constants exactly:
+ *   bit 0: bold, bit 2: italic, bit 3: underline, bit 4: blink,
+ *   bit 5: rapid_blink, bit 8: strikethrough, bit 9: overline.
+ *   bits 12-14: underline style (0=single,1=double,2=curly,3=dotted,4=dashed).
+ */
+void nitty_render_set_cell_flags(int64_t col, int64_t row, int64_t flags);
+
+/**
+ * Set the blink visibility state.
+ * @param visible  1 = draw blinking cells, 0 = hide blinking cells.
+ * Called by the blink timer in nitty_gtk4_shim.c at 500ms intervals.
+ */
+void nitty_render_set_blink_visible(int64_t visible);
+
+/**
+ * Return 1 if any cell in the current grid has a blink or rapid_blink flag, 0 otherwise.
+ * Called by the shim idle callback to decide whether to start/stop the blink timer.
+ */
+int64_t nitty_render_has_blink_cells(void);
 
 /**
  * Render the grid. Called internally by the draw callback.
