@@ -1,0 +1,20 @@
+# build.abc — Nitty terminal emulator build manifest
+# Build system: npkbld (nitpick-build)
+
+[project]
+name = "nitty"
+version = "0.0.0"
+author = "Alternative Intelligence"
+compiler = "/home/randy/Workspace/REPOS/nitpick/build/nitpickc"
+
+[target.nitty]
+type = "binary"
+sources = ["src/main.npk"]
+deps = []
+flags = ["-O2"]
+
+[target.test_app]
+type = "binary"
+sources = ["tests/test_app.npk"]
+deps = []
+flags = []

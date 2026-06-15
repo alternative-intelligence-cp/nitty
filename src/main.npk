@@ -1,0 +1,27 @@
+// src/main.npk — Nitty terminal emulator entry point
+//
+// Calls the application lifecycle in order:
+//   1. app_init()     — initialize
+//   2. app_run()      — run (main loop, stub for now)
+//   3. app_shutdown() — clean shutdown
+//
+// Returns exit code 0 on success, 1 if any lifecycle function fails.
+
+use "core/app.npk".*;
+
+// failsafe is required for all Nitpick binary targets.
+// It is called if the runtime encounters an unrecoverable error.
+func:failsafe = NIL(int32:code) { pass(NIL); };
+
+func:main = int32() {
+    int32:init_ret = app_init();
+    if (init_ret != 0i32) { pass(1i32); }
+
+    int32:run_ret = app_run();
+    if (run_ret != 0i32) { pass(1i32); }
+
+    int32:shutdown_ret = app_shutdown();
+    if (shutdown_ret != 0i32) { pass(1i32); }
+
+    pass(0i32);
+};

@@ -1,0 +1,40 @@
+// src/core/app.npk — Application lifecycle for Nitty
+//
+// Provides the three lifecycle functions called by src/main.npk:
+//   app_init()     — initialize application state, print startup banner
+//   app_run()      — enter the application main loop (stub for now)
+//   app_shutdown() — clean up and print shutdown message
+//   app_version()  — return the version string
+//
+// Output goes to stdout (fd 1) via sys(WRITE).
+// Dependencies: none (uses sys() directly to avoid circular imports)
+
+// fd 1 = stdout
+int64:STDOUT = 1i64;
+
+// Write a string to stdout via sys(WRITE).
+// sys(WRITE, fd, data, len) — pure kernel call, no libc required.
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+pub func:app_init = int32() {
+    write_stdout("Nitty v0.0.0 initializing...\n");
+    pass(0i32);
+};
+
+pub func:app_run = int32() {
+    write_stdout("Nitty running (no GUI yet)\n");
+    pass(0i32);
+};
+
+pub func:app_shutdown = int32() {
+    write_stdout("Nitty shutting down.\n");
+    pass(0i32);
+};
+
+pub func:app_version = string() {
+    pass("0.0.0");
+};

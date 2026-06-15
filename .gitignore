@@ -39,8 +39,8 @@ obj/
 *.debug
 *.dwo
 *.dwp
-core
-core.*
+/core
+/core.*
 vgcore.*
 *.log
 

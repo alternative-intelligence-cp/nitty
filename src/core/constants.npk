@@ -1,0 +1,9 @@
+// src/core/constants.npk — Project-wide constants for Nitty
+//
+// These are global compile-time values imported wherever needed.
+// Usage:
+//   use "core/constants.npk".*;
+
+string:APP_NAME    = "Nitty";
+string:APP_VERSION = "0.0.0";
+string:APP_ID      = "com.altintel.nitty";
