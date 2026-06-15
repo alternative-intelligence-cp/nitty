@@ -1,0 +1,335 @@
+// src/terminal/sgr_dispatch.npk — SGR (Select Graphic Rendition) dispatcher
+//
+// v0.2.2: Processes ESC [ Ps ; Ps ; ... m sequences. Each Ps code
+// modifies the current CellAttributes state in attributes.npk.
+//
+// Called by csi_dispatch when final byte is 'm' (0x6D).
+//
+// Parameter processing:
+//   - Iterate params left to right
+//   - Extended color sequences consume additional params:
+//       38;5;N   → indexed fg (advances by 2 more)
+//       48;5;N   → indexed bg (advances by 2 more)
+//       38;2;R;G;B → true-color fg (advances by 3 more)
+//       48;2;R;G;B → true-color bg (advances by 3 more)
+//   - Unknown codes are silently ignored (per spec)
+//
+// Reference: ECMA-48 §8.3.117 SGR
+//            https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+
+use "attributes.npk".*;
+use "vt_parser.npk".*;
+
+func:failsafe = int32(tbb32:err) { exit 1; };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Internal Helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+// Get param at index; returns -1 if out of range (so we can detect absence)
+func:sgr_param = int64(int64:index, int64:count) {
+    if (index >= count) { pass(-1i64); }
+    pass(raw parser_get_csi_param(index));
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// SGR Dispatch
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:dispatch_sgr = NIL(int64:param_count) {
+    // SGR with no params = SGR 0 (reset)
+    if (param_count == 0i64) {
+        drop(attrs_reset());
+        pass(NIL);
+    }
+
+    int64:i = 0i64;
+    while (i < param_count) {
+        int64:code = raw sgr_param(i, param_count);
+        // Treat negative (absent) as 0 (reset)
+        if (code < 0i64) { code = 0i64; }
+
+        // ── SGR 0: Reset all ───────────────────────────────────────
+        if (code == 0i64) {
+            drop(attrs_reset());
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Bold ──────────────────────────────────────────────────
+        if (code == 1i64) {
+            drop(attrs_set_bold(1i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Dim ───────────────────────────────────────────────────
+        if (code == 2i64) {
+            drop(attrs_set_dim(1i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Italic ────────────────────────────────────────────────
+        if (code == 3i64) {
+            drop(attrs_set_italic(1i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Underline (single) ────────────────────────────────────
+        if (code == 4i64) {
+            drop(attrs_set_underline(1i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Blink ─────────────────────────────────────────────────
+        if (code == 5i64) {
+            drop(attrs_set_blink(1i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Rapid Blink ───────────────────────────────────────────
+        if (code == 6i64) {
+            drop(attrs_set_rapid_blink(1i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Inverse ───────────────────────────────────────────────
+        if (code == 7i64) {
+            drop(attrs_set_inverse(1i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Hidden (conceal) ──────────────────────────────────────
+        if (code == 8i64) {
+            drop(attrs_set_hidden(1i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Strikethrough ─────────────────────────────────────────
+        if (code == 9i64) {
+            drop(attrs_set_strikethrough(1i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Double underline (code 21) ─────────────────────────────
+        if (code == 21i64) {
+            drop(attrs_set_underline(2i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Bold + Dim off ────────────────────────────────────────
+        if (code == 22i64) {
+            drop(attrs_set_bold(0i64));
+            drop(attrs_set_dim(0i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Italic off ────────────────────────────────────────────
+        if (code == 23i64) {
+            drop(attrs_set_italic(0i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Underline off ─────────────────────────────────────────
+        if (code == 24i64) {
+            drop(attrs_set_underline(0i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Blink off ─────────────────────────────────────────────
+        if (code == 25i64) {
+            drop(attrs_set_blink(0i64));
+            drop(attrs_set_rapid_blink(0i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Inverse off ───────────────────────────────────────────
+        if (code == 27i64) {
+            drop(attrs_set_inverse(0i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Hidden off ────────────────────────────────────────────
+        if (code == 28i64) {
+            drop(attrs_set_hidden(0i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Strikethrough off ─────────────────────────────────────
+        if (code == 29i64) {
+            drop(attrs_set_strikethrough(0i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Standard 16-color foreground (30–37) ─────────────────
+        if (code >= 30i64) {
+            if (code <= 37i64) {
+                int64:cidx = code - 30i64;
+                drop(attrs_set_fg(raw color_indexed(cidx)));
+                i = i + 1i64;
+                continue;
+            }
+        }
+
+        // ── Extended color — fg (38) ──────────────────────────────
+        if (code == 38i64) {
+            int64:next = raw sgr_param(i + 1i64, param_count);
+            if (next == 5i64) {
+                // 256-color: 38;5;N
+                int64:n = raw sgr_param(i + 2i64, param_count);
+                if (n >= 0i64) {
+                    if (n > 255i64) { n = 255i64; }
+                    drop(attrs_set_fg(raw color_indexed(n)));
+                }
+                i = i + 3i64;
+                continue;
+            }
+            if (next == 2i64) {
+                // True color: 38;2;R;G;B
+                int64:p3 = raw sgr_param(i + 2i64, param_count);
+                int64:p4 = raw sgr_param(i + 3i64, param_count);
+                int64:p5 = raw sgr_param(i + 4i64, param_count);
+                // Check if p3 could be a color space ID (skip if p5 is also valid)
+                // Standard: R;G;B
+                if (p3 >= 0i64) {
+                    if (p4 < 0i64) {
+                        // Only R provided (malformed) — skip
+                        i = i + 2i64;
+                        continue;
+                    }
+                    if (p5 >= 0i64) {
+                        // 38;2;R;G;B with R=p3 (normal case)
+                        drop(attrs_set_fg(raw color_rgb(p3, p4, p5)));
+                        i = i + 5i64;
+                        continue;
+                    }
+                    // 38;2;R;G only (treat as R=p3, G=p4, B=0)
+                    drop(attrs_set_fg(raw color_rgb(p3, p4, 0i64)));
+                    i = i + 4i64;
+                    continue;
+                }
+                i = i + 2i64;
+                continue;
+            }
+            // Unknown sub-type — skip code 38
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Default foreground (39) ───────────────────────────────
+        if (code == 39i64) {
+            drop(attrs_set_fg(0i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Standard 16-color background (40–47) ─────────────────
+        if (code >= 40i64) {
+            if (code <= 47i64) {
+                int64:cidx = code - 40i64;
+                drop(attrs_set_bg(raw color_indexed(cidx)));
+                i = i + 1i64;
+                continue;
+            }
+        }
+
+        // ── Extended color — bg (48) ──────────────────────────────
+        if (code == 48i64) {
+            int64:next = raw sgr_param(i + 1i64, param_count);
+            if (next == 5i64) {
+                // 256-color: 48;5;N
+                int64:n = raw sgr_param(i + 2i64, param_count);
+                if (n >= 0i64) {
+                    if (n > 255i64) { n = 255i64; }
+                    drop(attrs_set_bg(raw color_indexed(n)));
+                }
+                i = i + 3i64;
+                continue;
+            }
+            if (next == 2i64) {
+                // True color: 48;2;R;G;B
+                int64:p3 = raw sgr_param(i + 2i64, param_count);
+                int64:p4 = raw sgr_param(i + 3i64, param_count);
+                int64:p5 = raw sgr_param(i + 4i64, param_count);
+                if (p3 >= 0i64) {
+                    if (p5 >= 0i64) {
+                        drop(attrs_set_bg(raw color_rgb(p3, p4, p5)));
+                        i = i + 5i64;
+                        continue;
+                    }
+                    if (p4 >= 0i64) {
+                        drop(attrs_set_bg(raw color_rgb(p3, p4, 0i64)));
+                        i = i + 4i64;
+                        continue;
+                    }
+                }
+                i = i + 2i64;
+                continue;
+            }
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Default background (49) ───────────────────────────────
+        if (code == 49i64) {
+            drop(attrs_set_bg(0i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Overline (53) ─────────────────────────────────────────
+        if (code == 53i64) {
+            drop(attrs_set_overline(1i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Overline off (55) ─────────────────────────────────────
+        if (code == 55i64) {
+            drop(attrs_set_overline(0i64));
+            i = i + 1i64;
+            continue;
+        }
+
+        // ── Bright foreground (90–97) ─────────────────────────────
+        if (code >= 90i64) {
+            if (code <= 97i64) {
+                int64:cidx = code - 90i64 + 8i64;
+                drop(attrs_set_fg(raw color_indexed(cidx)));
+                i = i + 1i64;
+                continue;
+            }
+        }
+
+        // ── Bright background (100–107) ───────────────────────────
+        if (code >= 100i64) {
+            if (code <= 107i64) {
+                int64:cidx = code - 100i64 + 8i64;
+                drop(attrs_set_bg(raw color_indexed(cidx)));
+                i = i + 1i64;
+                continue;
+            }
+        }
+
+        // ── Unknown code — silently ignore ────────────────────────
+        i = i + 1i64;
+    }
+
+    pass(NIL);
+};

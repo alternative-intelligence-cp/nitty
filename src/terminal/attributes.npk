@@ -1,0 +1,234 @@
+// src/terminal/attributes.npk — Cell visual attributes and color model
+//
+// v0.2.2: Defines the per-cell attribute state used by the terminal emulator.
+// SGR sequences (ESC [ Ps m) modify this state.
+//
+// ── Color Encoding (int64) ──────────────────────────────────────────────
+// 0                    = Default (terminal's default fg/bg color)
+// 1–256                = Indexed color N-1  (e.g., 1 = palette index 0)
+// 0x01_00_00_00 | RGB  = True color (bit 24 set, bits 23-16=R, 15-8=G, 7-0=B)
+//
+// ── Underline Style Codes ──────────────────────────────────────────────
+// 0=off 1=single 2=double 3=curly 4=dotted 5=dashed
+//
+// ── CellAttributes state ────────────────────────────────────────────────
+// Module-level — single global "current pen" for the terminal session.
+// SGR dispatch modifies this state. The renderer reads it to draw cells.
+
+func:failsafe = int32(tbb32:err) { exit 1; };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Color Encoding Constants & Helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+// Sentinel value for "use terminal default"
+pub func:COLOR_DEFAULT = int64() { pass(0i64); };
+
+// Flag bit that marks true-color values (bit 24)
+pub func:COLOR_RGB_FLAG = int64() { pass(0x01000000i64); };
+
+// Encode a palette index (0–255) as a color value
+pub func:color_indexed = int64(int64:n) {
+    pass(n + 1i64);
+};
+
+// Encode R,G,B (0–255 each) as a true-color value
+pub func:color_rgb = int64(int64:r, int64:g, int64:b) {
+    int64:rc = r;
+    if (rc < 0i64) { rc = 0i64; }
+    if (rc > 255i64) { rc = 255i64; }
+    int64:gv = g;
+    if (gv < 0i64) { gv = 0i64; }
+    if (gv > 255i64) { gv = 255i64; }
+    int64:bv = b;
+    if (bv < 0i64) { bv = 0i64; }
+    if (bv > 255i64) { bv = 255i64; }
+    pass(0x01000000i64 + (rc * 65536i64) + (gv * 256i64) + bv);
+};
+
+
+// Test color type
+pub func:color_is_default = int64(int64:c) {
+    if (c == 0i64) { pass(1i64); }
+    pass(0i64);
+};
+
+pub func:color_is_indexed = int64(int64:c) {
+    if (c == 0i64) { pass(0i64); }
+    if (c >= 0x01000000i64) { pass(0i64); }
+    pass(1i64);
+};
+
+pub func:color_is_rgb = int64(int64:c) {
+    if (c >= 0x01000000i64) { pass(1i64); }
+    pass(0i64);
+};
+
+// Decode palette index from color value (only valid when color_is_indexed)
+pub func:color_get_index = int64(int64:c) {
+    pass(c - 1i64);
+};
+
+// Decode RGB components from true-color value
+pub func:color_get_r = int64(int64:c) {
+    int64:stripped = c - 0x01000000i64;
+    pass(stripped / 65536i64);
+};
+
+pub func:color_get_g = int64(int64:c) {
+    int64:stripped = c - 0x01000000i64;
+    int64:without_r = stripped - ((stripped / 65536i64) * 65536i64);
+    pass(without_r / 256i64);
+};
+
+pub func:color_get_b = int64(int64:c) {
+    int64:stripped = c - 0x01000000i64;
+    pass(stripped - ((stripped / 256i64) * 256i64));
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// 256-Color Palette (computed on demand)
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Palette layout:
+//   0–7:   Standard ANSI colors
+//   8–15:  High-intensity (bright) ANSI colors
+//   16–231: 6×6×6 RGB color cube
+//   232–255: Grayscale ramp (8, 18, 28, ..., 238)
+
+// Component values for the 6×6×6 color cube (0,95,135,175,215,255)
+func:cube_component = int64(int64:level) {
+    if (level == 0i64) { pass(0i64); }
+    if (level == 1i64) { pass(95i64); }
+    if (level == 2i64) { pass(135i64); }
+    if (level == 3i64) { pass(175i64); }
+    if (level == 4i64) { pass(215i64); }
+    pass(255i64);
+};
+
+// Standard 16-color ANSI RGB values (indices 0-15)
+// Returns packed int64: (r<<16)|(g<<8)|b
+func:ansi16_rgb = int64(int64:idx) {
+    if (idx == 0i64)  { pass(0x000000i64); }   // Black
+    if (idx == 1i64)  { pass(0x800000i64); }   // Red
+    if (idx == 2i64)  { pass(0x008000i64); }   // Green
+    if (idx == 3i64)  { pass(0x808000i64); }   // Yellow
+    if (idx == 4i64)  { pass(0x000080i64); }   // Blue
+    if (idx == 5i64)  { pass(0x800080i64); }   // Magenta
+    if (idx == 6i64)  { pass(0x008080i64); }   // Cyan
+    if (idx == 7i64)  { pass(0xC0C0C0i64); }   // White (light gray)
+    if (idx == 8i64)  { pass(0x808080i64); }   // Bright Black (dark gray)
+    if (idx == 9i64)  { pass(0xFF0000i64); }   // Bright Red
+    if (idx == 10i64) { pass(0x00FF00i64); }   // Bright Green
+    if (idx == 11i64) { pass(0xFFFF00i64); }   // Bright Yellow
+    if (idx == 12i64) { pass(0x0000FFi64); }   // Bright Blue
+    if (idx == 13i64) { pass(0xFF00FFi64); }   // Bright Magenta
+    if (idx == 14i64) { pass(0x00FFFFi64); }   // Bright Cyan
+    pass(0xFFFFFFi64);                          // Bright White
+};
+
+// Returns a true-color encoded value for palette index 0-255
+pub func:palette_to_color = int64(int64:index) {
+    // Standard 16 colors
+    if (index < 16i64) {
+        int64:packed = raw ansi16_rgb(index);
+        int64:r = packed / 65536i64;
+        int64:g = (packed - (r * 65536i64)) / 256i64;
+        int64:b = packed - (r * 65536i64) - (g * 256i64);
+        pass(raw color_rgb(r, g, b));
+    }
+
+    // 6×6×6 color cube (indices 16–231)
+    if (index < 232i64) {
+        int64:cube_idx = index - 16i64;
+        int64:r_level = cube_idx / 36i64;
+        int64:g_level = (cube_idx - (r_level * 36i64)) / 6i64;
+        int64:b_level = cube_idx - (r_level * 36i64) - (g_level * 6i64);
+        int64:r = raw cube_component(r_level);
+        int64:g = raw cube_component(g_level);
+        int64:b = raw cube_component(b_level);
+        pass(raw color_rgb(r, g, b));
+    }
+
+    // Grayscale ramp (indices 232–255): 8, 18, 28, ... 238
+    int64:gray = 8i64 + (index - 232i64) * 10i64;
+    pass(raw color_rgb(gray, gray, gray));
+};
+
+// Convenience: return R, G, B as separate values for palette index
+pub func:palette_r = int64(int64:index) {
+    int64:c = raw palette_to_color(index);
+    pass(raw color_get_r(c));
+};
+
+pub func:palette_g = int64(int64:index) {
+    int64:c = raw palette_to_color(index);
+    pass(raw color_get_g(c));
+};
+
+pub func:palette_b = int64(int64:index) {
+    int64:c = raw palette_to_color(index);
+    pass(raw color_get_b(c));
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// CellAttributes State
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:a_fg             = 0i64;   // foreground color (encoded)
+int64:a_bg             = 0i64;   // background color (encoded)
+int64:a_bold           = 0i64;   // 1=on
+int64:a_dim            = 0i64;   // 1=on
+int64:a_italic         = 0i64;   // 1=on
+int64:a_underline      = 0i64;   // 0=off, 1=single, 2=double, 3=curly, 4=dotted, 5=dashed
+int64:a_blink          = 0i64;   // 1=on
+int64:a_rapid_blink    = 0i64;   // 1=on
+int64:a_inverse        = 0i64;   // 1=on
+int64:a_hidden         = 0i64;   // 1=on
+int64:a_strikethrough  = 0i64;   // 1=on
+int64:a_overline       = 0i64;   // 1=on
+
+// Reset all attributes to defaults
+pub func:attrs_reset = NIL() {
+    a_fg            = 0i64;
+    a_bg            = 0i64;
+    a_bold          = 0i64;
+    a_dim           = 0i64;
+    a_italic        = 0i64;
+    a_underline     = 0i64;
+    a_blink         = 0i64;
+    a_rapid_blink   = 0i64;
+    a_inverse       = 0i64;
+    a_hidden        = 0i64;
+    a_strikethrough = 0i64;
+    a_overline      = 0i64;
+    pass(NIL);
+};
+
+// ── Getters ─────────────────────────────────────────────────────────────
+pub func:attrs_get_fg            = int64() { pass(a_fg); };
+pub func:attrs_get_bg            = int64() { pass(a_bg); };
+pub func:attrs_get_bold          = int64() { pass(a_bold); };
+pub func:attrs_get_dim           = int64() { pass(a_dim); };
+pub func:attrs_get_italic        = int64() { pass(a_italic); };
+pub func:attrs_get_underline     = int64() { pass(a_underline); };
+pub func:attrs_get_blink         = int64() { pass(a_blink); };
+pub func:attrs_get_rapid_blink   = int64() { pass(a_rapid_blink); };
+pub func:attrs_get_inverse       = int64() { pass(a_inverse); };
+pub func:attrs_get_hidden        = int64() { pass(a_hidden); };
+pub func:attrs_get_strikethrough = int64() { pass(a_strikethrough); };
+pub func:attrs_get_overline      = int64() { pass(a_overline); };
+
+// ── Setters ─────────────────────────────────────────────────────────────
+pub func:attrs_set_fg            = NIL(int64:v) { a_fg = v;            pass(NIL); };
+pub func:attrs_set_bg            = NIL(int64:v) { a_bg = v;            pass(NIL); };
+pub func:attrs_set_bold          = NIL(int64:v) { a_bold = v;          pass(NIL); };
+pub func:attrs_set_dim           = NIL(int64:v) { a_dim = v;           pass(NIL); };
+pub func:attrs_set_italic        = NIL(int64:v) { a_italic = v;        pass(NIL); };
+pub func:attrs_set_underline     = NIL(int64:v) { a_underline = v;     pass(NIL); };
+pub func:attrs_set_blink         = NIL(int64:v) { a_blink = v;         pass(NIL); };
+pub func:attrs_set_rapid_blink   = NIL(int64:v) { a_rapid_blink = v;   pass(NIL); };
+pub func:attrs_set_inverse       = NIL(int64:v) { a_inverse = v;       pass(NIL); };
+pub func:attrs_set_hidden        = NIL(int64:v) { a_hidden = v;        pass(NIL); };
+pub func:attrs_set_strikethrough = NIL(int64:v) { a_strikethrough = v; pass(NIL); };
+pub func:attrs_set_overline      = NIL(int64:v) { a_overline = v;      pass(NIL); };

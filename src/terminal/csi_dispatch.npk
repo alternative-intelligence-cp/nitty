@@ -24,6 +24,8 @@
 use "escape_types.npk".*;
 use "actions.npk".*;
 use "vt_parser.npk".*;
+use "sgr_dispatch.npk".*;
+use "attributes.npk".*;
 
 func:failsafe = int32(tbb32:err) { exit 1; };
 
@@ -258,6 +260,13 @@ pub func:dispatch_csi = NIL(int64:final_byte, int64:param_count) {
     if (final_byte == 0x5Ai64) {
         int64:n = raw mvparam(0i64);
         drop(set_action(25i64, n, 0i64));  // ACT_CURSOR_BACKWARD_TAB
+        pass(NIL);
+    }
+
+    // m — SGR: Select Graphic Rendition (colors + attributes)
+    if (final_byte == 0x6Di64) {
+        drop(dispatch_sgr(param_count));
+        drop(set_action(29i64, 0i64, 0i64));  // ACT_SET_ATTRS
         pass(NIL);
     }
 

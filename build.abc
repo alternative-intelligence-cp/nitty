@@ -156,3 +156,19 @@ deps = []
 flags = []
 link_libraries = []
 link_paths = []
+
+[target.test_sgr_dispatch]
+type = "binary"
+sources = ["tests/test_sgr_dispatch.npk"]
+deps = []
+flags = []
+link_libraries = []
+link_paths = []
+
+[target.test_sgr_integration]
+type = "binary"
+sources = ["tests/test_sgr_integration.npk"]
+deps = []
+flags = []
+link_libraries = []
+link_paths = []

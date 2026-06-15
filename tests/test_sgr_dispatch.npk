@@ -1,0 +1,570 @@
+// tests/test_sgr_dispatch.npk — SGR dispatch unit tests
+//
+// v0.2.2: Tests SGR by feeding ESC[...m sequences through
+// csi_dispatch (which calls sgr_dispatch internally), then
+// querying CellAttributes state from attributes.npk.
+//
+// Import chain: test → csi_dispatch → sgr_dispatch → attributes
+// Test directly imports: attributes, vt_parser, csi_dispatch, actions
+
+use "../src/terminal/actions.npk".*;
+use "../src/terminal/attributes.npk".*;
+use "../src/terminal/vt_parser.npk".*;
+use "../src/terminal/csi_dispatch.npk".*;
+
+int64:STDOUT = 1i64;
+int64:pass_count = 0i64;
+int64:fail_count = 0i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:assert_eq = NIL(string:name, int64:actual, int64:expected) {
+    if (actual == expected) {
+        pass_count = pass_count + 1i64;
+        drop(write_stdout("[PASS] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    } else {
+        fail_count = fail_count + 1i64;
+        drop(write_stdout("[FAIL] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    }
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:err) {
+    drop(write_stdout("FAILSAFE\n"));
+    exit 1;
+};
+
+// Feed the last parsed CSI event through dispatch_csi
+func:dispatch_last = NIL() {
+    int64:final = raw parser_get_event_data();
+    int64:nparams = raw parser_get_csi_param_count();
+    drop(dispatch_csi(final, nparams));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T01-T02: Reset and Basic Attribute Toggles
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_reset_and_attrs = NIL() {
+    // T01a: SGR 0 resets bold/italic/fg
+    drop(attrs_reset());
+    drop(attrs_set_bold(1i64));
+    drop(attrs_set_italic(1i64));
+    drop(attrs_set_fg(raw color_indexed(1i64)));
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T01a SGR0 bold=0", raw attrs_get_bold(), 0i64));
+    drop(assert_eq("T01b SGR0 italic=0", raw attrs_get_italic(), 0i64));
+    drop(assert_eq("T01c SGR0 fg=default", raw attrs_get_fg(), 0i64));
+
+    // T01d: no-param SGR also resets
+    drop(attrs_set_bold(1i64));
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T01d noparam resets", raw attrs_get_bold(), 0i64));
+
+    // T02a: bold
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T02a bold=1", raw attrs_get_bold(), 1i64));
+
+    // T02b: dim
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T02b dim=1", raw attrs_get_dim(), 1i64));
+
+    // T02c: italic
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T02c italic=1", raw attrs_get_italic(), 1i64));
+
+    // T02d: underline
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x34i64)); drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T02d underline=1", raw attrs_get_underline(), 1i64));
+
+    // T02e: blink
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x35i64)); drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T02e blink=1", raw attrs_get_blink(), 1i64));
+
+    // T02f: rapid blink
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x36i64)); drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T02f rapid_blink=1", raw attrs_get_rapid_blink(), 1i64));
+
+    // T02g: inverse
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x37i64)); drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T02g inverse=1", raw attrs_get_inverse(), 1i64));
+
+    // T02h: hidden
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x38i64)); drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T02h hidden=1", raw attrs_get_hidden(), 1i64));
+
+    // T02i: strikethrough
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x39i64)); drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T02i strikethrough=1", raw attrs_get_strikethrough(), 1i64));
+
+    // T02j: overline (53)
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x35i64)); drop(parser_feed_byte(0x33i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T02j overline=1", raw attrs_get_overline(), 1i64));
+
+    // T02k: double underline (21)
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x31i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T02k dbl_underline=2", raw attrs_get_underline(), 2i64));
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T03: Attribute Reset Codes
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_attr_resets = NIL() {
+    drop(attrs_reset());
+    drop(attrs_set_bold(1i64));
+    drop(attrs_set_dim(1i64));
+    drop(attrs_set_italic(1i64));
+    drop(attrs_set_underline(1i64));
+    drop(attrs_set_blink(1i64));
+    drop(attrs_set_inverse(1i64));
+    drop(attrs_set_hidden(1i64));
+    drop(attrs_set_strikethrough(1i64));
+    drop(attrs_set_overline(1i64));
+
+    // 22 = bold+dim off
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x32i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T03a 22: bold=0", raw attrs_get_bold(), 0i64));
+    drop(assert_eq("T03b 22: dim=0", raw attrs_get_dim(), 0i64));
+
+    // 23 = italic off
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x33i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T03c 23: italic=0", raw attrs_get_italic(), 0i64));
+
+    // 24 = underline off
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x34i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T03d 24: underline=0", raw attrs_get_underline(), 0i64));
+
+    // 25 = blink off
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x35i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T03e 25: blink=0", raw attrs_get_blink(), 0i64));
+
+    // 27 = inverse off
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x37i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T03f 27: inverse=0", raw attrs_get_inverse(), 0i64));
+
+    // 28 = hidden off
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x38i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T03g 28: hidden=0", raw attrs_get_hidden(), 0i64));
+
+    // 29 = strikethrough off
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x39i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T03h 29: strikethrough=0", raw attrs_get_strikethrough(), 0i64));
+
+    // 55 = overline off
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x35i64)); drop(parser_feed_byte(0x35i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T03i 55: overline=0", raw attrs_get_overline(), 0i64));
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T04-T07: 16-Color Foreground and Background
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_16colors = NIL() {
+    drop(attrs_reset());
+
+    // 31 = red fg (palette index 1)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x31i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T04a 31: fg indexed", raw color_is_indexed(raw attrs_get_fg()), 1i64));
+    drop(assert_eq("T04b 31: fg index=1", raw color_get_index(raw attrs_get_fg()), 1i64));
+
+    // 37 = white fg (index 7)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x37i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T04c 37: fg index=7", raw color_get_index(raw attrs_get_fg()), 7i64));
+
+    // 39 = default fg
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x39i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T04d 39: fg=default", raw attrs_get_fg(), 0i64));
+
+    // 42 = green bg (index 2)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x34i64)); drop(parser_feed_byte(0x32i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T05a 42: bg index=2", raw color_get_index(raw attrs_get_bg()), 2i64));
+
+    // 40 = black bg (index 0)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x34i64)); drop(parser_feed_byte(0x30i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T05b 40: bg index=0", raw color_get_index(raw attrs_get_bg()), 0i64));
+
+    // 49 = default bg
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x34i64)); drop(parser_feed_byte(0x39i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T05c 49: bg=default", raw attrs_get_bg(), 0i64));
+
+    // 97 = bright white fg (index 15)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x39i64)); drop(parser_feed_byte(0x37i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T06a 97: fg index=15", raw color_get_index(raw attrs_get_fg()), 15i64));
+
+    // 90 = bright black fg (index 8)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x39i64)); drop(parser_feed_byte(0x30i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T06b 90: fg index=8", raw color_get_index(raw attrs_get_fg()), 8i64));
+
+    // 100 = bright black bg (index 8)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x30i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T07a 100: bg index=8", raw color_get_index(raw attrs_get_bg()), 8i64));
+
+    // 107 = bright white bg (index 15)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x37i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T07b 107: bg index=15", raw color_get_index(raw attrs_get_bg()), 15i64));
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T08-T11: 256-Color and True Color
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_256color = NIL() {
+    drop(attrs_reset());
+
+    // 38;5;0 = palette index 0
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x38i64));
+    drop(parser_feed_byte(0x3Bi64)); drop(parser_feed_byte(0x35i64));
+    drop(parser_feed_byte(0x3Bi64)); drop(parser_feed_byte(0x30i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T08a 38;5;0: indexed", raw color_is_indexed(raw attrs_get_fg()), 1i64));
+    drop(assert_eq("T08b 38;5;0: index=0", raw color_get_index(raw attrs_get_fg()), 0i64));
+
+    // 38;5;196 = bright red
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x38i64));
+    drop(parser_feed_byte(0x3Bi64)); drop(parser_feed_byte(0x35i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x39i64)); drop(parser_feed_byte(0x36i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T08c 38;5;196=196", raw color_get_index(raw attrs_get_fg()), 196i64));
+
+    // 38;5;255 = max palette
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x38i64));
+    drop(parser_feed_byte(0x3Bi64)); drop(parser_feed_byte(0x35i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x35i64)); drop(parser_feed_byte(0x35i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T08d 38;5;255=255", raw color_get_index(raw attrs_get_fg()), 255i64));
+
+    // 48;5;232 = near-black grayscale bg
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x34i64)); drop(parser_feed_byte(0x38i64));
+    drop(parser_feed_byte(0x3Bi64)); drop(parser_feed_byte(0x35i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x32i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T09 48;5;232=232", raw color_get_index(raw attrs_get_bg()), 232i64));
+
+    pass(NIL);
+};
+
+func:test_truecolor = NIL() {
+    drop(attrs_reset());
+
+    // 38;2;255;128;0 = orange fg
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x38i64));
+    drop(parser_feed_byte(0x3Bi64)); drop(parser_feed_byte(0x32i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x35i64)); drop(parser_feed_byte(0x35i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x38i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    int64:fg = raw attrs_get_fg();
+    drop(assert_eq("T10a is_rgb", raw color_is_rgb(fg), 1i64));
+    drop(assert_eq("T10b R=255", raw color_get_r(fg), 255i64));
+    drop(assert_eq("T10c G=128", raw color_get_g(fg), 128i64));
+    drop(assert_eq("T10d B=0", raw color_get_b(fg), 0i64));
+
+    // 48;2;100;200;50 = greenish bg
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x34i64)); drop(parser_feed_byte(0x38i64));
+    drop(parser_feed_byte(0x3Bi64)); drop(parser_feed_byte(0x32i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x30i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x30i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x35i64)); drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    int64:bg = raw attrs_get_bg();
+    drop(assert_eq("T11a is_rgb", raw color_is_rgb(bg), 1i64));
+    drop(assert_eq("T11b R=100", raw color_get_r(bg), 100i64));
+    drop(assert_eq("T11c G=200", raw color_get_g(bg), 200i64));
+    drop(assert_eq("T11d B=50", raw color_get_b(bg), 50i64));
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T12-T14: Multi-param, Reset-in-chain, Unknown codes
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_multiparams = NIL() {
+    // T12: 1;31;42 = bold + red fg + green bg
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x31i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x34i64)); drop(parser_feed_byte(0x32i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T12a bold=1", raw attrs_get_bold(), 1i64));
+    drop(assert_eq("T12b fg=red(1)", raw color_get_index(raw attrs_get_fg()), 1i64));
+    drop(assert_eq("T12c bg=green(2)", raw color_get_index(raw attrs_get_bg()), 2i64));
+
+    // T13: 1;3;0;4 = bold+italic, reset, underline
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x34i64)); drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T13a reset clears bold", raw attrs_get_bold(), 0i64));
+    drop(assert_eq("T13b reset clears italic", raw attrs_get_italic(), 0i64));
+    drop(assert_eq("T13c underline after reset", raw attrs_get_underline(), 1i64));
+
+    // T14: unknown code (99) leaves state unchanged
+    drop(attrs_reset());
+    drop(attrs_set_bold(1i64));
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x39i64)); drop(parser_feed_byte(0x39i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(dispatch_last());
+    drop(assert_eq("T14 unknown ignored", raw attrs_get_bold(), 1i64));
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T15: palette_to_color spot checks
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_palette_low = NIL() {
+    // Index 0 = black (0,0,0)
+    int64:c0 = raw palette_to_color(0i64);
+    drop(assert_eq("T15a pal[0] R=0", raw color_get_r(c0), 0i64));
+    drop(assert_eq("T15b pal[0] G=0", raw color_get_g(c0), 0i64));
+    drop(assert_eq("T15c pal[0] B=0", raw color_get_b(c0), 0i64));
+    // Index 15 = bright white
+    int64:c15 = raw palette_to_color(15i64);
+    drop(assert_eq("T15d pal[15] R=255", raw color_get_r(c15), 255i64));
+    // Index 16 = cube black
+    int64:c16 = raw palette_to_color(16i64);
+    drop(assert_eq("T15e pal[16] R=0", raw color_get_r(c16), 0i64));
+    drop(assert_eq("T15f pal[16] G=0", raw color_get_g(c16), 0i64));
+    drop(assert_eq("T15g pal[16] B=0", raw color_get_b(c16), 0i64));
+    // Index 21 = pure blue
+    int64:c21 = raw palette_to_color(21i64);
+    drop(assert_eq("T15h pal[21] R=0", raw color_get_r(c21), 0i64));
+    drop(assert_eq("T15i pal[21] B=255", raw color_get_b(c21), 255i64));
+    pass(NIL);
+};
+
+func:test_palette_high = NIL() {
+    // Index 196 = bright red
+    int64:c196 = raw palette_to_color(196i64);
+    drop(assert_eq("T15j pal[196] R=255", raw color_get_r(c196), 255i64));
+    drop(assert_eq("T15k pal[196] G=0", raw color_get_g(c196), 0i64));
+    drop(assert_eq("T15l pal[196] B=0", raw color_get_b(c196), 0i64));
+    // Index 231 = cube white
+    int64:c231 = raw palette_to_color(231i64);
+    drop(assert_eq("T15m pal[231] R=255", raw color_get_r(c231), 255i64));
+    drop(assert_eq("T15n pal[231] G=255", raw color_get_g(c231), 255i64));
+    drop(assert_eq("T15o pal[231] B=255", raw color_get_b(c231), 255i64));
+    // Index 232 = darkest gray (8,8,8)
+    int64:c232 = raw palette_to_color(232i64);
+    drop(assert_eq("T15p pal[232] R=8", raw color_get_r(c232), 8i64));
+    drop(assert_eq("T15q pal[232] G=8", raw color_get_g(c232), 8i64));
+    // Index 255 = lightest gray (238)
+    int64:c255 = raw palette_to_color(255i64);
+    drop(assert_eq("T15r pal[255] R=238", raw color_get_r(c255), 238i64));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T16: Color encoding round-trips
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_color_encoding = NIL() {
+    int64:ci = raw color_indexed(42i64);
+    drop(assert_eq("T16a is_indexed", raw color_is_indexed(ci), 1i64));
+    drop(assert_eq("T16b index=42", raw color_get_index(ci), 42i64));
+    drop(assert_eq("T16c not_rgb", raw color_is_rgb(ci), 0i64));
+    drop(assert_eq("T16d not_default", raw color_is_default(ci), 0i64));
+    int64:cr = raw color_rgb(10i64, 20i64, 30i64);
+    drop(assert_eq("T16e is_rgb", raw color_is_rgb(cr), 1i64));
+    drop(assert_eq("T16f R=10", raw color_get_r(cr), 10i64));
+    drop(assert_eq("T16g G=20", raw color_get_g(cr), 20i64));
+    drop(assert_eq("T16h B=30", raw color_get_b(cr), 30i64));
+    drop(assert_eq("T16i default", raw color_is_default(0i64), 1i64));
+    pass(NIL);
+};
+
+func:main = int32() {
+    drop(write_stdout("=== SGR Dispatch Tests ===\n"));
+    drop(test_reset_and_attrs());
+    drop(test_attr_resets());
+    drop(test_16colors());
+    drop(test_256color());
+    drop(test_truecolor());
+    drop(test_multiparams());
+    drop(test_palette_low());
+    drop(test_palette_high());
+    drop(test_color_encoding());
+    if (fail_count == 0i64) {
+        drop(write_stdout("All SGR dispatch tests passed.\n"));
+        exit 0;
+    }
+    drop(write_stdout("SOME SGR DISPATCH TESTS FAILED.\n"));
+    exit 1;
+};

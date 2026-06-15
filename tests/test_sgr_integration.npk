@@ -1,0 +1,219 @@
+// tests/test_sgr_integration.npk — SGR end-to-end integration tests
+//
+// v0.2.2: Feeds raw bytes through parser → csi_dispatch → sgr_dispatch.
+// Split into sub-functions to avoid compiler scope limits.
+
+use "../src/terminal/escape_types.npk".*;
+use "../src/terminal/actions.npk".*;
+use "../src/terminal/attributes.npk".*;
+use "../src/terminal/vt_parser.npk".*;
+use "../src/terminal/csi_dispatch.npk".*;
+
+int64:STDOUT = 1i64;
+int64:pass_count = 0i64;
+int64:fail_count = 0i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:assert_eq = NIL(string:name, int64:actual, int64:expected) {
+    if (actual == expected) {
+        pass_count = pass_count + 1i64;
+        drop(write_stdout("[PASS] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    } else {
+        fail_count = fail_count + 1i64;
+        drop(write_stdout("[FAIL] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    }
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:err) {
+    drop(write_stdout("FAILSAFE\n"));
+    exit 1;
+};
+
+func:run_csi = NIL() {
+    int64:evt = raw parser_get_event_type();
+    int64:csi = raw EVT_CSI();
+    if (evt == csi) {
+        int64:final = raw parser_get_event_data();
+        int64:nparams = raw parser_get_csi_param_count();
+        drop(dispatch_csi(final, nparams));
+    }
+    pass(NIL);
+};
+
+// ── I01–I02: Bold+red, reset ─────────────────────────────────────────
+
+func:test_basic_sgr = NIL() {
+    int64:SET_ATTRS = raw ACT_SET_ATTRS();
+
+    // I01: ESC[1;31m → bold + red fg
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x31i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(run_csi());
+    drop(assert_eq("I01a action=SET_ATTRS", raw dispatch_get_action_type(), SET_ATTRS));
+    drop(assert_eq("I01b bold=1", raw attrs_get_bold(), 1i64));
+    drop(assert_eq("I01c fg=red(1)", raw color_get_index(raw attrs_get_fg()), 1i64));
+
+    // I02: ESC[0m → reset all
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x6Di64));
+    drop(run_csi());
+    drop(assert_eq("I02a action=SET_ATTRS", raw dispatch_get_action_type(), SET_ATTRS));
+    drop(assert_eq("I02b bold=0 after reset", raw attrs_get_bold(), 0i64));
+    drop(assert_eq("I02c fg=default after reset", raw attrs_get_fg(), 0i64));
+
+    pass(NIL);
+};
+
+// ── I03: True color fg ───────────────────────────────────────────────
+
+func:test_truecolor = NIL() {
+    // I03: ESC[38;2;100;200;50m
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x38i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x32i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x30i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x30i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x35i64)); drop(parser_feed_byte(0x30i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(run_csi());
+    int64:rgb = raw attrs_get_fg();
+    drop(assert_eq("I03a is_rgb", raw color_is_rgb(rgb), 1i64));
+    drop(assert_eq("I03b R=100", raw color_get_r(rgb), 100i64));
+    drop(assert_eq("I03c G=200", raw color_get_g(rgb), 200i64));
+    drop(assert_eq("I03d B=50", raw color_get_b(rgb), 50i64));
+
+    pass(NIL);
+};
+
+// ── I04: Complex multi-param ─────────────────────────────────────────
+
+func:test_complex = NIL() {
+    // I04: ESC[1;3;4;38;5;208m → bold+italic+underline+256-color orange
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x33i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x34i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x38i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x35i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x38i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(run_csi());
+    drop(assert_eq("I04a bold=1", raw attrs_get_bold(), 1i64));
+    drop(assert_eq("I04b italic=1", raw attrs_get_italic(), 1i64));
+    drop(assert_eq("I04c underline=1", raw attrs_get_underline(), 1i64));
+    drop(assert_eq("I04d fg=208", raw color_get_index(raw attrs_get_fg()), 208i64));
+
+    pass(NIL);
+};
+
+// ── I05: Streaming sequences, attrs preserved ────────────────────────
+
+func:test_stream = NIL() {
+    drop(attrs_reset());
+
+    // ESC[1m (bold on)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x6Di64));
+    drop(run_csi());
+    drop(assert_eq("I05a bold on", raw attrs_get_bold(), 1i64));
+
+    // ESC[31m (red fg), bold must still be on
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x6Di64));
+    drop(run_csi());
+    drop(assert_eq("I05b fg=red(1)", raw color_get_index(raw attrs_get_fg()), 1i64));
+    drop(assert_eq("I05c bold still on", raw attrs_get_bold(), 1i64));
+
+    // ESC[0m (reset)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x6Di64));
+    drop(run_csi());
+    drop(assert_eq("I05d bold reset", raw attrs_get_bold(), 0i64));
+    drop(assert_eq("I05e fg reset", raw attrs_get_fg(), 0i64));
+
+    pass(NIL);
+};
+
+// ── I06: SGR doesn't disturb non-SGR dispatch ─────────────────────────
+
+func:test_interleaved = NIL() {
+    drop(attrs_reset());
+
+    // Set fg color
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x33i64)); drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x6Di64));
+    drop(run_csi());
+
+    // ESC[5A (cursor up 5) — should not clear attrs
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x35i64)); drop(parser_feed_byte(0x41i64));
+    drop(run_csi());
+    int64:UP = raw ACT_CURSOR_UP();
+    drop(assert_eq("I06a cursor up action", raw dispatch_get_action_type(), UP));
+    drop(assert_eq("I06b fg still set", raw color_get_index(raw attrs_get_fg()), 1i64));
+
+    // ESC[7;41m → inverse + red bg
+    drop(attrs_reset());
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Bi64));
+    drop(parser_feed_byte(0x37i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x34i64)); drop(parser_feed_byte(0x31i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(run_csi());
+    drop(assert_eq("I07a inverse=1", raw attrs_get_inverse(), 1i64));
+    drop(assert_eq("I07b bg=red(1)", raw color_get_index(raw attrs_get_bg()), 1i64));
+
+    pass(NIL);
+};
+
+func:main = int32() {
+    drop(write_stdout("=== SGR Integration Tests ===\n"));
+
+    drop(test_basic_sgr());
+    drop(test_truecolor());
+    drop(test_complex());
+    drop(test_stream());
+    drop(test_interleaved());
+
+    if (fail_count == 0i64) {
+        drop(write_stdout("All SGR integration tests passed.\n"));
+        exit 0;
+    }
+    drop(write_stdout("SOME SGR INTEGRATION TESTS FAILED.\n"));
+    exit 1;
+};

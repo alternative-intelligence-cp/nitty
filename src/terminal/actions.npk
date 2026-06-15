@@ -58,6 +58,10 @@ pub func:ACT_INDEX               = int64() { pass(26i64); };  // ESC D: move dow
 pub func:ACT_REVERSE_INDEX       = int64() { pass(27i64); };  // ESC M: move up (scroll if at top)
 pub func:ACT_NEXT_LINE           = int64() { pass(28i64); };  // ESC E: CR + LF
 
+// SGR attribute actions
+pub func:ACT_SET_ATTRS           = int64() { pass(29i64); };  // SGR changed attributes
+pub func:ACT_RESET_ATTRS         = int64() { pass(30i64); };  // SGR 0 reset
+
 // ═══════════════════════════════════════════════════════════════════════
 // Erase Mode Constants
 // ═══════════════════════════════════════════════════════════════════════
