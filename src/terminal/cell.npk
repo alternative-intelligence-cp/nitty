@@ -1,0 +1,149 @@
+// src/terminal/cell.npk — Cell encoding constants and attribute packing
+//
+// v0.2.5: Defines how a terminal cell's codepoint, color attributes, and
+// style flags are stored in the grid's three parallel int64 arrays.
+//
+// Grid layout (three parallel arrays of size MAX_ROWS * MAX_COLS):
+//   grid_cp[i]    — Unicode codepoint (0x20 = space/empty)
+//   grid_attrs[i] — color: upper32 = fg (encoded), lower32 = bg (encoded)
+//   grid_flags[i] — style bits packed into one int64
+//
+// Index: i = row * active_cols + col
+//
+// Attribute color encoding (matches attributes.npk):
+//   0             = COLOR_DEFAULT (terminal default)
+//   1–256         = indexed color (index + 1)
+//   0x01_NN_GG_BB = true color (bit 24 set)
+//
+// Flag bits in grid_flags:
+//   bit 0:  bold
+//   bit 1:  dim
+//   bit 2:  italic
+//   bit 3:  underline (see bits 12-14 for style)
+//   bit 4:  blink
+//   bit 5:  rapid_blink
+//   bit 6:  inverse
+//   bit 7:  hidden
+//   bit 8:  strikethrough
+//   bit 9:  overline
+//   bit 10: wide_char (this cell is 2 columns wide)
+//   bit 11: continuation (this is the 2nd column of a wide char)
+//   bit 12-14: underline style (0=single,1=double,2=curly,3=dotted,4=dashed)
+
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// Grid Size Constants
+// ═══════════════════════════════════════════════════════════════════════
+
+// Maximum supported terminal dimensions.
+// Grid arrays are allocated at this size: MAX_ROWS * MAX_COLS = 40000 cells.
+pub func:MAX_ROWS = int64() { pass(200i64); };
+pub func:MAX_COLS = int64() { pass(200i64); };
+pub func:MAX_CELLS = int64() { pass(40000i64); };  // MAX_ROWS * MAX_COLS
+
+// ═══════════════════════════════════════════════════════════════════════
+// Default Cell Values
+// ═══════════════════════════════════════════════════════════════════════
+
+// Default codepoint: space (U+0020)
+pub func:CELL_DEFAULT_CP = int64() { pass(0x20i64); };
+
+// Default color: 0 = terminal default fg/bg
+pub func:CELL_DEFAULT_ATTRS = int64() { pass(0i64); };
+
+// Default flags: all zero (normal width, no styles)
+pub func:CELL_DEFAULT_FLAGS = int64() { pass(0i64); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Flag Bit Masks
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:CELL_BOLD         = int64() { pass(0x001i64); };
+pub func:CELL_DIM          = int64() { pass(0x002i64); };
+pub func:CELL_ITALIC       = int64() { pass(0x004i64); };
+pub func:CELL_UNDERLINE    = int64() { pass(0x008i64); };
+pub func:CELL_BLINK        = int64() { pass(0x010i64); };
+pub func:CELL_RAPID_BLINK  = int64() { pass(0x020i64); };
+pub func:CELL_INVERSE      = int64() { pass(0x040i64); };
+pub func:CELL_HIDDEN       = int64() { pass(0x080i64); };
+pub func:CELL_STRIKE       = int64() { pass(0x100i64); };
+pub func:CELL_OVERLINE     = int64() { pass(0x200i64); };
+pub func:CELL_WIDE         = int64() { pass(0x400i64); };
+pub func:CELL_CONT         = int64() { pass(0x800i64); };
+
+// Underline style occupies bits 12-14 (shift 12)
+pub func:CELL_UL_STYLE_SHIFT = int64() { pass(12i64); };
+pub func:CELL_UL_STYLE_MASK  = int64() { pass(0x7000i64); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Attribute Color Packing (into one int64, split at bit 32)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Pack fg (upper 32 bits) and bg (lower 32 bits) into one attrs int64.
+// Color values ≤ 0xFFFFFF so fit cleanly in 32 bits each.
+// 2^32 = 4294967296
+pub func:cell_pack_attrs = int64(int64:fg, int64:bg) {
+    int64:packed = (fg * (65536i64 * 65536i64)) + bg;
+    pass(packed);
+};
+
+pub func:cell_attrs_fg = int64(int64:attrs) {
+    pass(attrs / (65536i64 * 65536i64));
+};
+
+pub func:cell_attrs_bg = int64(int64:attrs) {
+    int64:mask = 0xFFFFFFFFi64;
+    pass(attrs & mask);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Flag Packing from Attribute State
+// ═══════════════════════════════════════════════════════════════════════
+
+// Build a flags word from individual attribute values (each 0 or 1,
+// except underline_style which is 0–5).
+pub func:cell_pack_flags = int64(int64:bold, int64:dim, int64:italic,
+                                  int64:underline, int64:blink,
+                                  int64:rapid_blink, int64:inverse,
+                                  int64:hidden, int64:strike,
+                                  int64:overline, int64:ul_style) {
+    int64:f = 0i64;
+    if (bold        != 0i64) { f = f + 0x001i64; }
+    if (dim         != 0i64) { f = f + 0x002i64; }
+    if (italic      != 0i64) { f = f + 0x004i64; }
+    if (underline   != 0i64) { f = f + 0x008i64; }
+    if (blink       != 0i64) { f = f + 0x010i64; }
+    if (rapid_blink != 0i64) { f = f + 0x020i64; }
+    if (inverse     != 0i64) { f = f + 0x040i64; }
+    if (hidden      != 0i64) { f = f + 0x080i64; }
+    if (strike      != 0i64) { f = f + 0x100i64; }
+    if (overline    != 0i64) { f = f + 0x200i64; }
+    f = f + (ul_style * 0x1000i64);
+    pass(f);
+};
+
+// Extract individual flags from a flags word
+pub func:cell_flag_bold        = int64(int64:f) { if ((f & 0x001i64) > 0i64) { pass(1i64); } pass(0i64); };
+pub func:cell_flag_dim         = int64(int64:f) { if ((f & 0x002i64) > 0i64) { pass(1i64); } pass(0i64); };
+pub func:cell_flag_italic      = int64(int64:f) { if ((f & 0x004i64) > 0i64) { pass(1i64); } pass(0i64); };
+pub func:cell_flag_underline   = int64(int64:f) { if ((f & 0x008i64) > 0i64) { pass(1i64); } pass(0i64); };
+pub func:cell_flag_blink       = int64(int64:f) { if ((f & 0x010i64) > 0i64) { pass(1i64); } pass(0i64); };
+pub func:cell_flag_rapid_blink = int64(int64:f) { if ((f & 0x020i64) > 0i64) { pass(1i64); } pass(0i64); };
+pub func:cell_flag_inverse     = int64(int64:f) { if ((f & 0x040i64) > 0i64) { pass(1i64); } pass(0i64); };
+pub func:cell_flag_hidden      = int64(int64:f) { if ((f & 0x080i64) > 0i64) { pass(1i64); } pass(0i64); };
+pub func:cell_flag_strike      = int64(int64:f) { if ((f & 0x100i64) > 0i64) { pass(1i64); } pass(0i64); };
+pub func:cell_flag_overline    = int64(int64:f) { if ((f & 0x200i64) > 0i64) { pass(1i64); } pass(0i64); };
+pub func:cell_flag_wide        = int64(int64:f) { if ((f & 0x400i64) > 0i64) { pass(1i64); } pass(0i64); };
+pub func:cell_flag_cont        = int64(int64:f) { if ((f & 0x800i64) > 0i64) { pass(1i64); } pass(0i64); };
+pub func:cell_flag_ul_style    = int64(int64:f) { pass((f & 0x7000i64) / 0x1000i64); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cell Index
+// ═══════════════════════════════════════════════════════════════════════
+
+// Compute flat array index for a (row, col) in a grid of given width.
+// Caller responsible for bounds checking.
+pub func:cell_index = int64(int64:row, int64:col, int64:grid_cols) {
+    pass(row * grid_cols + col);
+};

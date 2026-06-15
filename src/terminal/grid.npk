@@ -1,0 +1,398 @@
+// src/terminal/grid.npk — Terminal character grid
+//
+// v0.2.5: Two logical grids (primary + alternate screen), each stored as
+// three parallel flat int64 arrays of size MAX_CELLS (40,000):
+//
+//   Primary:    grid_cp[i], grid_attrs[i], grid_flags[i]
+//   Alternate:  alt_cp[i],  alt_attrs[i],  alt_flags[i]
+//
+// Index: i = row * active_cols + col   (row-major, 0-indexed)
+// Access is bounds-checked against active ts_rows/ts_cols.
+//
+// Operations: init/clear/get/set, scroll up/down within a region,
+// insert/delete lines, insert/delete characters (line shifting).
+
+use "cell.npk".*;
+
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// Grid Storage — Primary Screen
+// ═══════════════════════════════════════════════════════════════════════
+
+int64[40000]:grid_cp;
+int64[40000]:grid_attrs;
+int64[40000]:grid_flags;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Grid Storage — Alternate Screen
+// ═══════════════════════════════════════════════════════════════════════
+
+int64[40000]:alt_cp;
+int64[40000]:alt_attrs;
+int64[40000]:alt_flags;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Active Grid Selection
+// ═══════════════════════════════════════════════════════════════════════
+
+// 0 = primary, 1 = alternate
+int64:g_active = 0i64;
+
+// Active grid dimensions (set by grid_init / grid_resize)
+int64:g_rows = 0i64;
+int64:g_cols = 0i64;
+
+pub func:grid_set_active = NIL(int64:which) {
+    g_active = which;
+    pass(NIL);
+};
+pub func:grid_get_active = int64() { pass(g_active); };
+pub func:grid_get_rows   = int64() { pass(g_rows); };
+pub func:grid_get_cols   = int64() { pass(g_cols); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Low-level array read/write (dispatches to primary or alternate)
+// ═══════════════════════════════════════════════════════════════════════
+
+func:raw_get_cp = int64(int64:i) {
+    if (g_active == 0i64) { pass(grid_cp[i]); }
+    pass(alt_cp[i]);
+};
+
+func:raw_set_cp = NIL(int64:i, int64:v) {
+    if (g_active == 0i64) { grid_cp[i] = v; pass(NIL); }
+    alt_cp[i] = v;
+    pass(NIL);
+};
+
+func:raw_get_attrs = int64(int64:i) {
+    if (g_active == 0i64) { pass(grid_attrs[i]); }
+    pass(alt_attrs[i]);
+};
+
+func:raw_set_attrs = NIL(int64:i, int64:v) {
+    if (g_active == 0i64) { grid_attrs[i] = v; pass(NIL); }
+    alt_attrs[i] = v;
+    pass(NIL);
+};
+
+func:raw_get_flags = int64(int64:i) {
+    if (g_active == 0i64) { pass(grid_flags[i]); }
+    pass(alt_flags[i]);
+};
+
+func:raw_set_flags = NIL(int64:i, int64:v) {
+    if (g_active == 0i64) { grid_flags[i] = v; pass(NIL); }
+    alt_flags[i] = v;
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Initialization
+// ═══════════════════════════════════════════════════════════════════════
+
+// Fill the entire active grid with default (space) cells.
+func:grid_fill_all = NIL() {
+    int64:total = g_rows * g_cols;
+    int64:i = 0i64;
+    while (i < total) {
+        drop(raw_set_cp(i, raw CELL_DEFAULT_CP()));
+        drop(raw_set_attrs(i, raw CELL_DEFAULT_ATTRS()));
+        drop(raw_set_flags(i, raw CELL_DEFAULT_FLAGS()));
+        i = i + 1i64;
+    }
+    pass(NIL);
+};
+
+/// Initialize both grids to the given dimensions.
+/// Must be called before any grid operations.
+/// rows/cols clamped to MAX_ROWS/MAX_COLS.
+pub func:grid_init = NIL(int64:rows, int64:cols) {
+    int64:r = rows;
+    int64:c = cols;
+    if (r > 200i64) { r = 200i64; }
+    if (c > 200i64) { c = 200i64; }
+    if (r < 1i64)   { r = 1i64; }
+    if (c < 1i64)   { c = 1i64; }
+    g_rows = r;
+    g_cols = c;
+    // Fill primary
+    g_active = 0i64;
+    drop(grid_fill_all());
+    // Fill alternate
+    g_active = 1i64;
+    drop(grid_fill_all());
+    // Return to primary
+    g_active = 0i64;
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cell Access — Public API
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Get codepoint at (row, col). Returns CELL_DEFAULT_CP if out of bounds.
+pub func:grid_get_cp = int64(int64:row, int64:col) {
+    if (row < 0i64) { pass(raw CELL_DEFAULT_CP()); }
+    if (col < 0i64) { pass(raw CELL_DEFAULT_CP()); }
+    if (row >= g_rows) { pass(raw CELL_DEFAULT_CP()); }
+    if (col >= g_cols) { pass(raw CELL_DEFAULT_CP()); }
+    int64:i = raw cell_index(row, col, g_cols);
+    pass(raw raw_get_cp(i));
+};
+
+/// Get packed color attrs at (row, col).
+pub func:grid_get_attrs = int64(int64:row, int64:col) {
+    if (row < 0i64) { pass(0i64); }
+    if (col < 0i64) { pass(0i64); }
+    if (row >= g_rows) { pass(0i64); }
+    if (col >= g_cols) { pass(0i64); }
+    int64:i = raw cell_index(row, col, g_cols);
+    pass(raw raw_get_attrs(i));
+};
+
+/// Get style flags at (row, col).
+pub func:grid_get_flags = int64(int64:row, int64:col) {
+    if (row < 0i64) { pass(0i64); }
+    if (col < 0i64) { pass(0i64); }
+    if (row >= g_rows) { pass(0i64); }
+    if (col >= g_cols) { pass(0i64); }
+    int64:i = raw cell_index(row, col, g_cols);
+    pass(raw raw_get_flags(i));
+};
+
+/// Write a cell at (row, col). Silently ignores out-of-bounds.
+pub func:grid_set = NIL(int64:row, int64:col,
+                         int64:cp, int64:attrs, int64:flags) {
+    if (row < 0i64)    { pass(NIL); }
+    if (col < 0i64)    { pass(NIL); }
+    if (row >= g_rows) { pass(NIL); }
+    if (col >= g_cols) { pass(NIL); }
+    int64:i = raw cell_index(row, col, g_cols);
+    drop(raw_set_cp(i, cp));
+    drop(raw_set_attrs(i, attrs));
+    drop(raw_set_flags(i, flags));
+    pass(NIL);
+};
+
+/// Write a cell at (row, col) — only codepoint.
+pub func:grid_set_cp = NIL(int64:row, int64:col, int64:cp) {
+    if (row < 0i64)    { pass(NIL); }
+    if (col < 0i64)    { pass(NIL); }
+    if (row >= g_rows) { pass(NIL); }
+    if (col >= g_cols) { pass(NIL); }
+    int64:i = raw cell_index(row, col, g_cols);
+    drop(raw_set_cp(i, cp));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Clear Operations
+// ═══════════════════════════════════════════════════════════════════════
+
+// Default attrs for erased cells (current background color, no flags)
+int64:g_erase_attrs = 0i64;
+int64:g_erase_flags = 0i64;
+
+pub func:grid_set_erase_attrs = NIL(int64:attrs, int64:flags) {
+    g_erase_attrs = attrs;
+    g_erase_flags = flags;
+    pass(NIL);
+};
+
+// Clear one cell at index i with the erase pen.
+func:clear_cell = NIL(int64:i) {
+    drop(raw_set_cp(i, raw CELL_DEFAULT_CP()));
+    drop(raw_set_attrs(i, g_erase_attrs));
+    drop(raw_set_flags(i, g_erase_flags));
+    pass(NIL);
+};
+
+/// Clear a single row (fill with erase pen).
+pub func:grid_clear_row = NIL(int64:row) {
+    if (row < 0i64)    { pass(NIL); }
+    if (row >= g_rows) { pass(NIL); }
+    int64:base = row * g_cols;
+    int64:j = 0i64;
+    while (j < g_cols) {
+        drop(clear_cell(base + j));
+        j = j + 1i64;
+    }
+    pass(NIL);
+};
+
+/// Clear a rectangular region [top..bottom] x [left..right] inclusive (0-indexed).
+pub func:grid_clear_region = NIL(int64:top, int64:left,
+                                   int64:bottom, int64:right) {
+    int64:r = top;
+    while (r <= bottom) {
+        if (r >= 0i64) {
+            if (r < g_rows) {
+                int64:c = left;
+                while (c <= right) {
+                    if (c >= 0i64) {
+                        if (c < g_cols) {
+                            int64:i2 = raw cell_index(r, c, g_cols);
+                            drop(clear_cell(i2));
+                        }
+                    }
+                    c = c + 1i64;
+                }
+            }
+        }
+        r = r + 1i64;
+    }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Row Copy Helper
+// ═══════════════════════════════════════════════════════════════════════
+
+// Copy one full row src_row → dst_row within active grid.
+func:copy_row = NIL(int64:dst_row, int64:src_row) {
+    int64:dst_base = dst_row * g_cols;
+    int64:src_base = src_row * g_cols;
+    int64:j = 0i64;
+    while (j < g_cols) {
+        int64:di = dst_base + j;
+        int64:si = src_base + j;
+        drop(raw_set_cp(di, raw raw_get_cp(si)));
+        drop(raw_set_attrs(di, raw raw_get_attrs(si)));
+        drop(raw_set_flags(di, raw raw_get_flags(si)));
+        j = j + 1i64;
+    }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Scroll Operations
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Scroll region [top..bottom] up by count lines.
+/// Lines that scroll off the top are discarded.
+/// Vacated lines at the bottom are cleared with the erase pen.
+pub func:grid_scroll_up = NIL(int64:top, int64:bottom, int64:count) {
+    int64:n = count;
+    if (n <= 0i64) { pass(NIL); }
+    int64:region_height = bottom - top + 1i64;
+    if (n > region_height) { n = region_height; }
+    // Shift rows up: dst = top+r, src = top+r+n
+    int64:r = 0i64;
+    while (r < region_height - n) {
+        drop(copy_row(top + r, top + r + n));
+        r = r + 1i64;
+    }
+    // Clear vacated rows at bottom
+    int64:clear_start = bottom - n + 1i64;
+    int64:cr = clear_start;
+    while (cr <= bottom) {
+        drop(grid_clear_row(cr));
+        cr = cr + 1i64;
+    }
+    pass(NIL);
+};
+
+/// Scroll region [top..bottom] down by count lines.
+/// Lines that scroll off the bottom are discarded.
+/// Vacated lines at the top are cleared with the erase pen.
+pub func:grid_scroll_down = NIL(int64:top, int64:bottom, int64:count) {
+    int64:n = count;
+    if (n <= 0i64) { pass(NIL); }
+    int64:region_height = bottom - top + 1i64;
+    if (n > region_height) { n = region_height; }
+    // Shift rows down: dst = bottom-r, src = bottom-r-n (iterate from bottom)
+    int64:r = 0i64;
+    while (r < region_height - n) {
+        drop(copy_row(bottom - r, bottom - r - n));
+        r = r + 1i64;
+    }
+    // Clear vacated rows at top
+    int64:cr = top;
+    while (cr < top + n) {
+        drop(grid_clear_row(cr));
+        cr = cr + 1i64;
+    }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Insert / Delete Lines
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Insert n blank lines at at_row, within scroll region [at_row..scroll_bottom].
+/// Lines pushed past scroll_bottom are discarded.
+pub func:grid_insert_lines = NIL(int64:at_row, int64:n, int64:scroll_bottom) {
+    drop(grid_scroll_down(at_row, scroll_bottom, n));
+    pass(NIL);
+};
+
+/// Delete n lines at at_row, within scroll region [at_row..scroll_bottom].
+/// Lines scroll up to fill the gap; blank lines appear at bottom.
+pub func:grid_delete_lines = NIL(int64:at_row, int64:n, int64:scroll_bottom) {
+    drop(grid_scroll_up(at_row, scroll_bottom, n));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Insert / Delete Characters (line-level shift)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Insert n blank characters at (row, col), shifting remaining chars right.
+/// Characters pushed past right margin are discarded.
+pub func:grid_insert_chars = NIL(int64:row, int64:col, int64:n) {
+    if (row < 0i64)    { pass(NIL); }
+    if (row >= g_rows) { pass(NIL); }
+    // Shift cells right from g_cols-1 down to col+n
+    int64:src = g_cols - 1i64 - n;
+    while (src >= col) {
+        int64:dst = src + n;
+        if (dst < g_cols) {
+            int64:si = raw cell_index(row, src, g_cols);
+            int64:di = raw cell_index(row, dst, g_cols);
+            drop(raw_set_cp(di, raw raw_get_cp(si)));
+            drop(raw_set_attrs(di, raw raw_get_attrs(si)));
+            drop(raw_set_flags(di, raw raw_get_flags(si)));
+        }
+        src = src - 1i64;
+    }
+    // Clear inserted positions
+    int64:c = col;
+    while (c < col + n) {
+        if (c < g_cols) {
+            int64:i2 = raw cell_index(row, c, g_cols);
+            drop(clear_cell(i2));
+        }
+        c = c + 1i64;
+    }
+    pass(NIL);
+};
+
+/// Delete n characters at (row, col), shifting remaining chars left.
+/// Vacated positions at right margin are filled with erase pen.
+pub func:grid_delete_chars = NIL(int64:row, int64:col, int64:n) {
+    if (row < 0i64)    { pass(NIL); }
+    if (row >= g_rows) { pass(NIL); }
+    // Shift cells left
+    int64:dst = col;
+    while (dst < g_cols - n) {
+        int64:src = dst + n;
+        int64:di = raw cell_index(row, dst, g_cols);
+        int64:si = raw cell_index(row, src, g_cols);
+        drop(raw_set_cp(di, raw raw_get_cp(si)));
+        drop(raw_set_attrs(di, raw raw_get_attrs(si)));
+        drop(raw_set_flags(di, raw raw_get_flags(si)));
+        dst = dst + 1i64;
+    }
+    // Clear vacated positions at right
+    int64:c = g_cols - n;
+    while (c < g_cols) {
+        int64:i2 = raw cell_index(row, c, g_cols);
+        drop(clear_cell(i2));
+        c = c + 1i64;
+    }
+    pass(NIL);
+};
+
+

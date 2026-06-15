@@ -1,0 +1,102 @@
+// src/terminal/grid_resize.npk — Grid resize operation
+//
+// v0.2.5: Separated from grid.npk to work around a Nitpick compiler
+// limitation: the combination of large module-level arrays (int64[40000])
+// and complex nested loops in a single module triggers a stoull error
+// during IR generation. Keeping resize in its own module avoids this.
+//
+// Provides: grid_resize(new_rows, new_cols)
+// Depends on: grid.npk (via cell.npk chain)
+
+use "grid.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Resize State
+// ═══════════════════════════════════════════════════════════════════════
+
+// Previous grid dimensions (saved before resize)
+int64:g_old_rows = 0i64;
+int64:g_old_cols = 0i64;
+
+// Temp copy of one row during resize (200 = MAX_COLS)
+int64[200]:_resize_row_cp;
+int64[200]:_resize_row_attrs;
+int64[200]:_resize_row_flags;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Resize Helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+// Save one row from the active grid into the temp buffer,
+// using g_old_cols as the row stride.
+func:resize_save_row = NIL(int64:row) {
+    int64:base = row * g_old_cols;
+    int64:j = 0i64;
+    while (j < g_old_cols) {
+        _resize_row_cp[j]    = raw grid_get_cp(row, j);
+        _resize_row_attrs[j] = raw grid_get_attrs(row, j);
+        _resize_row_flags[j] = raw grid_get_flags(row, j);
+        j = j + 1i64;
+    }
+    pass(NIL);
+};
+
+// Write the temp buffer row back into the new layout at row r.
+func:resize_write_row = NIL(int64:r, int64:copy_cols, int64:nc) {
+    int64:j = 0i64;
+    while (j < copy_cols) {
+        drop(grid_set(r, j, _resize_row_cp[j],
+                      _resize_row_attrs[j], _resize_row_flags[j]));
+        j = j + 1i64;
+    }
+    pass(NIL);
+};
+
+// Clear the newly visible columns (beyond old width) in row r.
+func:resize_clear_new_cols = NIL(int64:r, int64:copy_cols, int64:nc) {
+    int64:j = copy_cols;
+    while (j < nc) {
+        drop(grid_set(r, j, raw CELL_DEFAULT_CP(),
+                      raw CELL_DEFAULT_ATTRS(), raw CELL_DEFAULT_FLAGS()));
+        j = j + 1i64;
+    }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Public API
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Resize the active grid to new_rows x new_cols.
+/// Content is preserved up to min(old, new) bounds; new space is cleared.
+/// Rows/cols are clamped to [1, 200].
+pub func:grid_resize = NIL(int64:new_rows, int64:new_cols) {
+    int64:nr = new_rows;
+    int64:nc = new_cols;
+    if (nr > 200i64) { nr = 200i64; }
+    if (nc > 200i64) { nc = 200i64; }
+    if (nr < 1i64)   { nr = 1i64; }
+    if (nc < 1i64)   { nc = 1i64; }
+
+    // Remember old dimensions
+    g_old_rows = raw grid_get_rows();
+    g_old_cols = raw grid_get_cols();
+
+    int64:copy_rows = g_old_rows;
+    if (nr < copy_rows) { copy_rows = nr; }
+    int64:copy_cols = g_old_cols;
+    if (nc < copy_cols) { copy_cols = nc; }
+
+    // Re-initialize grid to new dimensions first (content will be overwritten)
+    drop(grid_init(nr, nc));
+
+    // Copy preserved rows back in
+    int64:r = 0i64;
+    while (r < copy_rows) {
+        drop(resize_save_row(r));
+        drop(resize_write_row(r, copy_cols, nc));
+        drop(resize_clear_new_cols(r, copy_cols, nc));
+        r = r + 1i64;
+    }
+    pass(NIL);
+};

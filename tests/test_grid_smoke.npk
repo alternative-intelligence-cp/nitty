@@ -1,0 +1,142 @@
+// tests/test_grid_smoke.npk — Smoke test for grid.npk and cell.npk
+// Verifies that large int64[40000] arrays compile and basic operations work.
+
+use "../src/terminal/grid.npk".*;
+use "../src/terminal/cell.npk".*;
+
+int64:STDOUT = 1i64;
+int64:pass_count = 0i64;
+int64:fail_count = 0i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:assert_eq = NIL(string:name, int64:actual, int64:expected) {
+    if (actual == expected) {
+        pass_count = pass_count + 1i64;
+        drop(write_stdout("[PASS] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    } else {
+        fail_count = fail_count + 1i64;
+        drop(write_stdout("[FAIL] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    }
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:err) {
+    drop(write_stdout("FAILSAFE\n"));
+    exit 1;
+};
+
+func:main = int32() {
+    drop(write_stdout("=== Grid Smoke Tests ===\n"));
+
+    // T01: Init
+    drop(grid_init(24i64, 80i64));
+    drop(assert_eq("T01a rows=24", raw grid_get_rows(), 24i64));
+    drop(assert_eq("T01b cols=80", raw grid_get_cols(), 80i64));
+
+    // T02: Default cell is space with zero attrs
+    drop(assert_eq("T02a (0,0) cp=space", raw grid_get_cp(0i64, 0i64), 0x20i64));
+    drop(assert_eq("T02b (0,0) attrs=0", raw grid_get_attrs(0i64, 0i64), 0i64));
+    drop(assert_eq("T02c (0,0) flags=0", raw grid_get_flags(0i64, 0i64), 0i64));
+
+    // T03: Write a cell and read it back
+    drop(grid_set(3i64, 5i64, 0x48i64, 0i64, 0i64));
+    drop(assert_eq("T03a (3,5) cp='H'", raw grid_get_cp(3i64, 5i64), 0x48i64));
+
+    // T04: Out-of-bounds reads return default
+    drop(assert_eq("T04a (-1,0) cp=default", raw grid_get_cp(-1i64, 0i64), 0x20i64));
+    drop(assert_eq("T04b (0,-1) cp=default", raw grid_get_cp(0i64, -1i64), 0x20i64));
+    drop(assert_eq("T04c (24,0) cp=default", raw grid_get_cp(24i64, 0i64), 0x20i64));
+    drop(assert_eq("T04d (0,80) cp=default", raw grid_get_cp(0i64, 80i64), 0x20i64));
+
+    // T05: Clear row
+    drop(grid_set(0i64, 0i64, 0x41i64, 0i64, 0i64));
+    drop(grid_set(0i64, 1i64, 0x42i64, 0i64, 0i64));
+    drop(grid_clear_row(0i64));
+    drop(assert_eq("T05a row0 cleared", raw grid_get_cp(0i64, 0i64), 0x20i64));
+    drop(assert_eq("T05b row0 col1 cleared", raw grid_get_cp(0i64, 1i64), 0x20i64));
+    // Other rows untouched
+    drop(assert_eq("T05c row3 col5 intact", raw grid_get_cp(3i64, 5i64), 0x48i64));
+
+    // T06: Scroll up — write to rows 0..4, scroll [0..4] by 2
+    drop(grid_clear_region(0i64, 0i64, 23i64, 79i64));
+    drop(grid_set(0i64, 0i64, 0x30i64, 0i64, 0i64));  // row 0 = '0'
+    drop(grid_set(1i64, 0i64, 0x31i64, 0i64, 0i64));  // row 1 = '1'
+    drop(grid_set(2i64, 0i64, 0x32i64, 0i64, 0i64));  // row 2 = '2'
+    drop(grid_set(3i64, 0i64, 0x33i64, 0i64, 0i64));  // row 3 = '3'
+    drop(grid_set(4i64, 0i64, 0x34i64, 0i64, 0i64));  // row 4 = '4'
+    drop(grid_scroll_up(0i64, 4i64, 2i64));
+    // After scroll up by 2: row0='2', row1='3', row2='4', row3=space, row4=space
+    drop(assert_eq("T06a after scroll_up row0='2'", raw grid_get_cp(0i64, 0i64), 0x32i64));
+    drop(assert_eq("T06b after scroll_up row1='3'", raw grid_get_cp(1i64, 0i64), 0x33i64));
+    drop(assert_eq("T06c after scroll_up row2='4'", raw grid_get_cp(2i64, 0i64), 0x34i64));
+    drop(assert_eq("T06d after scroll_up row3=space", raw grid_get_cp(3i64, 0i64), 0x20i64));
+    drop(assert_eq("T06e after scroll_up row4=space", raw grid_get_cp(4i64, 0i64), 0x20i64));
+
+    // T07: Scroll down
+    drop(grid_clear_region(0i64, 0i64, 23i64, 79i64));
+    drop(grid_set(0i64, 0i64, 0x41i64, 0i64, 0i64));  // row 0 = 'A'
+    drop(grid_set(1i64, 0i64, 0x42i64, 0i64, 0i64));  // row 1 = 'B'
+    drop(grid_set(2i64, 0i64, 0x43i64, 0i64, 0i64));  // row 2 = 'C'
+    drop(grid_scroll_down(0i64, 2i64, 1i64));
+    // After scroll down by 1: row0=space, row1='A', row2='B'
+    drop(assert_eq("T07a after scroll_down row0=space", raw grid_get_cp(0i64, 0i64), 0x20i64));
+    drop(assert_eq("T07b after scroll_down row1='A'", raw grid_get_cp(1i64, 0i64), 0x41i64));
+    drop(assert_eq("T07c after scroll_down row2='B'", raw grid_get_cp(2i64, 0i64), 0x42i64));
+
+    // T08: Insert/delete chars
+    drop(grid_clear_region(0i64, 0i64, 23i64, 79i64));
+    // Write "ABCDE" at row 5
+    drop(grid_set(5i64, 0i64, 0x41i64, 0i64, 0i64));
+    drop(grid_set(5i64, 1i64, 0x42i64, 0i64, 0i64));
+    drop(grid_set(5i64, 2i64, 0x43i64, 0i64, 0i64));
+    drop(grid_set(5i64, 3i64, 0x44i64, 0i64, 0i64));
+    drop(grid_set(5i64, 4i64, 0x45i64, 0i64, 0i64));
+    // Insert 2 blanks at col 1 → "A__BC" (D,E pushed off right)
+    drop(grid_insert_chars(5i64, 1i64, 2i64));
+    drop(assert_eq("T08a insert col0='A'", raw grid_get_cp(5i64, 0i64), 0x41i64));
+    drop(assert_eq("T08b insert col1=space", raw grid_get_cp(5i64, 1i64), 0x20i64));
+    drop(assert_eq("T08c insert col2=space", raw grid_get_cp(5i64, 2i64), 0x20i64));
+    drop(assert_eq("T08d insert col3='B'", raw grid_get_cp(5i64, 3i64), 0x42i64));
+    drop(assert_eq("T08e insert col4='C'", raw grid_get_cp(5i64, 4i64), 0x43i64));
+
+    // T09: Cell pack/unpack attrs
+    int64:fg = 0x01FF0000i64;  // true-color red
+    int64:bg = 0i64;           // default
+    int64:packed = raw cell_pack_attrs(fg, bg);
+    drop(assert_eq("T09a attrs_fg", raw cell_attrs_fg(packed), fg));
+    drop(assert_eq("T09b attrs_bg", raw cell_attrs_bg(packed), bg));
+
+    // T10: Alternate screen switch
+    drop(grid_set_active(1i64));
+    drop(assert_eq("T10a alt active=1", raw grid_get_active(), 1i64));
+    // Alt screen should have default cells (initialized by grid_init)
+    drop(assert_eq("T10b alt (0,0) cp=space", raw grid_get_cp(0i64, 0i64), 0x20i64));
+    // Writing to alt doesn't affect primary
+    drop(grid_set(0i64, 0i64, 0x58i64, 0i64, 0i64));  // 'X' on alt screen
+    drop(grid_set_active(0i64));
+    drop(assert_eq("T10c primary (0,0) still space", raw grid_get_cp(0i64, 0i64), 0x20i64));
+    drop(grid_set_active(1i64));
+    drop(assert_eq("T10d alt (0,0) = 'X'", raw grid_get_cp(0i64, 0i64), 0x58i64));
+    drop(grid_set_active(0i64));
+
+    // T11: cell_index helper
+    drop(assert_eq("T11a index(0,0,80)=0", raw cell_index(0i64, 0i64, 80i64), 0i64));
+    drop(assert_eq("T11b index(1,0,80)=80", raw cell_index(1i64, 0i64, 80i64), 80i64));
+    drop(assert_eq("T11c index(2,5,80)=165", raw cell_index(2i64, 5i64, 80i64), 165i64));
+
+    if (fail_count == 0i64) {
+        drop(write_stdout("All grid smoke tests passed.\n\n"));
+        exit 0;
+    }
+    drop(write_stdout("SOME GRID TESTS FAILED.\n"));
+    exit 1;
+};

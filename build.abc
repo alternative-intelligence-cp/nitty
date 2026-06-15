@@ -212,3 +212,11 @@ deps = []
 flags = []
 link_libraries = []
 link_paths = []
+
+[target.test_grid_smoke]
+type = "binary"
+sources = ["tests/test_grid_smoke.npk"]
+deps = []
+flags = []
+link_libraries = []
+link_paths = []
