@@ -78,8 +78,15 @@ extern "nitty_gtk4_shim" {
     func:nitty_render_set_cell_fg  = NIL(int64:col, int64:row, int64:r, int64:g, int64:b);
     func:nitty_render_set_cell_bg  = NIL(int64:col, int64:row, int64:r, int64:g, int64:b);
     func:nitty_render_fill_text    = NIL(string:text, int64:cols, int64:rows);
-    func:nitty_render_get_cell_width  = int64();
-    func:nitty_render_get_cell_height = int64();
+    func:nitty_render_get_cell_width    = int64();
+    func:nitty_render_get_cell_height   = int64();
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.3.0: Clear grid + font baseline
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_render_clear_grid        = NIL();
+    func:nitty_render_get_font_baseline = int64();
 
     // ═══════════════════════════════════════════════════════════════════
     // v0.0.2: Scale factor (HiDPI)

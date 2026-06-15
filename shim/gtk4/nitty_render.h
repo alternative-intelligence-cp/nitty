@@ -1,7 +1,7 @@
 /*
  * nitty_render.h — Terminal grid rendering for Nitty
  *
- * v0.0.2: C-side rendering of a character grid using Cairo + Pango.
+ * v0.3.0: Added nitty_render_clear_grid() and nitty_render_get_font_baseline().
  * Nitpick configures the render state, then the C draw callback paints it.
  *
  * Design:
@@ -85,6 +85,19 @@ int64_t nitty_render_get_cell_width(void);
  * Returns 0 if font hasn't been measured yet.
  */
 int64_t nitty_render_get_cell_height(void);
+
+/**
+ * Get the font baseline offset in fixed-point × 1000.
+ * This is the vertical distance from cell top to where text ink starts.
+ * Returns 0 if font hasn't been measured yet.
+ */
+int64_t nitty_render_get_font_baseline(void);
+
+/**
+ * Clear all grid cells to empty (space with no color overrides).
+ * Call before each frame sync to prevent stale characters from persisting.
+ */
+void nitty_render_clear_grid(void);
 
 /**
  * Render the grid. Called internally by the draw callback.

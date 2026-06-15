@@ -1,6 +1,6 @@
 // src/core/app.npk — Application lifecycle for Nitty
 //
-// v0.1.4: First working interactive shell.
+// v0.3.0: Cell grid renderer — TerminalState → GTK4/Cairo/Pango visual output.
 //
 // Architecture:
 //   1. app_init()     — print startup banner
@@ -45,7 +45,7 @@ int64:g_shell_dead = 0i64;  // 1 = shell has exited
 // ═══════════════════════════════════════════════════════════════════
 
 pub func:app_init = NIL() {
-    drop(write_stdout("Nitty v0.1.4 initializing...\n"));
+    drop(write_stdout("Nitty v0.3.0 initializing...\n"));
     pass(NIL);
 };
 
@@ -98,5 +98,5 @@ pub func:app_shutdown = NIL() {
 };
 
 pub func:app_version = string() {
-    pass("0.1.4");
+    pass("0.3.0");
 };

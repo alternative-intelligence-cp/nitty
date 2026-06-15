@@ -46,8 +46,9 @@ static int      g_grid_cols = 0;
 static int      g_grid_rows = 0;
 
 /* Computed cell metrics (pixels) */
-static int      g_cell_width  = 0;
-static int      g_cell_height = 0;
+static int      g_cell_width    = 0;
+static int      g_cell_height   = 0;
+static int      g_font_baseline = 0;  /* Pixel offset from cell top to text baseline */
 
 /* Cached Pango font description */
 static PangoFontDescription *g_cached_font = NULL;
@@ -77,11 +78,25 @@ static void measure_font(cairo_t *cr)
 
     int char_w = 0, char_h = 0;
     pango_layout_get_pixel_size(layout, &char_w, &char_h);
+
+    /* Compute baseline from ink extents.
+     * PangoRectangle y is the ink top relative to the layout origin (negative = above).
+     * For text: baseline ≈ -ink_extents.y  (distance from layout top to text top).
+     * We use the layout's ink rect to find where the ink starts vertically.
+     */
+    PangoRectangle ink_rect;
+    pango_layout_get_pixel_extents(layout, &ink_rect, NULL);
     g_object_unref(layout);
 
     if (char_w > 0 && char_h > 0) {
-        g_cell_width  = char_w;
-        g_cell_height = char_h;
+        g_cell_width    = char_w;
+        g_cell_height   = char_h;
+        /* ink_rect.y is typically 0 or slightly negative; baseline offset is the
+         * vertical distance from cell top to where text ink starts. For Pango
+         * layouts, ink_rect.y gives the top of the ink relative to the layout
+         * origin. A reasonable baseline is simply 0 (Pango places layout at origin).
+         * Store as fixed-point × 1000 for Nitpick. */
+        g_font_baseline = (ink_rect.y < 0) ? (-ink_rect.y * 1000) : 0;
     }
 
     g_font_changed = 0;
@@ -182,6 +197,18 @@ int64_t nitty_render_get_cell_width(void)
 int64_t nitty_render_get_cell_height(void)
 {
     return (int64_t)g_cell_height;
+}
+
+int64_t nitty_render_get_font_baseline(void)
+{
+    return (int64_t)g_font_baseline;
+}
+
+void nitty_render_clear_grid(void)
+{
+    memset(g_grid, 0, sizeof(g_grid));
+    g_grid_cols = 0;
+    g_grid_rows = 0;
 }
 
 /* ── Render the grid ──────────────────────────────────────────────────── */
