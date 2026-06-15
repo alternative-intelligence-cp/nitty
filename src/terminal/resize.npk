@@ -1,0 +1,111 @@
+// src/terminal/resize.npk — Terminal resize coordinator
+//
+// v0.1.3: Bridges GTK4 resize events to PTY + SIGWINCH.
+//
+// Resize flow:
+//   1. GTK4 fires resize → new pixel dimensions
+//   2. Calculate new cols/rows from pixels + cell size
+//   3. ioctl(TIOCSWINSZ) on master fd
+//   4. SIGWINCH to child process group
+//   5. Shell queries new size and reflows output
+//
+// Debouncing: resize_should_apply() prevents signal storms during drag.
+
+use "pty.npk".*;
+use "pty_ffi.npk".*;
+use "shell.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════
+// Module state
+// ═══════════════════════════════════════════════════════════════════
+
+int64:g_current_cols = 80i64;
+int64:g_current_rows = 24i64;
+
+// Debounce: last resize timestamp (microseconds from monotonic clock)
+int64:g_last_resize_time = 0i64;
+int64:RESIZE_DEBOUNCE_US = 50000i64;  // 50ms
+
+// ═══════════════════════════════════════════════════════════════════
+// Core resize
+// ═══════════════════════════════════════════════════════════════════
+
+/// Handle a terminal resize event.
+/// Calculates new grid dimensions, updates PTY winsize, sends SIGWINCH.
+///
+/// Returns:
+///   1 = resize applied
+///   0 = no change (same dimensions)
+///  -1 = rejected (too small)
+pub func:resize_handle = int64(int64:new_width_px, int64:new_height_px,
+                               int64:cell_width, int64:cell_height) {
+    // Guard: cell dimensions must be positive
+    if (cell_width < 1i64 || cell_height < 1i64) { pass(-1i64); }
+
+    // Calculate new grid dimensions
+    int64:new_cols = new_width_px / cell_width;
+    int64:new_rows = new_height_px / cell_height;
+
+    // Guard: minimum 1x1
+    if (new_cols < 1i64 || new_rows < 1i64) { pass(-1i64); }
+
+    // No-op if dimensions unchanged
+    if (new_cols == g_current_cols && new_rows == g_current_rows) { pass(0i64); }
+
+    // Update PTY winsize
+    Result<int64>:sz_r = pty_set_size(new_rows, new_cols);
+    int64:sz = sz_r ? -1i64;
+    if (sz != 0i64) { pass(-1i64); }
+
+    // Send SIGWINCH to child process
+    Result<int64>:sig_val = SIG_WINCH();
+    int64:sigwinch = sig_val ? 28i64;
+    Result<int64>:kill_r = shell_kill(sigwinch);
+    int64:_k = kill_r ? -1i64;
+
+    // Store new dimensions
+    g_current_cols = new_cols;
+    g_current_rows = new_rows;
+
+    pass(1i64);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Debouncing
+// ═══════════════════════════════════════════════════════════════════
+
+/// Check if enough time has passed since last PTY resize to apply.
+/// current_time_us should be monotonic time in microseconds.
+/// Returns 1 if should apply, 0 if too soon.
+pub func:resize_should_apply = int64(int64:current_time_us) {
+    int64:elapsed = current_time_us - g_last_resize_time;
+    if (elapsed >= RESIZE_DEBOUNCE_US) {
+        g_last_resize_time = current_time_us;
+        pass(1i64);
+    }
+    pass(0i64);
+};
+
+/// Force update the last resize timestamp (for initial setup).
+pub func:resize_set_time = NIL(int64:time_us) {
+    g_last_resize_time = time_us;
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Dimension queries
+// ═══════════════════════════════════════════════════════════════════
+
+/// Get current column count.
+pub func:resize_get_cols = int64() { pass(g_current_cols); };
+
+/// Get current row count.
+pub func:resize_get_rows = int64() { pass(g_current_rows); };
+
+/// Initialize resize state with specific dimensions.
+pub func:resize_init = NIL(int64:cols, int64:rows) {
+    g_current_cols = cols;
+    g_current_rows = rows;
+    g_last_resize_time = 0i64;
+    pass(NIL);
+};

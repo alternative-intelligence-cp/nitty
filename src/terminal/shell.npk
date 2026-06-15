@@ -130,6 +130,7 @@ pub func:shell_kill = int64(int64:sig) {
 pub func:SIG_TERM = int64() { int64:v = nitty_pty_SIGTERM(); pass(v); };
 pub func:SIG_KILL = int64() { int64:v = nitty_pty_SIGKILL(); pass(v); };
 pub func:SIG_HUP  = int64() { int64:v = nitty_pty_SIGHUP();  pass(v); };
+pub func:SIG_WINCH = int64() { int64:v = nitty_pty_SIGWINCH(); pass(v); };
 
 // ═══════════════════════════════════════════════════════════════════
 // Cleanup

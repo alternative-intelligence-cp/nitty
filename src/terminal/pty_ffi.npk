@@ -65,6 +65,7 @@ extern "nitty_pty_shim" {
     func:nitty_pty_SIGTERM           = int64();
     func:nitty_pty_SIGKILL           = int64();
     func:nitty_pty_SIGHUP            = int64();
+    func:nitty_pty_SIGWINCH          = int64();
 
     // ═══════════════════════════════════════════════════════════════════
     // PTY I/O (v0.1.2)

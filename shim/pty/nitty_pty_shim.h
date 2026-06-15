@@ -114,6 +114,7 @@ int64_t nitty_pty_kill(int64_t pid, int64_t sig);
 int64_t nitty_pty_SIGTERM(void);
 int64_t nitty_pty_SIGKILL(void);
 int64_t nitty_pty_SIGHUP(void);
+int64_t nitty_pty_SIGWINCH(void);
 
 /* ═══════════════════════════════════════════════════════════════════════
  * PTY I/O (v0.1.2)
