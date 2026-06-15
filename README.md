@@ -1,0 +1,2 @@
+# nitty
+Terminal Emulator
