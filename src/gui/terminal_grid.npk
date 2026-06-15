@@ -1,0 +1,130 @@
+// src/gui/terminal_grid.npk — Nitpick-side terminal grid abstraction
+//
+// v0.0.4: Wraps the C-side grid (nitty_grid.h) for high-level use.
+//
+// The cell buffer and cursor state live in C for direct memory access
+// and tight render loops. This module provides a clean Nitpick API.
+//
+// Extern functions return raw types (int64, NIL). These wrappers
+// return Result<T> by passing the raw value through pass().
+
+use "../gui/gtk4_ffi.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════
+// Grid lifecycle
+// ═══════════════════════════════════════════════════════════════════
+
+pub func:grid_init = int64(int64:width_px, int64:height_px, string:font_desc) {
+    int64:init_ok = nitty_grid_init(width_px, height_px, font_desc);
+    pass(init_ok);
+};
+
+pub func:grid_destroy = NIL() {
+    nitty_grid_destroy();
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Grid dimensions
+// ═══════════════════════════════════════════════════════════════════
+
+pub func:grid_cols = int64() {
+    int64:v = nitty_grid_get_cols();
+    pass(v);
+};
+
+pub func:grid_rows = int64() {
+    int64:v = nitty_grid_get_rows();
+    pass(v);
+};
+
+pub func:grid_cell_width = int64() {
+    int64:v = nitty_grid_get_cell_width();
+    pass(v);
+};
+
+pub func:grid_cell_height = int64() {
+    int64:v = nitty_grid_get_cell_height();
+    pass(v);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Cell access
+// ═══════════════════════════════════════════════════════════════════
+
+pub func:grid_set_cell = NIL(int64:col, int64:row, int64:ch, int64:fg, int64:bg) {
+    nitty_grid_set_cell(col, row, ch, fg, bg);
+    pass(NIL);
+};
+
+pub func:grid_get_char = int64(int64:col, int64:row) {
+    int64:v = nitty_grid_get_cell_char(col, row);
+    pass(v);
+};
+
+pub func:grid_get_fg = int64(int64:col, int64:row) {
+    int64:v = nitty_grid_get_cell_fg(col, row);
+    pass(v);
+};
+
+pub func:grid_get_bg = int64(int64:col, int64:row) {
+    int64:v = nitty_grid_get_cell_bg(col, row);
+    pass(v);
+};
+
+pub func:grid_clear = NIL(int64:fg, int64:bg) {
+    nitty_grid_clear(fg, bg);
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Cursor
+// ═══════════════════════════════════════════════════════════════════
+
+pub func:grid_set_cursor = NIL(int64:col, int64:row) {
+    nitty_grid_set_cursor(col, row);
+    pass(NIL);
+};
+
+pub func:grid_cursor_col = int64() {
+    int64:v = nitty_grid_get_cursor_col();
+    pass(v);
+};
+
+pub func:grid_cursor_row = int64() {
+    int64:v = nitty_grid_get_cursor_row();
+    pass(v);
+};
+
+pub func:grid_set_cursor_style = NIL(int64:style) {
+    nitty_grid_set_cursor_style(style);
+    pass(NIL);
+};
+
+pub func:grid_cursor_style = int64() {
+    int64:v = nitty_grid_get_cursor_style();
+    pass(v);
+};
+
+pub func:grid_cursor_visible = int64() {
+    int64:v = nitty_grid_get_cursor_visible();
+    pass(v);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Resize
+// ═══════════════════════════════════════════════════════════════════
+
+pub func:grid_resize = int64(int64:new_width_px, int64:new_height_px) {
+    int64:v = nitty_grid_resize(new_width_px, new_height_px);
+    pass(v);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Grid enable (called before app_run)
+// ═══════════════════════════════════════════════════════════════════
+
+pub func:grid_enable = NIL(string:font_desc) {
+    nitty_gtk4_grid_enable(font_desc);
+    pass(NIL);
+};

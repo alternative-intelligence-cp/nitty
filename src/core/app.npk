@@ -1,17 +1,18 @@
 // src/core/app.npk — Application lifecycle for Nitty
 //
-// v0.0.3: Added keyboard and mouse input handling.
-//         Key/mouse events are printed to stdout via C callbacks.
-//         Input controllers are attached to the window/DrawingArea.
+// v0.0.4: Integration & Basic Terminal Grid.
+//         Grid mode enabled: cell buffer, cursor, resize, input→grid→render.
+//         Debug prints kept for development visibility.
 //
 // Architecture:
 //   1. app_init()  — print startup banner
-//   2. app_run()   — configure renderer, enable input, run GTK loop
-//   3. app_shutdown() — clean up
+//   2. app_run()   — configure grid, enable input, run GTK loop
+//   3. app_shutdown() — clean up (grid destroyed by GTK lifecycle)
 
 use "../gui/window.npk".*;
 use "../gui/text_renderer.npk".*;
 use "../gui/input.npk".*;
+use "../gui/terminal_grid.npk".*;
 
 // fd 1 = stdout
 int64:STDOUT = 1i64;
@@ -23,20 +24,19 @@ func:write_stdout = NIL(string:msg) {
 };
 
 pub func:app_init = NIL() {
-    drop(write_stdout("Nitty v0.0.3 initializing...\n"));
+    drop(write_stdout("Nitty v0.0.4 initializing...\n"));
     pass(NIL);
 };
 
 pub func:app_run = NIL() {
-    drop(write_stdout("Nitty: configuring terminal renderer\n"));
-
-    // ── Configure the text renderer ─────────────────────────────────────
-    drop(renderer_set_font("Monospace 12"));
-    drop(renderer_set_colors(1000i64, 1000i64, 1000i64,
-                              30i64,   30i64,   30i64));
-    drop(renderer_fill("Hello from Nitty! ", 80i64, 24i64));
+    // ── Enable the terminal grid ────────────────────────────────────────
+    // Grid mode replaces the old text_renderer fill rendering.
+    // Grid is initialized in on_activate with the window's pixel size.
+    drop(write_stdout("Nitty: enabling terminal grid (Monospace 12)\n"));
+    drop(grid_enable("Monospace 12"));
 
     // ── Create the DrawingArea ──────────────────────────────────────────
+    // Still needed — the grid renders into this DrawingArea via Cairo.
     Result<int64>:da_r = renderer_init_drawing_area();
     int64:da = da_r ? 0i64;
     if (da == 0i64) {
@@ -44,15 +44,14 @@ pub func:app_run = NIL() {
     }
 
     // ── Enable input ────────────────────────────────────────────────────
-    // Controllers are attached in on_activate when GTK is initialized.
-    // Key events: printed to stdout by C callback.
-    // Mouse events: click and scroll printed to stdout by C callback.
+    // Key events route to nitty_gtk4_grid_handle_key() in the C shim.
+    // Printable chars write to grid, Enter/Backspace/arrows work.
     drop(write_stdout("Nitty: enabling keyboard and mouse input\n"));
     drop(input_init());
 
     // ── Configure and run the GTK window ────────────────────────────────
     drop(write_stdout("Nitty: starting GTK4 main loop\n"));
-    drop(write_stdout("Nitty: press keys or click/scroll in the window\n"));
+    drop(write_stdout("Nitty: type to see characters appear in the grid\n"));
     drop(window_configure("Nitty Terminal", 1024i64, 768i64));
 
     Result<int64>:app_r = window_app_create("com.altintel.nitty");
@@ -74,9 +73,10 @@ pub func:app_run = NIL() {
 
 pub func:app_shutdown = NIL() {
     drop(write_stdout("Nitty shutting down.\n"));
+    drop(grid_destroy());
     pass(NIL);
 };
 
 pub func:app_version = string() {
-    pass("0.0.3");
+    pass("0.0.4");
 };

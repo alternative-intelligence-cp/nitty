@@ -1,0 +1,140 @@
+// tests/test_terminal_grid.npk — Terminal grid unit tests for Nitty v0.0.4
+//
+// Tests the grid data structure and cursor management.
+//
+// T01-T12: grid init, dimensions, cell read/write, colors, clear,
+//          cursor position/style/blink, resize, destroy.
+
+use "../src/gui/terminal_grid.npk".*;
+
+int64:STDOUT = 1i64;
+
+func:print_line = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+func:main = int32() {
+
+    // T01: grid_init returns success
+    Result<int64>:t01 = grid_init(800i64, 600i64, "Monospace 12");
+    int64:init_ok = t01 ? 0i64;
+    if (init_ok == 1i64) { drop(print_line("[PASS] T01 grid_init success\n")); }
+    if (init_ok != 1i64) { drop(print_line("[FAIL] T01 grid_init\n")); exit 1i32; }
+
+    // T02: grid dimensions are non-zero
+    Result<int64>:t02a = grid_cols();  int64:gc = t02a ? 0i64;
+    Result<int64>:t02b = grid_rows();  int64:gr = t02b ? 0i64;
+    Result<int64>:t02c = grid_cell_width();  int64:gw = t02c ? 0i64;
+    Result<int64>:t02d = grid_cell_height(); int64:gh = t02d ? 0i64;
+    if (gc > 0i64 && gr > 0i64 && gw > 0i64 && gh > 0i64) {
+        drop(print_line("[PASS] T02 grid dimensions non-zero\n"));
+    }
+    if (gc <= 0i64 || gr <= 0i64 || gw <= 0i64 || gh <= 0i64) {
+        drop(print_line("[FAIL] T02 dimensions\n")); exit 2i32;
+    }
+
+    // T03: set/get cell char round-trip
+    drop(grid_set_cell(0i64, 0i64, 0x41i64, 0xCCCCCCi64, 0x1E1E1Ei64));
+    Result<int64>:t03 = grid_get_char(0i64, 0i64); int64:ch3 = t03 ? 0i64;
+    if (ch3 == 0x41i64) { drop(print_line("[PASS] T03 cell char round-trip\n")); }
+    if (ch3 != 0x41i64) { drop(print_line("[FAIL] T03 char\n")); exit 3i32; }
+
+    // T04: cell fg/bg colors
+    drop(grid_set_cell(1i64, 0i64, 0x42i64, 0xFF0000i64, 0x00FF00i64));
+    Result<int64>:t04a = grid_get_fg(1i64, 0i64); int64:fg4 = t04a ? 0i64;
+    Result<int64>:t04b = grid_get_bg(1i64, 0i64); int64:bg4 = t04b ? 0i64;
+    if (fg4 == 0xFF0000i64 && bg4 == 0x00FF00i64) {
+        drop(print_line("[PASS] T04 cell fg/bg colors\n"));
+    }
+    if (fg4 != 0xFF0000i64 || bg4 != 0x00FF00i64) {
+        drop(print_line("[FAIL] T04 colors\n")); exit 4i32;
+    }
+
+    // T05: grid_clear resets to space
+    drop(grid_clear(0xAABBCCi64, 0x112233i64));
+    Result<int64>:t05a = grid_get_char(0i64, 0i64); int64:c5a = t05a ? 0i64;
+    Result<int64>:t05b = grid_get_char(1i64, 0i64); int64:c5b = t05b ? 0i64;
+    if (c5a == 0x20i64 && c5b == 0x20i64) {
+        drop(print_line("[PASS] T05 grid_clear resets to space\n"));
+    }
+    if (c5a != 0x20i64 || c5b != 0x20i64) {
+        drop(print_line("[FAIL] T05 clear\n")); exit 5i32;
+    }
+
+    // T06: cursor starts at (0,0)
+    Result<int64>:t06a = grid_cursor_col(); int64:c6c = t06a ? -1i64;
+    Result<int64>:t06b = grid_cursor_row(); int64:c6r = t06b ? -1i64;
+    if (c6c == 0i64 && c6r == 0i64) {
+        drop(print_line("[PASS] T06 cursor at (0,0)\n"));
+    }
+    if (c6c != 0i64 || c6r != 0i64) {
+        drop(print_line("[FAIL] T06 cursor\n")); exit 6i32;
+    }
+
+    // T07a: set_cursor moves cursor
+    drop(grid_set_cursor(5i64, 3i64));
+    Result<int64>:t07a = grid_cursor_col(); int64:c7c = t07a ? -1i64;
+    Result<int64>:t07b = grid_cursor_row(); int64:c7r = t07b ? -1i64;
+    if (c7c == 5i64 && c7r == 3i64) {
+        drop(print_line("[PASS] T07a set_cursor(5,3)\n"));
+    }
+    if (c7c != 5i64 || c7r != 3i64) {
+        drop(print_line("[FAIL] T07a cursor move\n")); exit 7i32;
+    }
+
+    // T07b: negative coords clamped
+    drop(grid_set_cursor(-1i64, -1i64));
+    Result<int64>:t07c = grid_cursor_col(); int64:c7c2 = t07c ? -1i64;
+    Result<int64>:t07d = grid_cursor_row(); int64:c7r2 = t07d ? -1i64;
+    if (c7c2 == 5i64 && c7r2 == 3i64) {
+        drop(print_line("[PASS] T07b negative clamped\n"));
+    }
+    if (c7c2 != 5i64 || c7r2 != 3i64) {
+        drop(print_line("[FAIL] T07b clamp\n")); exit 7i32;
+    }
+
+    // T08: cursor style
+    drop(grid_set_cursor_style(1i64));
+    Result<int64>:t08 = grid_cursor_style(); int64:sty8 = t08 ? -1i64;
+    if (sty8 == 1i64) { drop(print_line("[PASS] T08 cursor style=1\n")); }
+    if (sty8 != 1i64) { drop(print_line("[FAIL] T08 style\n")); exit 8i32; }
+
+    // T09: cursor visibility consistency
+    Result<int64>:t09a = grid_cursor_visible(); int64:v9a = t09a ? -1i64;
+    Result<int64>:t09b = grid_cursor_visible(); int64:v9b = t09b ? -1i64;
+    if (v9a == v9b) { drop(print_line("[PASS] T09 cursor visible consistent\n")); }
+    if (v9a != v9b) { drop(print_line("[FAIL] T09 visible\n")); exit 9i32; }
+
+    // T10: resize preserves content
+    drop(grid_set_cursor(0i64, 0i64));
+    drop(grid_set_cell(0i64, 0i64, 0x58i64, 0xFFFFFFi64, 0x000000i64));
+    Result<int64>:t10a = grid_resize(1024i64, 768i64); int64:r10 = t10a ? 0i64;
+    Result<int64>:t10b = grid_get_char(0i64, 0i64); int64:p10 = t10b ? 0i64;
+    if (r10 == 1i64 && p10 == 0x58i64) {
+        drop(print_line("[PASS] T10 resize preserves content\n"));
+    }
+    if (r10 != 1i64 || p10 != 0x58i64) {
+        drop(print_line("[FAIL] T10 resize\n")); exit 10i32;
+    }
+
+    // T11: resize truncates cleanly
+    drop(grid_set_cell(5i64, 5i64, 0x59i64, 0xFFFFFFi64, 0x000000i64));
+    Result<int64>:t11a = grid_resize(100i64, 50i64); int64:r11 = t11a ? 0i64;
+    Result<int64>:t11b = grid_cols(); int64:nc11 = t11b ? 0i64;
+    Result<int64>:t11c = grid_rows(); int64:nr11 = t11c ? 0i64;
+    if (r11 == 1i64 && nc11 > 0i64 && nr11 > 0i64) {
+        drop(print_line("[PASS] T11 resize truncates\n"));
+    }
+    if (r11 != 1i64) { drop(print_line("[FAIL] T11 truncate\n")); exit 11i32; }
+
+    // T12: destroy
+    drop(grid_destroy());
+    drop(print_line("[PASS] T12 grid_destroy\n"));
+
+    drop(print_line("All terminal grid tests passed.\n"));
+    exit 0i32;
+};

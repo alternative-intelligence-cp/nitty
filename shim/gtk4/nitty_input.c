@@ -25,6 +25,9 @@
 #include <stdint.h>
 #include <stdio.h>
 
+/* Forward declaration — defined in nitty_gtk4_shim.c */
+extern void nitty_gtk4_grid_handle_key(int64_t keyval, int64_t modifiers);
+
 /* ── Keyboard event state ─────────────────────────────────────────────── */
 
 static int      g_key_pending   = 0;
@@ -69,6 +72,9 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
     fprintf(stdout, "KEY PRESS: keyval=0x%04x keycode=%u mods=0x%08x  [%s0x%04x]\n",
             keyval, keycode, (unsigned)state, mod_str, keyval);
     fflush(stdout);
+
+    /* Route key to grid input handler */
+    nitty_gtk4_grid_handle_key((int64_t)keyval, (int64_t)state);
 
     return FALSE;
 }

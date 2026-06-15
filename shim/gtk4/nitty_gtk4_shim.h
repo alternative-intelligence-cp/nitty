@@ -155,6 +155,33 @@ void nitty_pango_layout_destroy(int64_t layout);
 /** Get the integer scale factor for a widget (for HiDPI). */
 int64_t nitty_gtk4_widget_get_scale_factor(int64_t widget_ptr);
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.0.4: Terminal grid, resize, key-to-grid
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Enable the terminal grid rendering mode.
+ * Must be called before nitty_gtk4_app_run().
+ * Grid is initialized in on_activate after DrawingArea is created.
+ * @param font_desc  Pango font description (e.g. "Monospace 12")
+ */
+void nitty_gtk4_grid_enable(const char *font_desc);
+
+/** Return 1 if a resize event is pending, 0 otherwise. Clears pending. */
+int64_t nitty_gtk4_resize_poll(void);
+
+/** Get the new width after a resize event. */
+int64_t nitty_gtk4_resize_get_width(void);
+
+/** Get the new height after a resize event. */
+int64_t nitty_gtk4_resize_get_height(void);
+
+/**
+ * Process a key press and write it to the grid.
+ * Handles printable chars, Enter, Backspace, arrow keys.
+ */
+void nitty_gtk4_grid_handle_key(int64_t keyval, int64_t modifiers);
+
 #ifdef __cplusplus
 }
 #endif

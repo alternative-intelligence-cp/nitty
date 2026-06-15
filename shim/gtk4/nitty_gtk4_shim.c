@@ -18,6 +18,7 @@
 #include "nitty_gtk4_shim.h"
 #include "nitty_render.h"
 #include "nitty_input.h"
+#include "nitty_grid.h"
 #include <gtk/gtk.h>
 #include <pango/pangocairo.h>
 #include <stdint.h>
@@ -40,9 +41,41 @@ static GtkWidget *g_main_window  = NULL;
 static GtkWidget *g_drawing_area   = NULL;
 static int        g_use_drawing_area = 0;  /* Set to 1 by nitty_gtk4_drawing_area_new */
 static int        g_use_input        = 0;  /* Set to 1 by nitty_gtk4_input_enable */
+static int        g_use_grid         = 0;  /* Set to 1 by nitty_gtk4_grid_enable */
+static char       g_grid_font[256]   = "Monospace 12";
+
+/* Resize tracking */
+static int        g_resize_pending   = 0;
+static int64_t    g_resize_width     = 0;
+static int64_t    g_resize_height    = 0;
 
 /* Forward declaration of on_draw_func */
 static void on_draw_func(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer user_data);
+
+/* Cursor blink timer callback */
+static gboolean on_cursor_blink(gpointer user_data)
+{
+    (void)user_data;
+    nitty_grid_toggle_cursor_blink();
+    if (g_drawing_area != NULL) {
+        gtk_widget_queue_draw(g_drawing_area);
+    }
+    return G_SOURCE_CONTINUE;  /* Keep the timer running */
+}
+
+/* Resize callback — fires when DrawingArea size changes */
+static void on_da_resize(GtkDrawingArea *area, gint width, gint height, gpointer user_data)
+{
+    (void)area;
+    (void)user_data;
+    g_resize_pending = 1;
+    g_resize_width   = (int64_t)width;
+    g_resize_height  = (int64_t)height;
+
+    if (g_use_grid) {
+        nitty_grid_resize(g_resize_width, g_resize_height);
+    }
+}
 
 /* on_activate — creates the window with pre-configured settings.
  * If g_use_drawing_area is set, creates the DrawingArea here (GTK is now init'd). */
@@ -67,6 +100,8 @@ static void on_activate(GtkApplication *app, gpointer user_data)
             gtk_drawing_area_set_draw_func(
                 GTK_DRAWING_AREA(da), on_draw_func, NULL, NULL
             );
+            /* Connect resize signal for grid recalculation */
+            g_signal_connect(da, "resize", G_CALLBACK(on_da_resize), NULL);
             gtk_window_set_child(GTK_WINDOW(window), da);
             g_drawing_area = da;
         }
@@ -79,6 +114,18 @@ static void on_activate(GtkApplication *app, gpointer user_data)
         /* Mouse controllers on DrawingArea if available, else window */
         GtkWidget *input_target = (g_drawing_area != NULL) ? g_drawing_area : window;
         nitty_gtk4_mouse_controllers_new((int64_t)(uintptr_t)input_target);
+    }
+
+    /* Initialize the terminal grid if enabled */
+    if (g_use_grid && g_drawing_area != NULL) {
+        nitty_grid_init(
+            (int64_t)g_window_width,
+            (int64_t)g_window_height,
+            g_grid_font
+        );
+
+        /* Cursor blink timer: toggle every 530ms */
+        g_timeout_add(530, (GSourceFunc)on_cursor_blink, NULL);
     }
 
     gtk_window_present(GTK_WINDOW(window));
@@ -216,6 +263,99 @@ int64_t nitty_gtk4_iteration(void)
     return more ? 1 : 0;
 }
 
+/* ── Grid enable ──────────────────────────────────────────────────────── */
+
+void nitty_gtk4_grid_enable(const char *font_desc)
+{
+    g_use_grid = 1;
+    if (font_desc != NULL) {
+        strncpy(g_grid_font, font_desc, sizeof(g_grid_font) - 1);
+        g_grid_font[sizeof(g_grid_font) - 1] = '\0';
+    }
+}
+
+/* ── Resize polling ───────────────────────────────────────────────────── */
+
+int64_t nitty_gtk4_resize_poll(void)
+{
+    if (g_resize_pending) {
+        g_resize_pending = 0;
+        return 1;
+    }
+    return 0;
+}
+
+int64_t nitty_gtk4_resize_get_width(void)  { return g_resize_width; }
+int64_t nitty_gtk4_resize_get_height(void) { return g_resize_height; }
+
+/* ── Key-to-grid input handling (v0.0.4) ──────────────────────────────── */
+
+/**
+ * Process a key press and write it to the grid.
+ * Called from the key-pressed callback when grid mode is active.
+ *
+ * This is NOT terminal emulation — just proof that input→grid→render works.
+ * Handles: printable chars (write + advance cursor), Enter, Backspace.
+ */
+void nitty_gtk4_grid_handle_key(int64_t keyval, int64_t modifiers)
+{
+    if (!g_use_grid) return;
+    (void)modifiers;
+
+    int64_t cols = nitty_grid_get_cols();
+    int64_t rows = nitty_grid_get_rows();
+    int64_t cc   = nitty_grid_get_cursor_col();
+    int64_t cr   = nitty_grid_get_cursor_row();
+
+    /* Enter: move to next line */
+    if (keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter) {
+        cc = 0;
+        cr++;
+        if (cr >= rows) cr = rows - 1;
+        nitty_grid_set_cursor(cc, cr);
+        if (g_drawing_area) gtk_widget_queue_draw(g_drawing_area);
+        return;
+    }
+
+    /* Backspace: move left, clear cell */
+    if (keyval == GDK_KEY_BackSpace) {
+        if (cc > 0) {
+            cc--;
+        } else if (cr > 0) {
+            cr--;
+            cc = cols - 1;
+        }
+        nitty_grid_set_cell(cc, cr, 0x20, 0xCCCCCC, 0x1E1E1E);
+        nitty_grid_set_cursor(cc, cr);
+        if (g_drawing_area) gtk_widget_queue_draw(g_drawing_area);
+        return;
+    }
+
+    /* Arrow keys */
+    if (keyval == GDK_KEY_Left)  { if (cc > 0)        { nitty_grid_set_cursor(cc-1, cr); } }
+    if (keyval == GDK_KEY_Right) { if (cc < cols - 1)  { nitty_grid_set_cursor(cc+1, cr); } }
+    if (keyval == GDK_KEY_Up)    { if (cr > 0)         { nitty_grid_set_cursor(cc, cr-1); } }
+    if (keyval == GDK_KEY_Down)  { if (cr < rows - 1)  { nitty_grid_set_cursor(cc, cr+1); } }
+    if (keyval >= GDK_KEY_Left && keyval <= GDK_KEY_Down) {
+        if (g_drawing_area) gtk_widget_queue_draw(g_drawing_area);
+        return;
+    }
+
+    /* Printable ASCII: write character and advance cursor */
+    if (keyval >= 0x20 && keyval <= 0x7E) {
+        nitty_grid_set_cell(cc, cr, (int64_t)keyval, 0xCCCCCC, 0x1E1E1E);
+        cc++;
+        if (cc >= cols) {
+            cc = 0;
+            cr++;
+            if (cr >= rows) cr = rows - 1;
+        }
+        nitty_grid_set_cursor(cc, cr);
+        if (g_drawing_area) gtk_widget_queue_draw(g_drawing_area);
+        return;
+    }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
  * v0.0.2: DrawingArea + Draw callback infrastructure
  * ═══════════════════════════════════════════════════════════════════════ */
@@ -249,8 +389,11 @@ static void on_draw_func(GtkDrawingArea *area,
 
     if (g_render_callback != NULL) {
         g_render_callback();
+    } else if (g_use_grid) {
+        /* v0.0.4: render via the terminal grid */
+        nitty_grid_render((int64_t)(uintptr_t)cr, (int64_t)width, (int64_t)height);
     } else {
-        /* Default: render the terminal grid */
+        /* v0.0.2 fallback: render the text fill grid */
         nitty_render_frame(cr, width, height);
     }
 

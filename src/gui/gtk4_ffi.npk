@@ -158,4 +158,39 @@ extern "nitty_gtk4_shim" {
     func:nitty_gtk4_mouse_get_button      = int64();
     func:nitty_gtk4_mouse_get_scroll_dx   = int64();
     func:nitty_gtk4_mouse_get_scroll_dy   = int64();
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.0.4: Terminal grid (nitty_grid.h)
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_grid_init          = int64(int64:width_px, int64:height_px, string:font_desc);
+    func:nitty_grid_destroy       = NIL();
+    func:nitty_grid_get_cols      = int64();
+    func:nitty_grid_get_rows      = int64();
+    func:nitty_grid_get_cell_width  = int64();
+    func:nitty_grid_get_cell_height = int64();
+    func:nitty_grid_set_cell      = NIL(int64:col, int64:row, int64:ch, int64:fg, int64:bg);
+    func:nitty_grid_get_cell_char = int64(int64:col, int64:row);
+    func:nitty_grid_get_cell_fg   = int64(int64:col, int64:row);
+    func:nitty_grid_get_cell_bg   = int64(int64:col, int64:row);
+    func:nitty_grid_clear         = NIL(int64:fg, int64:bg);
+    func:nitty_grid_set_cursor    = NIL(int64:col, int64:row);
+    func:nitty_grid_get_cursor_col  = int64();
+    func:nitty_grid_get_cursor_row  = int64();
+    func:nitty_grid_set_cursor_style  = NIL(int64:style);
+    func:nitty_grid_get_cursor_style  = int64();
+    func:nitty_grid_toggle_cursor_blink = int64();
+    func:nitty_grid_get_cursor_visible  = int64();
+    func:nitty_grid_resize        = int64(int64:new_width_px, int64:new_height_px);
+    func:nitty_grid_render        = NIL(int64:cr_ptr, int64:width, int64:height);
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.0.4: Grid enable + resize polling (nitty_gtk4_shim.h)
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_gtk4_grid_enable      = NIL(string:font_desc);
+    func:nitty_gtk4_resize_poll      = int64();
+    func:nitty_gtk4_resize_get_width  = int64();
+    func:nitty_gtk4_resize_get_height = int64();
+    func:nitty_gtk4_grid_handle_key  = NIL(int64:keyval, int64:modifiers);
 }
