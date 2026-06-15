@@ -14,7 +14,7 @@ use "../gui/gtk4_ffi.npk".*;
 // Grid lifecycle
 // ═══════════════════════════════════════════════════════════════════
 
-pub func:grid_init = int64(int64:width_px, int64:height_px, string:font_desc) {
+pub func:cgrid_init = int64(int64:width_px, int64:height_px, string:font_desc) {
     int64:init_ok = nitty_grid_init(width_px, height_px, font_desc);
     pass(init_ok);
 };
@@ -115,7 +115,7 @@ pub func:grid_cursor_visible = int64() {
 // Scrolling (v0.1.4)
 // ═══════════════════════════════════════════════════════════════════
 
-pub func:grid_scroll_up = NIL(int64:lines) {
+pub func:cgrid_scroll_up = NIL(int64:lines) {
     nitty_grid_scroll_up(lines);
     pass(NIL);
 };

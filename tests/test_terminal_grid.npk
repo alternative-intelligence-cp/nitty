@@ -19,8 +19,8 @@ func:failsafe = int32(tbb32:_err) { exit 1i32; };
 
 func:main = int32() {
 
-    // T01: grid_init returns success
-    Result<int64>:t01 = grid_init(800i64, 600i64, "Monospace 12");
+    // T01: cgrid_init returns success
+    Result<int64>:t01 = cgrid_init(800i64, 600i64, "Monospace 12");
     int64:init_ok = t01 ? 0i64;
     if (init_ok == 1i64) { drop(print_line("[PASS] T01 grid_init success\n")); }
     if (init_ok != 1i64) { drop(print_line("[FAIL] T01 grid_init\n")); exit 1i32; }

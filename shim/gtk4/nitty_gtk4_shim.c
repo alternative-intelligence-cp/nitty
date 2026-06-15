@@ -73,6 +73,11 @@ extern void nitty_input_set_terminal_mode(int64_t master_fd);
 /* Grid output processing */
 extern int64_t nitty_grid_process_output(const char *buf, int64_t len);
 
+/* v0.3.0: Nitpick terminal widget — called from on_draw_func each frame.
+ * Declared as weak so binaries that don't include terminal_widget.npk
+ * (e.g., unit tests) still link cleanly against the shim. */
+__attribute__((weak)) void tw_on_draw(void) { /* no-op default */ }
+
 /* Forward declaration of on_draw_func */
 static void on_draw_func(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer user_data);
 
@@ -562,7 +567,12 @@ static void on_draw_func(GtkDrawingArea *area,
     if (g_render_callback != NULL) {
         g_render_callback();
     } else if (g_use_grid) {
-        /* v0.0.4: render via the terminal grid */
+        /* v0.3.0: Drive Nitpick pipeline sync before painting:
+         *   tw_on_draw() drains g_pty_queue through pipeline_feed,
+         *   then calls renderer_sync_frame() to push TerminalState → C render grid.
+         *   nitty_render_frame() then paints the updated grid via Cairo/Pango. */
+        tw_on_draw();
+        /* v0.0.4 legacy: also drive C-side grid render (belt+suspenders) */
         nitty_grid_render((int64_t)(uintptr_t)cr, (int64_t)width, (int64_t)height);
     } else {
         /* v0.0.2 fallback: render the text fill grid */

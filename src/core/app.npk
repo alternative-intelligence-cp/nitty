@@ -18,6 +18,7 @@ use "../gui/text_renderer.npk".*;
 use "../gui/input.npk".*;
 use "../gui/terminal_grid.npk".*;
 use "../gui/gtk4_ffi.npk".*;
+use "../gui/terminal_widget.npk".*;
 use "../terminal/terminal.npk".*;
 use "../terminal/shell.npk".*;
 use "../terminal/pty_io.npk".*;
@@ -50,7 +51,11 @@ pub func:app_init = NIL() {
 };
 
 pub func:app_run = NIL() {
-    // ── Enable the terminal grid ────────────────────────────────────────
+    // ── Initialize Nitpick terminal pipeline + renderer ──────────────────────────
+    drop(write_stdout("Nitty: initializing terminal widget (Monospace 12)\n"));
+    drop(tw_init(24i64, 80i64, "Monospace 12"));
+
+    // ── Enable the legacy terminal grid (C-side VT parser, still active in v0.3.0) ──
     drop(write_stdout("Nitty: enabling terminal grid (Monospace 12)\n"));
     drop(grid_enable("Monospace 12"));
 

@@ -1,0 +1,70 @@
+// tests/test_terminal_widget.npk — Terminal widget integration test for v0.3.0
+//
+// Tests that tw_init + tw_on_draw work end-to-end without a GTK main loop.
+//
+// Since tw_on_draw() requires no GTK draw context to drain the PTY queue
+// and sync the renderer, we can test the full path without GTK by:
+//   1. Calling tw_init(24, 80, "Monospace 12")
+//   2. Verifying tw_get_rows/cols return the configured dimensions
+//   3. Calling tw_on_draw() with an empty queue (no-op, should not crash)
+//   4. Calling tw_on_resize(800, 600) to exercise resize path
+//   5. Verifying that tw_get_rows/cols are still reasonable after resize
+//      (cell metrics are 0 before first draw, so resize may keep defaults)
+//
+// All pass → exit 0.
+
+use "../src/gui/terminal_widget.npk".*;
+use "../src/gui/gtk4_ffi.npk".*;
+
+int64:STDOUT = 1i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:_e) {
+    drop(write_stdout("[FAIL] Unexpected runtime error\n"));
+    exit 1i32;
+};
+
+func:main = int32() {
+
+    // T01: tw_init sets the initial rows/cols
+    drop(tw_init(24i64, 80i64, "Monospace 12"));
+
+    int64:rows = raw tw_get_rows();
+    if (rows == 24i64) { drop(write_stdout("[PASS] T01a tw_get_rows=24\n")); }
+    if (rows != 24i64) { drop(write_stdout("[FAIL] T01a tw_get_rows=24\n")); exit 1i32; }
+
+    int64:cols = raw tw_get_cols();
+    if (cols == 80i64) { drop(write_stdout("[PASS] T01b tw_get_cols=80\n")); }
+    if (cols != 80i64) { drop(write_stdout("[FAIL] T01b tw_get_cols=80\n")); exit 1i32; }
+
+    // T02: tw_on_draw with empty PTY queue is a no-op (should not crash)
+    drop(tw_on_draw());
+    drop(write_stdout("[PASS] T02 tw_on_draw (empty queue)\n"));
+
+    // T03: tw_on_resize with a known pixel size
+    // Cell metrics are 0 before first GTK draw frame, so renderer_resize
+    // will be called but dimensions stay at defaults (safe behavior).
+    drop(tw_on_resize(800i64, 600i64));
+    drop(write_stdout("[PASS] T03 tw_on_resize(800, 600)\n"));
+
+    // T04: tw_get_rows/cols after resize (cell=0 → keeps default 24x80)
+    int64:rows2 = raw tw_get_rows();
+    if (rows2 > 0i64) { drop(write_stdout("[PASS] T04a tw_get_rows>0 after resize\n")); }
+    if (rows2 == 0i64) { drop(write_stdout("[FAIL] T04a tw_get_rows=0 after resize\n")); exit 1i32; }
+
+    int64:cols2 = raw tw_get_cols();
+    if (cols2 > 0i64) { drop(write_stdout("[PASS] T04b tw_get_cols>0 after resize\n")); }
+    if (cols2 == 0i64) { drop(write_stdout("[FAIL] T04b tw_get_cols=0 after resize\n")); exit 1i32; }
+
+    // T05: tw_on_draw again (after resize, still no bytes)
+    drop(tw_on_draw());
+    drop(write_stdout("[PASS] T05 tw_on_draw (after resize)\n"));
+
+    drop(write_stdout("All terminal widget tests passed.\n"));
+    exit 0i32;
+};

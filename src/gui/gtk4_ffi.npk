@@ -46,6 +46,9 @@ extern "nitty_gtk4_shim" {
     func:nitty_gtk4_get_draw_width  = int64();
     func:nitty_gtk4_get_draw_height = int64();
 
+    // Render callback (called from GTK draw function each frame)
+    func:nitty_gtk4_set_render_callback = NIL(int64:callback_fn);
+
     // ═══════════════════════════════════════════════════════════════════
     // v0.0.2: Cairo drawing (fixed-point × 1000)
     // ═══════════════════════════════════════════════════════════════════

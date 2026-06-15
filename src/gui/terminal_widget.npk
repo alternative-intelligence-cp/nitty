@@ -106,10 +106,8 @@ pub func:tw_on_resize = NIL(int64:w_px, int64:h_px) {
     // Recompute dimensions from pixel size
     drop(renderer_resize(w_px, h_px));
 
-    Result<int64>:rr = renderer_get_rows();
-    int64:new_rows = rr ? g_tw_rows;
-    Result<int64>:rc = renderer_get_cols();
-    int64:new_cols = rc ? g_tw_cols;
+    int64:new_rows = raw renderer_get_rows();
+    int64:new_cols = raw renderer_get_cols();
 
     // Update stored dimensions
     g_tw_rows = new_rows;
