@@ -1,0 +1,330 @@
+// src/gui/color_resolve.npk — Color resolution for Nitty v0.3.1
+//
+// Resolves encoded int64 Color values (from cell.npk / attributes.npk)
+// to fixed-point ×1000 RGB components suitable for Cairo / the C renderer.
+//
+// Color encoding (from attributes.npk):
+//   0              = COLOR_DEFAULT
+//   1–256          = Indexed(n-1): index 0-255 into the 256-color palette.
+//                    For n 1-16: ANSI colors 0-15 (scheme_ansi_*).
+//                    For n 17-256: 256-color cube/grayscale (palette_r/g/b(n-1)).
+//                    Note: color_indexed(0) = 1, color_indexed(255) = 256.
+//   0x01RRGGBB     = True color (COLOR_RGB_FLAG set, bits 23-16=R, 15-8=G, 7-0=B)
+//
+// All output is fixed-point ×1000 (0 = black, 1000 = full intensity).
+// This matches nitty_render_set_cell_fg/bg() expectations.
+//
+// Module state:
+//   g_screen_reverse — set to 1 when DECSCNM reverse video is active
+
+use "../terminal/attributes.npk".*;
+use "color_scheme.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Module state
+// ═══════════════════════════════════════════════════════════════════════
+
+// 1 when screen-wide reverse video (DECSET 5 / DECSCNM) is active
+int64:g_screen_reverse = 0i64;
+
+pub func:set_screen_reverse = NIL(int64:v) {
+    g_screen_reverse = v;
+    pass(NIL);
+};
+
+pub func:get_screen_reverse = int64() {
+    pass(g_screen_reverse);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Core color resolution — Color value → fixed-point ×1000 RGB
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Resolve a fg Color value to fixed-point ×1000 R.
+/// Does NOT apply attribute effects (bold/dim/etc.) — use resolve_fg_r for that.
+pub func:resolve_color_r = int64(int64:c) {
+    // COLOR_DEFAULT
+    if (raw color_is_default(c)) { pass(scheme_to_fp(raw scheme_default_fg_r())); }
+    // True color (RGB flag)
+    if (raw color_is_rgb(c)) {
+        pass(raw color_get_r(c) * 1000i64 / 255i64);
+    }
+    // Indexed: encoded as n = index+1 (1..256)
+    int64:idx = raw color_get_index(c);    // 0-based index into 256-color table
+    if (idx < 16i64) {
+        pass(scheme_to_fp(raw scheme_ansi_r(idx)));
+    }
+    // 256-color palette (idx 16-255)
+    pass(raw palette_r(idx) * 1000i64 / 255i64);
+};
+
+/// Resolve a fg Color value to fixed-point ×1000 G.
+pub func:resolve_color_g = int64(int64:c) {
+    if (raw color_is_default(c)) { pass(scheme_to_fp(raw scheme_default_fg_g())); }
+    if (raw color_is_rgb(c)) {
+        pass(raw color_get_g(c) * 1000i64 / 255i64);
+    }
+    int64:idx = raw color_get_index(c);
+    if (idx < 16i64) {
+        pass(scheme_to_fp(raw scheme_ansi_g(idx)));
+    }
+    pass(raw palette_g(idx) * 1000i64 / 255i64);
+};
+
+/// Resolve a fg Color value to fixed-point ×1000 B.
+pub func:resolve_color_b = int64(int64:c) {
+    if (raw color_is_default(c)) { pass(scheme_to_fp(raw scheme_default_fg_b())); }
+    if (raw color_is_rgb(c)) {
+        pass(raw color_get_b(c) * 1000i64 / 255i64);
+    }
+    int64:idx = raw color_get_index(c);
+    if (idx < 16i64) {
+        pass(scheme_to_fp(raw scheme_ansi_b(idx)));
+    }
+    pass(raw palette_b(idx) * 1000i64 / 255i64);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Background color resolution (default-aware)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Resolve a bg Color value to fixed-point ×1000 R.
+/// COLOR_DEFAULT → scheme_default_bg_r (not fg).
+func:resolve_bg_color_r = int64(int64:c) {
+    if (raw color_is_default(c)) { pass(scheme_to_fp(raw scheme_default_bg_r())); }
+    pass(raw resolve_color_r(c));
+};
+
+func:resolve_bg_color_g = int64(int64:c) {
+    if (raw color_is_default(c)) { pass(scheme_to_fp(raw scheme_default_bg_g())); }
+    pass(raw resolve_color_g(c));
+};
+
+func:resolve_bg_color_b = int64(int64:c) {
+    if (raw color_is_default(c)) { pass(scheme_to_fp(raw scheme_default_bg_b())); }
+    pass(raw resolve_color_b(c));
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Foreground resolution with attribute effects
+// ═══════════════════════════════════════════════════════════════════════
+//
+// attrs_packed: result of grid_get_attrs(r, c)  — packed fg (upper32) + bg (lower32)
+// flags:        result of grid_get_flags(r, c)  — CELL_BOLD, CELL_INVERSE, etc.
+//
+// Attribute effects applied in order:
+//   1. hidden  → return bg color (text invisible)
+//   2. inverse → swap fg and bg
+//   3. bold + indexed < 16 → use bright variant (index + 8)
+//   4. dim     → multiply each component by 670/1000 (~67%)
+//
+// Screen-wide reverse video (g_screen_reverse) additionally swaps defaults.
+
+/// Foreground R component (fixed-point ×1000) with attribute effects.
+pub func:resolve_fg_r = int64(int64:attrs_packed, int64:flags) {
+    int64:fg = raw cell_attrs_fg(attrs_packed);
+    int64:bg = raw cell_attrs_bg(attrs_packed);
+    int64:is_bold    = raw cell_flag_bold(flags);
+    int64:is_dim     = raw cell_flag_dim(flags);
+    int64:is_inverse = raw cell_flag_inverse(flags);
+    int64:is_hidden  = raw cell_flag_hidden(flags);
+
+    // Screen-wide reverse: swap default fg/bg for pure-default colors
+    // (handled implicitly: screen_reverse flips what "default" means)
+    // We pass the effective fg/bg colors through to sub-resolvers below.
+
+    // Bold + indexed < 16: use bright variant
+    if (is_bold > 0i64) {
+        if (raw color_is_indexed(fg)) {
+            int64:idx = raw color_get_index(fg);
+            if (idx < 8i64) {
+                fg = raw color_indexed(idx + 8i64);
+            }
+        }
+    }
+
+    // Hidden: fg = bg color (text invisible)
+    if (is_hidden > 0i64) {
+        int64:bgr = raw resolve_bg_color_r(bg);
+        if (g_screen_reverse > 0i64) { bgr = scheme_to_fp(raw scheme_default_fg_r()); }
+        pass(bgr);
+    }
+
+    // Inverse: draw using bg color as fg
+    if (is_inverse > 0i64) {
+        int64:bgr = raw resolve_bg_color_r(bg);
+        if (raw color_is_default(bg)) {
+            if (g_screen_reverse > 0i64) {
+                bgr = scheme_to_fp(raw scheme_default_fg_r());
+            }
+        }
+        if (is_dim > 0i64) { bgr = bgr * 670i64 / 1000i64; }
+        pass(bgr);
+    }
+
+    // Normal: resolve fg
+    int64:r = raw resolve_color_r(fg);
+    if (raw color_is_default(fg)) {
+        if (g_screen_reverse > 0i64) {
+            r = scheme_to_fp(raw scheme_default_bg_r());
+        }
+    }
+    if (is_dim > 0i64) { r = r * 670i64 / 1000i64; }
+    pass(r);
+};
+
+/// Foreground G component (fixed-point ×1000) with attribute effects.
+pub func:resolve_fg_g = int64(int64:attrs_packed, int64:flags) {
+    int64:fg = raw cell_attrs_fg(attrs_packed);
+    int64:bg = raw cell_attrs_bg(attrs_packed);
+    int64:is_bold    = raw cell_flag_bold(flags);
+    int64:is_dim     = raw cell_flag_dim(flags);
+    int64:is_inverse = raw cell_flag_inverse(flags);
+    int64:is_hidden  = raw cell_flag_hidden(flags);
+
+    if (is_bold > 0i64) {
+        if (raw color_is_indexed(fg)) {
+            int64:idx = raw color_get_index(fg);
+            if (idx < 8i64) { fg = raw color_indexed(idx + 8i64); }
+        }
+    }
+    if (is_hidden > 0i64) {
+        int64:bgg = raw resolve_bg_color_g(bg);
+        if (g_screen_reverse > 0i64) { bgg = scheme_to_fp(raw scheme_default_fg_g()); }
+        pass(bgg);
+    }
+    if (is_inverse > 0i64) {
+        int64:bgg = raw resolve_bg_color_g(bg);
+        if (raw color_is_default(bg)) {
+            if (g_screen_reverse > 0i64) { bgg = scheme_to_fp(raw scheme_default_fg_g()); }
+        }
+        if (is_dim > 0i64) { bgg = bgg * 670i64 / 1000i64; }
+        pass(bgg);
+    }
+    int64:g = raw resolve_color_g(fg);
+    if (raw color_is_default(fg)) {
+        if (g_screen_reverse > 0i64) { g = scheme_to_fp(raw scheme_default_bg_g()); }
+    }
+    if (is_dim > 0i64) { g = g * 670i64 / 1000i64; }
+    pass(g);
+};
+
+/// Foreground B component (fixed-point ×1000) with attribute effects.
+pub func:resolve_fg_b = int64(int64:attrs_packed, int64:flags) {
+    int64:fg = raw cell_attrs_fg(attrs_packed);
+    int64:bg = raw cell_attrs_bg(attrs_packed);
+    int64:is_bold    = raw cell_flag_bold(flags);
+    int64:is_dim     = raw cell_flag_dim(flags);
+    int64:is_inverse = raw cell_flag_inverse(flags);
+    int64:is_hidden  = raw cell_flag_hidden(flags);
+
+    if (is_bold > 0i64) {
+        if (raw color_is_indexed(fg)) {
+            int64:idx = raw color_get_index(fg);
+            if (idx < 8i64) { fg = raw color_indexed(idx + 8i64); }
+        }
+    }
+    if (is_hidden > 0i64) {
+        int64:bgb = raw resolve_bg_color_b(bg);
+        if (g_screen_reverse > 0i64) { bgb = scheme_to_fp(raw scheme_default_fg_b()); }
+        pass(bgb);
+    }
+    if (is_inverse > 0i64) {
+        int64:bgb = raw resolve_bg_color_b(bg);
+        if (raw color_is_default(bg)) {
+            if (g_screen_reverse > 0i64) { bgb = scheme_to_fp(raw scheme_default_fg_b()); }
+        }
+        if (is_dim > 0i64) { bgb = bgb * 670i64 / 1000i64; }
+        pass(bgb);
+    }
+    int64:b = raw resolve_color_b(fg);
+    if (raw color_is_default(fg)) {
+        if (g_screen_reverse > 0i64) { b = scheme_to_fp(raw scheme_default_bg_b()); }
+    }
+    if (is_dim > 0i64) { b = b * 670i64 / 1000i64; }
+    pass(b);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Background resolution with attribute effects
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Background R component (fixed-point ×1000) with attribute effects.
+pub func:resolve_bg_r = int64(int64:attrs_packed, int64:flags) {
+    int64:fg = raw cell_attrs_fg(attrs_packed);
+    int64:bg = raw cell_attrs_bg(attrs_packed);
+    int64:is_inverse = raw cell_flag_inverse(flags);
+
+    // Inverse: use fg as bg
+    if (is_inverse > 0i64) {
+        int64:fgr = raw resolve_color_r(fg);
+        if (raw color_is_default(fg)) {
+            if (g_screen_reverse > 0i64) { fgr = scheme_to_fp(raw scheme_default_bg_r()); }
+        }
+        pass(fgr);
+    }
+
+    // Normal bg
+    int64:r = raw resolve_bg_color_r(bg);
+    if (raw color_is_default(bg)) {
+        if (g_screen_reverse > 0i64) { r = scheme_to_fp(raw scheme_default_fg_r()); }
+    }
+    pass(r);
+};
+
+/// Background G component (fixed-point ×1000) with attribute effects.
+pub func:resolve_bg_g = int64(int64:attrs_packed, int64:flags) {
+    int64:fg = raw cell_attrs_fg(attrs_packed);
+    int64:bg = raw cell_attrs_bg(attrs_packed);
+    int64:is_inverse = raw cell_flag_inverse(flags);
+
+    if (is_inverse > 0i64) {
+        int64:fgg = raw resolve_color_g(fg);
+        if (raw color_is_default(fg)) {
+            if (g_screen_reverse > 0i64) { fgg = scheme_to_fp(raw scheme_default_bg_g()); }
+        }
+        pass(fgg);
+    }
+    int64:g = raw resolve_bg_color_g(bg);
+    if (raw color_is_default(bg)) {
+        if (g_screen_reverse > 0i64) { g = scheme_to_fp(raw scheme_default_fg_g()); }
+    }
+    pass(g);
+};
+
+/// Background B component (fixed-point ×1000) with attribute effects.
+pub func:resolve_bg_b = int64(int64:attrs_packed, int64:flags) {
+    int64:fg = raw cell_attrs_fg(attrs_packed);
+    int64:bg = raw cell_attrs_bg(attrs_packed);
+    int64:is_inverse = raw cell_flag_inverse(flags);
+
+    if (is_inverse > 0i64) {
+        int64:fgb = raw resolve_color_b(fg);
+        if (raw color_is_default(fg)) {
+            if (g_screen_reverse > 0i64) { fgb = scheme_to_fp(raw scheme_default_bg_b()); }
+        }
+        pass(fgb);
+    }
+    int64:b = raw resolve_bg_color_b(bg);
+    if (raw color_is_default(bg)) {
+        if (g_screen_reverse > 0i64) { b = scheme_to_fp(raw scheme_default_fg_b()); }
+    }
+    pass(b);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Convenience: is bg the default background?
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Returns 1 if the resolved bg matches the terminal default background.
+/// Used by renderer to skip drawing background rectangles for default-bg cells.
+pub func:bg_is_default = int64(int64:attrs_packed, int64:flags) {
+    int64:is_inverse = raw cell_flag_inverse(flags);
+    if (is_inverse > 0i64) { pass(0i64); } // inverse always non-default
+    int64:bg = raw cell_attrs_bg(attrs_packed);
+    if (raw color_is_default(bg)) {
+        if (g_screen_reverse > 0i64) { pass(0i64); }
+        pass(1i64);
+    }
+    pass(0i64);
+};
