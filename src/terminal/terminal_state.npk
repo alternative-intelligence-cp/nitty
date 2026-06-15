@@ -1,0 +1,507 @@
+// src/terminal/terminal_state.npk — Terminal state model
+//
+// v0.2.5: The TerminalState is the single source of truth for all
+// terminal emulator state. It owns:
+//   - Two grids (primary + alternate screen via grid.npk)
+//   - Cursor position, saved cursor
+//   - Current pen attributes (from attributes.npk)
+//   - Mode flags (from modes.npk)
+//   - Scroll region bounds
+//   - Tab stop array
+//   - Character set designations and active GL/GR
+//   - Wrap-pending flag, window title
+//
+// All state is held in module-level variables (ts_*) so it is globally
+// accessible to terminal_state_apply.npk and terminal_pipeline.npk.
+
+use "grid.npk".*;
+use "grid_resize.npk".*;
+use "cell.npk".*;
+use "attributes.npk".*;
+use "modes.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Terminal Dimensions
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:ts_rows = 24i64;
+int64:ts_cols = 80i64;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cursor State
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:ts_cursor_row = 0i64;
+int64:ts_cursor_col = 0i64;
+int64:ts_pending_wrap = 0i64;   // 1 = wrap pending at right margin
+
+// ═══════════════════════════════════════════════════════════════════════
+// Saved Cursor (DECSC/DECRC)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Saved cursor position
+int64:ts_saved_row = 0i64;
+int64:ts_saved_col = 0i64;
+int64:ts_saved_pending_wrap = 0i64;
+
+// Saved attribute snapshot (fg, bg, bold, italic, etc.)
+int64:ts_saved_fg         = 0i64;
+int64:ts_saved_bg         = 0i64;
+int64:ts_saved_bold       = 0i64;
+int64:ts_saved_dim        = 0i64;
+int64:ts_saved_italic     = 0i64;
+int64:ts_saved_underline  = 0i64;
+int64:ts_saved_blink      = 0i64;
+int64:ts_saved_rapid_blink = 0i64;
+int64:ts_saved_inverse    = 0i64;
+int64:ts_saved_hidden     = 0i64;
+int64:ts_saved_strike     = 0i64;
+int64:ts_saved_overline   = 0i64;
+
+// Saved character set designations
+int64:ts_saved_gl      = 0i64;   // active GL slot (0=G0, 1=G1, 2=G2, 3=G3)
+int64:ts_saved_g0      = 0i64;   // saved G0 charset
+int64:ts_saved_g1      = 0i64;   // saved G1 charset
+int64:ts_saved_g2      = 0i64;
+int64:ts_saved_g3      = 0i64;
+int64:ts_saved_origin  = 0i64;   // saved origin mode flag
+
+// ═══════════════════════════════════════════════════════════════════════
+// Scroll Region
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:ts_scroll_top    = 0i64;   // 0-indexed, inclusive
+int64:ts_scroll_bottom = 23i64;  // 0-indexed, inclusive (set to rows-1 at init)
+
+// ═══════════════════════════════════════════════════════════════════════
+// Mode Flags
+// ═══════════════════════════════════════════════════════════════════════
+
+// DEC Private Modes (indexed by mode number, not slot)
+int64:ts_mode_cursor_keys    = 0i64;   // DECCKM  (mode 1)
+int64:ts_mode_column_132     = 0i64;   // DECCOLM (mode 3)
+int64:ts_mode_smooth_scroll  = 0i64;   // DECSCLM (mode 4)
+int64:ts_mode_reverse_video  = 0i64;   // DECSCNM (mode 5)
+int64:ts_mode_origin         = 0i64;   // DECOM   (mode 6)
+int64:ts_mode_auto_wrap      = 1i64;   // DECAWM  (mode 7) — ON by default
+int64:ts_mode_blink_cursor   = 1i64;   // ATT610  (mode 12) — ON by default
+int64:ts_mode_cursor_visible = 1i64;   // DECTCEM (mode 25) — ON by default
+int64:ts_mode_alt_screen     = 0i64;   // DECSET 47
+int64:ts_mode_mouse_button   = 0i64;   // X10 mouse
+int64:ts_mode_mouse_drag     = 0i64;   // drag
+int64:ts_mode_mouse_all      = 0i64;   // all mouse
+int64:ts_mode_mouse_sgr      = 0i64;   // SGR encoding
+int64:ts_mode_alt_screen_full = 0i64;  // DECSET 1049 (save+alt+clear)
+int64:ts_mode_bracketed_paste = 0i64;  // bracketed paste
+
+// ANSI Standard Modes
+int64:ts_mode_insert         = 0i64;   // IRM (mode 4)
+int64:ts_mode_newline        = 0i64;   // LNM (mode 20)
+
+// ═══════════════════════════════════════════════════════════════════════
+// Character Sets (G0–G3)
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:ts_g0 = 0i64;   // CS_ASCII
+int64:ts_g1 = 0i64;
+int64:ts_g2 = 0i64;
+int64:ts_g3 = 0i64;
+int64:ts_gl = 0i64;   // active GL slot index (0–3)
+int64:ts_gr = 1i64;   // active GR slot index (0–3)
+
+// ═══════════════════════════════════════════════════════════════════════
+// Tab Stops
+// ═══════════════════════════════════════════════════════════════════════
+
+// Tab stop bitmap: each int64 holds 64 column bits.
+// Column c is a tab stop if ts_tabs[c/64] has bit (c%64) set.
+// MAX_COLS = 200, so we need ceil(200/64) = 4 words.
+int64[4]:ts_tabs;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Window Title (stored as raw codepoints, up to 256 chars)
+// ═══════════════════════════════════════════════════════════════════════
+
+int64[256]:ts_title_buf;
+int64:ts_title_len = 0i64;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Bell / Response pending
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:ts_bell_pending = 0i64;    // 1 = BEL was received since last check
+
+// Response buffer for DSR/DA answers (up to 64 bytes)
+int64[64]:ts_response_buf;
+int64:ts_response_len = 0i64;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Tab Stop Helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+// Check if column c is a tab stop.
+pub func:ts_tab_at = int64(int64:c) {
+    if (c < 0i64)   { pass(0i64); }
+    if (c >= 200i64) { pass(0i64); }
+    int64:word = c / 64i64;
+    int64:bit  = c - (word * 64i64);
+    int64:mask = 1i64;
+    int64:i = 0i64;
+    while (i < bit) { mask = mask * 2i64; i = i + 1i64; }
+    int64:w = ts_tabs[word];
+    if ((w & mask) > 0i64) { pass(1i64); }
+    pass(0i64);
+};
+
+// Set column c as a tab stop.
+pub func:ts_tab_set = NIL(int64:c) {
+    if (c < 0i64)    { pass(NIL); }
+    if (c >= 200i64) { pass(NIL); }
+    int64:word = c / 64i64;
+    int64:bit  = c - (word * 64i64);
+    int64:mask = 1i64;
+    int64:i = 0i64;
+    while (i < bit) { mask = mask * 2i64; i = i + 1i64; }
+    ts_tabs[word] = ts_tabs[word] | mask;
+    pass(NIL);
+};
+
+// Clear column c as a tab stop.
+pub func:ts_tab_clear = NIL(int64:c) {
+    if (c < 0i64)    { pass(NIL); }
+    if (c >= 200i64) { pass(NIL); }
+    int64:word = c / 64i64;
+    int64:bit  = c - (word * 64i64);
+    int64:mask = 1i64;
+    int64:i = 0i64;
+    while (i < bit) { mask = mask * 2i64; i = i + 1i64; }
+    int64:inv_mask = mask ^ 0x7FFFFFFFFFFFFFFFi64;
+    ts_tabs[word] = ts_tabs[word] & inv_mask;
+    pass(NIL);
+};
+
+// Clear all tab stops.
+pub func:ts_tab_clear_all = NIL() {
+    ts_tabs[0] = 0i64;
+    ts_tabs[1] = 0i64;
+    ts_tabs[2] = 0i64;
+    ts_tabs[3] = 0i64;
+    pass(NIL);
+};
+
+// Find next tab stop at or after column c, up to right margin (ts_cols-1).
+// Returns ts_cols if no tab stop found.
+pub func:ts_tab_next = int64(int64:c) {
+    int64:i = c + 1i64;
+    while (i < ts_cols) {
+        if (raw ts_tab_at(i) != 0i64) { pass(i); }
+        i = i + 1i64;
+    }
+    pass(ts_cols - 1i64);
+};
+
+// Find previous tab stop before column c, down to column 0.
+// Returns 0 if no tab stop found.
+pub func:ts_tab_prev = int64(int64:c) {
+    int64:i = c - 1i64;
+    while (i > 0i64) {
+        if (raw ts_tab_at(i) != 0i64) { pass(i); }
+        i = i - 1i64;
+    }
+    pass(0i64);
+};
+
+// Initialize tab stops at every 8th column: 0, 8, 16, 24, ...
+func:ts_tab_init = NIL() {
+    drop(ts_tab_clear_all());
+    int64:c = 0i64;
+    while (c < ts_cols) {
+        drop(ts_tab_set(c));
+        c = c + 8i64;
+    }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cursor Helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+// Clamp ts_cursor_row and ts_cursor_col to valid ranges.
+pub func:ts_cursor_clamp = NIL() {
+    if (ts_cursor_row < 0i64) { ts_cursor_row = 0i64; }
+    if (ts_cursor_col < 0i64) { ts_cursor_col = 0i64; }
+    if (ts_cursor_row >= ts_rows) { ts_cursor_row = ts_rows - 1i64; }
+    if (ts_cursor_col >= ts_cols) { ts_cursor_col = ts_cols - 1i64; }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Reset Helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+// Reset all DEC and ANSI mode flags to defaults.
+func:ts_reset_modes = NIL() {
+    ts_mode_cursor_keys    = 0i64;
+    ts_mode_column_132     = 0i64;
+    ts_mode_smooth_scroll  = 0i64;
+    ts_mode_reverse_video  = 0i64;
+    ts_mode_origin         = 0i64;
+    ts_mode_auto_wrap      = 1i64;
+    ts_mode_blink_cursor   = 1i64;
+    ts_mode_cursor_visible = 1i64;
+    ts_mode_alt_screen     = 0i64;
+    ts_mode_mouse_button   = 0i64;
+    ts_mode_mouse_drag     = 0i64;
+    ts_mode_mouse_all      = 0i64;
+    ts_mode_mouse_sgr      = 0i64;
+    ts_mode_alt_screen_full = 0i64;
+    ts_mode_bracketed_paste = 0i64;
+    ts_mode_insert         = 0i64;
+    ts_mode_newline        = 0i64;
+    pass(NIL);
+};
+
+// Reset charsets to defaults.
+func:ts_reset_charsets = NIL() {
+    ts_g0 = 0i64;
+    ts_g1 = 0i64;
+    ts_g2 = 0i64;
+    ts_g3 = 0i64;
+    ts_gl = 0i64;
+    ts_gr = 1i64;
+    pass(NIL);
+};
+
+// Reset cursor and wrap state.
+func:ts_reset_cursor = NIL() {
+    ts_cursor_row    = 0i64;
+    ts_cursor_col    = 0i64;
+    ts_pending_wrap  = 0i64;
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Full Reset (RIS — Reset to Initial State)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Full terminal reset: clear both grids, reset all state, switch to primary.
+pub func:ts_reset_hard = NIL() {
+    drop(ts_reset_modes());
+    drop(ts_reset_charsets());
+    drop(ts_reset_cursor());
+    // Scroll region = full screen
+    ts_scroll_top    = 0i64;
+    ts_scroll_bottom = ts_rows - 1i64;
+    // Saved cursor: origin
+    ts_saved_row = 0i64;
+    ts_saved_col = 0i64;
+    ts_saved_pending_wrap = 0i64;
+    // Bell, response
+    ts_bell_pending  = 0i64;
+    ts_response_len  = 0i64;
+    // Title
+    ts_title_len = 0i64;
+    // Reset attributes
+    drop(attrs_reset());
+    // Switch to primary screen
+    drop(grid_set_active(0i64));
+    // Clear both grids
+    drop(grid_init(ts_rows, ts_cols));
+    // Tab stops
+    drop(ts_tab_init());
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Soft Reset (DECSTR)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Soft reset: preserve screen content, but reset modes/cursor/attributes.
+pub func:ts_reset_soft = NIL() {
+    drop(ts_reset_modes());
+    drop(ts_reset_charsets());
+    drop(ts_reset_cursor());
+    ts_scroll_top    = 0i64;
+    ts_scroll_bottom = ts_rows - 1i64;
+    ts_pending_wrap  = 0i64;
+    drop(attrs_reset());
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Initialization
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Initialize terminal state for a new session of given dimensions.
+/// Must be called before any other ts_* functions.
+pub func:ts_init = NIL(int64:rows, int64:cols) {
+    int64:r = rows;
+    int64:c = cols;
+    if (r > 200i64) { r = 200i64; }
+    if (c > 200i64) { c = 200i64; }
+    if (r < 1i64)   { r = 1i64; }
+    if (c < 1i64)   { c = 1i64; }
+    ts_rows = r;
+    ts_cols = c;
+    drop(ts_reset_hard());
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Resize
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Resize terminal to new_rows x new_cols.
+/// Both grids are resized; cursor is clamped; scroll region is adjusted.
+pub func:ts_resize = NIL(int64:new_rows, int64:new_cols) {
+    int64:nr = new_rows;
+    int64:nc = new_cols;
+    if (nr > 200i64) { nr = 200i64; }
+    if (nc > 200i64) { nc = 200i64; }
+    if (nr < 1i64)   { nr = 1i64; }
+    if (nc < 1i64)   { nc = 1i64; }
+
+    // Resize primary
+    drop(grid_set_active(0i64));
+    drop(grid_resize(nr, nc));
+
+    // Resize alternate
+    drop(grid_set_active(1i64));
+    drop(grid_resize(nr, nc));
+
+    // Return to active
+    if (ts_mode_alt_screen != 0i64) { drop(grid_set_active(1i64)); }
+    if (ts_mode_alt_screen == 0i64) { drop(grid_set_active(0i64)); }
+    if (ts_mode_alt_screen_full != 0i64) { drop(grid_set_active(1i64)); }
+
+    ts_rows = nr;
+    ts_cols = nc;
+
+    // Adjust scroll region
+    if (ts_scroll_bottom >= nr) { ts_scroll_bottom = nr - 1i64; }
+    if (ts_scroll_top >= ts_scroll_bottom) { ts_scroll_top = 0i64; }
+
+    // Clamp cursor
+    drop(ts_cursor_clamp());
+
+    // Trim tab stops beyond new column count
+    int64:c = nc;
+    while (c < 200i64) {
+        drop(ts_tab_clear(c));
+        c = c + 1i64;
+    }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cursor Save / Restore
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Save cursor position, attributes, and charset state (DECSC).
+pub func:ts_save_cursor = NIL() {
+    ts_saved_row         = ts_cursor_row;
+    ts_saved_col         = ts_cursor_col;
+    ts_saved_pending_wrap = ts_pending_wrap;
+    ts_saved_fg          = raw attrs_get_fg();
+    ts_saved_bg          = raw attrs_get_bg();
+    ts_saved_bold        = raw attrs_get_bold();
+    ts_saved_dim         = raw attrs_get_dim();
+    ts_saved_italic      = raw attrs_get_italic();
+    ts_saved_underline   = raw attrs_get_underline();
+    ts_saved_blink       = raw attrs_get_blink();
+    ts_saved_rapid_blink = raw attrs_get_rapid_blink();
+    ts_saved_inverse     = raw attrs_get_inverse();
+    ts_saved_hidden      = raw attrs_get_hidden();
+    ts_saved_strike      = raw attrs_get_strikethrough();
+    ts_saved_overline    = raw attrs_get_overline();
+    ts_saved_gl          = ts_gl;
+    ts_saved_g0          = ts_g0;
+    ts_saved_g1          = ts_g1;
+    ts_saved_g2          = ts_g2;
+    ts_saved_g3          = ts_g3;
+    ts_saved_origin      = ts_mode_origin;
+    pass(NIL);
+};
+
+/// Restore cursor position, attributes, and charset state (DECRC).
+pub func:ts_restore_cursor = NIL() {
+    ts_cursor_row    = ts_saved_row;
+    ts_cursor_col    = ts_saved_col;
+    ts_pending_wrap  = ts_saved_pending_wrap;
+    ts_gl            = ts_saved_gl;
+    ts_g0            = ts_saved_g0;
+    ts_g1            = ts_saved_g1;
+    ts_g2            = ts_saved_g2;
+    ts_g3            = ts_saved_g3;
+    ts_mode_origin   = ts_saved_origin;
+    drop(attrs_reset());
+    drop(attrs_set_fg(ts_saved_fg));
+    drop(attrs_set_bg(ts_saved_bg));
+    drop(attrs_set_bold(ts_saved_bold));
+    drop(attrs_set_dim(ts_saved_dim));
+    drop(attrs_set_italic(ts_saved_italic));
+    drop(attrs_set_underline(ts_saved_underline));
+    drop(attrs_set_blink(ts_saved_blink));
+    drop(attrs_set_rapid_blink(ts_saved_rapid_blink));
+    drop(attrs_set_inverse(ts_saved_inverse));
+    drop(attrs_set_hidden(ts_saved_hidden));
+    drop(attrs_set_strikethrough(ts_saved_strike));
+    drop(attrs_set_overline(ts_saved_overline));
+    drop(ts_cursor_clamp());
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Current Pen → Cell Attribute Encoding
+// ═══════════════════════════════════════════════════════════════════════
+
+// Build the current attrs int64 (for cell_pack_attrs) from the pen state.
+pub func:ts_current_cell_attrs = int64() {
+    int64:fg = raw attrs_get_fg();
+    int64:bg = raw attrs_get_bg();
+    pass(raw cell_pack_attrs(fg, bg));
+};
+
+// Build the current flags int64 from the pen state.
+pub func:ts_current_cell_flags = int64() {
+    int64:f = raw cell_pack_flags(
+        raw attrs_get_bold(),
+        raw attrs_get_dim(),
+        raw attrs_get_italic(),
+        raw attrs_get_underline(),
+        raw attrs_get_blink(),
+        raw attrs_get_rapid_blink(),
+        raw attrs_get_inverse(),
+        raw attrs_get_hidden(),
+        raw attrs_get_strikethrough(),
+        raw attrs_get_overline(),
+        0i64
+    );
+    pass(f);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Response Buffer
+// ═══════════════════════════════════════════════════════════════════════
+
+// Append a byte (as int64 codepoint) to the response buffer.
+pub func:ts_response_push = NIL(int64:byte) {
+    if (ts_response_len < 64i64) {
+        ts_response_buf[ts_response_len] = byte;
+        ts_response_len = ts_response_len + 1i64;
+    }
+    pass(NIL);
+};
+
+// Get byte i from the response buffer.
+pub func:ts_response_get = int64(int64:i) {
+    if (i < 0i64) { pass(0i64); }
+    if (i >= ts_response_len) { pass(0i64); }
+    pass(ts_response_buf[i]);
+};
+
+// Clear the response buffer.
+pub func:ts_response_clear = NIL() {
+    ts_response_len = 0i64;
+    pass(NIL);
+};

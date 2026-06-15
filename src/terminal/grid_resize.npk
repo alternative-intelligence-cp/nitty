@@ -1,65 +1,79 @@
 // src/terminal/grid_resize.npk — Grid resize operation
 //
-// v0.2.5: Separated from grid.npk to work around a Nitpick compiler
-// limitation: the combination of large module-level arrays (int64[40000])
-// and complex nested loops in a single module triggers a stoull error
-// during IR generation. Keeping resize in its own module avoids this.
+// v0.2.5: Separate module to avoid a Nitpick compiler stoull bug that
+// fires when additional int64[N] arrays are added to any module that
+// imports grid.npk's large int64[40000] arrays.
+//
+// Uses the alternate screen as a temporary copy buffer so no extra
+// arrays are needed:
+//   1. Copy active content into the other screen at old dims.
+//   2. Re-initialize active screen at new dims (clears to blank).
+//   3. Copy preserved content back from the other screen.
+//
+// This handles shrink, grow, and same-size correctly.
+// NOTE: Resizes the ACTIVE screen only. ts_resize() switches active
+// between primary and alternate to resize both.
 //
 // Provides: grid_resize(new_rows, new_cols)
-// Depends on: grid.npk (via cell.npk chain)
+// Depends on: grid.npk, cell.npk
 
 use "grid.npk".*;
+use "cell.npk".*;
 
-// ═══════════════════════════════════════════════════════════════════════
-// Resize State
-// ═══════════════════════════════════════════════════════════════════════
-
-// Previous grid dimensions (saved before resize)
+// Previous dimensions (scalars only — no arrays)
 int64:g_old_rows = 0i64;
 int64:g_old_cols = 0i64;
 
-// Temp copy of one row during resize (200 = MAX_COLS)
-int64[200]:_resize_row_cp;
-int64[200]:_resize_row_attrs;
-int64[200]:_resize_row_flags;
-
 // ═══════════════════════════════════════════════════════════════════════
-// Resize Helpers
+// Internal: copy active → other screen, re-init active, copy back
 // ═══════════════════════════════════════════════════════════════════════
 
-// Save one row from the active grid into the temp buffer,
-// using g_old_cols as the row stride.
-func:resize_save_row = NIL(int64:row) {
-    int64:base = row * g_old_cols;
-    int64:j = 0i64;
-    while (j < g_old_cols) {
-        _resize_row_cp[j]    = raw grid_get_cp(row, j);
-        _resize_row_attrs[j] = raw grid_get_attrs(row, j);
-        _resize_row_flags[j] = raw grid_get_flags(row, j);
-        j = j + 1i64;
-    }
-    pass(NIL);
-};
+func:resize_do = NIL(int64:was_active, int64:copy_rows, int64:copy_cols,
+                      int64:old_cols, int64:nr, int64:nc) {
+    int64:other = 1i64;
+    if (was_active == 1i64) { other = 0i64; }
 
-// Write the temp buffer row back into the new layout at row r.
-func:resize_write_row = NIL(int64:r, int64:copy_cols, int64:nc) {
-    int64:j = 0i64;
-    while (j < copy_cols) {
-        drop(grid_set(r, j, _resize_row_cp[j],
-                      _resize_row_attrs[j], _resize_row_flags[j]));
-        j = j + 1i64;
-    }
-    pass(NIL);
-};
+    // Init other screen at old dims to receive copy
+    drop(grid_set_active(other));
+    drop(grid_init(copy_rows, old_cols));
 
-// Clear the newly visible columns (beyond old width) in row r.
-func:resize_clear_new_cols = NIL(int64:r, int64:copy_cols, int64:nc) {
-    int64:j = copy_cols;
-    while (j < nc) {
-        drop(grid_set(r, j, raw CELL_DEFAULT_CP(),
-                      raw CELL_DEFAULT_ATTRS(), raw CELL_DEFAULT_FLAGS()));
-        j = j + 1i64;
+    // Copy active → other
+    int64:r = 0i64;
+    while (r < copy_rows) {
+        int64:c = 0i64;
+        while (c < copy_cols) {
+            drop(grid_set_active(was_active));
+            int64:cp    = raw grid_get_cp(r, c);
+            int64:attrs = raw grid_get_attrs(r, c);
+            int64:flags = raw grid_get_flags(r, c);
+            drop(grid_set_active(other));
+            drop(grid_set(r, c, cp, attrs, flags));
+            c = c + 1i64;
+        }
+        r = r + 1i64;
     }
+
+    // Re-init active at new dims (fills with blanks)
+    drop(grid_set_active(was_active));
+    drop(grid_init(nr, nc));
+
+    // Copy other → active (now using new dims)
+    r = 0i64;
+    while (r < copy_rows) {
+        int64:c = 0i64;
+        while (c < copy_cols) {
+            drop(grid_set_active(other));
+            int64:cp    = raw grid_get_cp(r, c);
+            int64:attrs = raw grid_get_attrs(r, c);
+            int64:flags = raw grid_get_flags(r, c);
+            drop(grid_set_active(was_active));
+            drop(grid_set(r, c, cp, attrs, flags));
+            c = c + 1i64;
+        }
+        r = r + 1i64;
+    }
+
+    drop(grid_set_active(was_active));
     pass(NIL);
 };
 
@@ -68,8 +82,8 @@ func:resize_clear_new_cols = NIL(int64:r, int64:copy_cols, int64:nc) {
 // ═══════════════════════════════════════════════════════════════════════
 
 /// Resize the active grid to new_rows x new_cols.
-/// Content is preserved up to min(old, new) bounds; new space is cleared.
-/// Rows/cols are clamped to [1, 200].
+/// Content is preserved up to min(old, new) bounds; new space is blank.
+/// Rows/cols clamped to [1, 200].
 pub func:grid_resize = NIL(int64:new_rows, int64:new_cols) {
     int64:nr = new_rows;
     int64:nc = new_cols;
@@ -78,7 +92,6 @@ pub func:grid_resize = NIL(int64:new_rows, int64:new_cols) {
     if (nr < 1i64)   { nr = 1i64; }
     if (nc < 1i64)   { nc = 1i64; }
 
-    // Remember old dimensions
     g_old_rows = raw grid_get_rows();
     g_old_cols = raw grid_get_cols();
 
@@ -87,16 +100,7 @@ pub func:grid_resize = NIL(int64:new_rows, int64:new_cols) {
     int64:copy_cols = g_old_cols;
     if (nc < copy_cols) { copy_cols = nc; }
 
-    // Re-initialize grid to new dimensions first (content will be overwritten)
-    drop(grid_init(nr, nc));
-
-    // Copy preserved rows back in
-    int64:r = 0i64;
-    while (r < copy_rows) {
-        drop(resize_save_row(r));
-        drop(resize_write_row(r, copy_cols, nc));
-        drop(resize_clear_new_cols(r, copy_cols, nc));
-        r = r + 1i64;
-    }
+    int64:was_active = raw grid_get_active();
+    drop(resize_do(was_active, copy_rows, copy_cols, g_old_cols, nr, nc));
     pass(NIL);
 };
