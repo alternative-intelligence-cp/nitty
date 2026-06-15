@@ -1,0 +1,307 @@
+// tests/test_terminal_integration.npk — End-to-end pipeline tests
+//
+// v0.2.5: Feeds real VT100/ANSI escape sequences byte-by-byte through
+// the complete pipeline (parser → dispatch → state) and verifies the
+// terminal state is correct.
+//
+// Test groups:
+//   T01-T05: Basic text output and cursor movement
+//   T06-T10: Erase operations
+//   T11-T15: Scroll region and scroll operations
+//   T16-T20: Tab stops and tab navigation
+//   T21-T25: Screen modes and character sets
+//   T26-T30: Cursor save/restore, reset sequences
+
+use "../src/terminal/terminal_pipeline.npk".*;
+use "../src/terminal/terminal_state.npk".*;
+use "../src/terminal/grid.npk".*;
+use "../src/terminal/attributes.npk".*;
+
+int64:STDOUT = 1i64;
+int64:fail_count = 0i64;
+
+func:write_msg = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:assert_eq = NIL(string:name, int64:actual, int64:expected) {
+    if (actual == expected) {
+        drop(write_msg("[PASS] "));
+        drop(write_msg(name));
+        drop(write_msg("\n"));
+    }
+    if (actual != expected) {
+        fail_count = fail_count + 1i64;
+        drop(write_msg("[FAIL] "));
+        drop(write_msg(name));
+        drop(write_msg("\n"));
+    }
+    pass(NIL);
+};
+
+// Feed a sequence of bytes through the pipeline.
+func:feed = NIL(int64:b0, int64:b1, int64:b2, int64:b3,
+                int64:b4, int64:b5, int64:b6, int64:b7,
+                int64:count) {
+    if (count > 0i64) { drop(pipeline_feed(b0)); }
+    if (count > 1i64) { drop(pipeline_feed(b1)); }
+    if (count > 2i64) { drop(pipeline_feed(b2)); }
+    if (count > 3i64) { drop(pipeline_feed(b3)); }
+    if (count > 4i64) { drop(pipeline_feed(b4)); }
+    if (count > 5i64) { drop(pipeline_feed(b5)); }
+    if (count > 6i64) { drop(pipeline_feed(b6)); }
+    if (count > 7i64) { drop(pipeline_feed(b7)); }
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:err) {
+    drop(write_msg("FAILSAFE\n"));
+    exit 1;
+};
+
+func:main = int32() {
+    drop(write_msg("=== Terminal Integration Tests ===\n"));
+
+    // ─── T01: Print characters ──────────────────────────────────────
+    drop(pipeline_init(24i64, 80i64));
+    // Feed 'H' 'i' '!'
+    drop(pipeline_feed(0x48i64));  // H
+    drop(pipeline_feed(0x69i64));  // i
+    drop(pipeline_feed(0x21i64));  // !
+    drop(assert_eq("T01a 'H' at (0,0)", raw grid_get_cp(0i64, 0i64), 0x48i64));
+    drop(assert_eq("T01b 'i' at (0,1)", raw grid_get_cp(0i64, 1i64), 0x69i64));
+    drop(assert_eq("T01c '!' at (0,2)", raw grid_get_cp(0i64, 2i64), 0x21i64));
+    drop(assert_eq("T01d cursor col=3", raw ts_get_cursor_col(), 3i64));
+
+    // ─── T02: CR + LF ───────────────────────────────────────────────
+    drop(pipeline_feed(0x0Di64));  // CR
+    drop(pipeline_feed(0x0Ai64));  // LF
+    drop(assert_eq("T02a CR resets col=0", raw ts_get_cursor_col(), 0i64));
+    drop(assert_eq("T02b LF advances row=1", raw ts_get_cursor_row(), 1i64));
+
+    // ─── T03: CUP — move cursor to absolute position ─────────────────
+    // ESC [ 5 ; 10 H  (CUP row=5, col=10, 1-based → row=4, col=9)
+    drop(pipeline_init(24i64, 80i64));
+    drop(pipeline_feed(0x1Bi64));  // ESC
+    drop(pipeline_feed(0x5Bi64));  // [
+    drop(pipeline_feed(0x35i64));  // 5
+    drop(pipeline_feed(0x3Bi64));  // ;
+    drop(pipeline_feed(0x31i64));  // 1
+    drop(pipeline_feed(0x30i64));  // 0
+    drop(pipeline_feed(0x48i64));  // H (CUP)
+    drop(assert_eq("T03a CUP row=4", raw ts_get_cursor_row(), 4i64));
+    drop(assert_eq("T03b CUP col=9", raw ts_get_cursor_col(), 9i64));
+
+    // ─── T04: CUU / CUD / CUF / CUB ─────────────────────────────────
+    drop(pipeline_init(24i64, 80i64));
+    // ESC [ 3 A  (CUU 3)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x33i64)); drop(pipeline_feed(0x41i64));
+    drop(assert_eq("T04a CUU clamp to 0", raw ts_get_cursor_row(), 0i64));
+    // CUP to (10,20)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x31i64)); drop(pipeline_feed(0x30i64));
+    drop(pipeline_feed(0x3Bi64));
+    drop(pipeline_feed(0x32i64)); drop(pipeline_feed(0x30i64));
+    drop(pipeline_feed(0x48i64));
+    drop(assert_eq("T04b CUP row=9", raw ts_get_cursor_row(), 9i64));
+    // ESC [ 2 A  (CUU 2)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x32i64)); drop(pipeline_feed(0x41i64));
+    drop(assert_eq("T04c CUU row=7", raw ts_get_cursor_row(), 7i64));
+    // ESC [ 3 B  (CUD 3)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x33i64)); drop(pipeline_feed(0x42i64));
+    drop(assert_eq("T04d CUD row=10", raw ts_get_cursor_row(), 10i64));
+    // ESC [ 5 C  (CUF 5)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x35i64)); drop(pipeline_feed(0x43i64));
+    drop(assert_eq("T04e CUF col=24", raw ts_get_cursor_col(), 24i64));
+    // ESC [ 4 D  (CUB 4)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x34i64)); drop(pipeline_feed(0x44i64));
+    drop(assert_eq("T04f CUB col=20", raw ts_get_cursor_col(), 20i64));
+
+    // ─── T05: Auto-wrap at right margin ─────────────────────────────
+    drop(pipeline_init(24i64, 5i64));  // 5-wide terminal
+    drop(pipeline_feed(0x41i64));  // A col=0
+    drop(pipeline_feed(0x42i64));  // B col=1
+    drop(pipeline_feed(0x43i64));  // C col=2
+    drop(pipeline_feed(0x44i64));  // D col=3
+    drop(pipeline_feed(0x45i64));  // E col=4 → pending_wrap
+    drop(assert_eq("T05a pending_wrap=1 at col 4", raw ts_get_pending_wrap(), 1i64));
+    drop(pipeline_feed(0x46i64));  // F → wrap, write at (1,0)
+    drop(assert_eq("T05b wrapped to row=1", raw ts_get_cursor_row(), 1i64));
+    drop(assert_eq("T05c 'F' at (1,0)", raw grid_get_cp(1i64, 0i64), 0x46i64));
+
+    // ─── T06: ED 2 — erase entire screen ────────────────────────────
+    drop(pipeline_init(24i64, 80i64));
+    drop(grid_set(5i64, 10i64, 0x41i64, 0i64, 0i64));  // 'A'
+    // ESC [ 2 J
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x32i64)); drop(pipeline_feed(0x4Ai64));
+    drop(assert_eq("T06a cell cleared after ED2", raw grid_get_cp(5i64, 10i64), 0x20i64));
+
+    // ─── T07: EL 0 — erase to end of line ───────────────────────────
+    drop(pipeline_init(24i64, 80i64));
+    drop(grid_set(0i64, 0i64, 0x41i64, 0i64, 0i64));  // 'A'
+    drop(grid_set(0i64, 5i64, 0x42i64, 0i64, 0i64));  // 'B'
+    // CUP(1,3) → (0,2), then EL 0
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x31i64)); drop(pipeline_feed(0x3Bi64));
+    drop(pipeline_feed(0x33i64)); drop(pipeline_feed(0x48i64));
+    // ESC [ K  (EL 0, default)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x4Bi64));
+    drop(assert_eq("T07a 'A' preserved at (0,0)", raw grid_get_cp(0i64, 0i64), 0x41i64));
+    drop(assert_eq("T07b 'B' erased at (0,5)", raw grid_get_cp(0i64, 5i64), 0x20i64));
+
+    // ─── T08: BEL — bell pending ─────────────────────────────────────
+    drop(pipeline_init(24i64, 80i64));
+    drop(pipeline_feed(0x07i64));  // BEL
+    drop(assert_eq("T08a bell_pending=1", raw ts_get_bell_pending(), 1i64));
+
+    // ─── T09: HT — tab to col 8 ──────────────────────────────────────
+    drop(pipeline_init(24i64, 80i64));
+    drop(pipeline_feed(0x09i64));  // HT from col 0
+    drop(assert_eq("T09a HT → col 8", raw ts_get_cursor_col(), 8i64));
+    drop(pipeline_feed(0x09i64));  // HT from col 8
+    drop(assert_eq("T09b HT → col 16", raw ts_get_cursor_col(), 16i64));
+
+    // ─── T10: DECSTBM — set scroll region ────────────────────────────
+    // ESC [ 5 ; 20 r  (scroll region rows 5-20, 1-based → top=4, bot=19)
+    drop(pipeline_init(24i64, 80i64));
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x35i64)); drop(pipeline_feed(0x3Bi64));
+    drop(pipeline_feed(0x32i64)); drop(pipeline_feed(0x30i64));
+    drop(pipeline_feed(0x72i64));
+    drop(assert_eq("T10a scroll_top=4",    raw ts_get_scroll_top(), 4i64));
+    drop(assert_eq("T10b scroll_bottom=19", raw ts_get_scroll_bottom(), 19i64));
+    drop(assert_eq("T10c cursor at home",   raw ts_get_cursor_row(), 0i64));
+
+    // ─── T11: SU — scroll up ─────────────────────────────────────────
+    // Write 'A' at row 0, scroll up 1, 'A' should now be gone
+    drop(pipeline_init(24i64, 80i64));
+    drop(grid_set(0i64, 0i64, 0x41i64, 0i64, 0i64));
+    drop(grid_set(1i64, 0i64, 0x42i64, 0i64, 0i64));
+    // ESC [ S  (SU 1, default)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x53i64));
+    drop(assert_eq("T11a 'B' scrolled to row 0", raw grid_get_cp(0i64, 0i64), 0x42i64));
+
+    // ─── T12: SD — scroll down ───────────────────────────────────────
+    drop(pipeline_init(24i64, 80i64));
+    drop(grid_set(0i64, 0i64, 0x41i64, 0i64, 0i64));
+    // ESC [ T  (SD 1, default)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x54i64));
+    drop(assert_eq("T12a 'A' scrolled to row 1", raw grid_get_cp(1i64, 0i64), 0x41i64));
+    drop(assert_eq("T12b row 0 blank", raw grid_get_cp(0i64, 0i64), 0x20i64));
+
+    // ─── T13: IL / DL — insert/delete lines ─────────────────────────
+    drop(pipeline_init(24i64, 80i64));
+    drop(grid_set(0i64, 0i64, 0x41i64, 0i64, 0i64));
+    drop(grid_set(1i64, 0i64, 0x42i64, 0i64, 0i64));
+    // CUP(1,1) → (0,0), then ESC [ L  (IL 1)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x48i64));
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x4Ci64));
+    drop(assert_eq("T13a 'A' pushed to row 1", raw grid_get_cp(1i64, 0i64), 0x41i64));
+    drop(assert_eq("T13b row 0 blank", raw grid_get_cp(0i64, 0i64), 0x20i64));
+
+    // ─── T14: ICH / DCH — insert/delete chars ────────────────────────
+    drop(pipeline_init(24i64, 80i64));
+    drop(grid_set(0i64, 0i64, 0x41i64, 0i64, 0i64));  // A at 0
+    drop(grid_set(0i64, 1i64, 0x42i64, 0i64, 0i64));  // B at 1
+    // CUP(1,1) → (0,0), then ESC [ @  (ICH 1)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x48i64));
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x40i64));
+    drop(assert_eq("T14a 'A' shifted to col 1", raw grid_get_cp(0i64, 1i64), 0x41i64));
+    drop(assert_eq("T14b col 0 blank", raw grid_get_cp(0i64, 0i64), 0x20i64));
+
+    // ─── T15: ESC D (IND) and ESC M (RI) ────────────────────────────
+    drop(pipeline_init(24i64, 80i64));
+    // ESC D = IND = line feed without CR
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x44i64));
+    drop(assert_eq("T15a IND row=1", raw ts_get_cursor_row(), 1i64));
+    drop(assert_eq("T15b IND col=0", raw ts_get_cursor_col(), 0i64));
+    // ESC M = RI = reverse index
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x4Di64));
+    drop(assert_eq("T15c RI row=0", raw ts_get_cursor_row(), 0i64));
+
+    // ─── T16: ESC 7 / ESC 8 — save/restore cursor ───────────────────
+    drop(pipeline_init(24i64, 80i64));
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x35i64)); drop(pipeline_feed(0x3Bi64));
+    drop(pipeline_feed(0x38i64)); drop(pipeline_feed(0x48i64));  // CUP(5,8)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x37i64));  // ESC 7 = DECSC
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64)); drop(pipeline_feed(0x48i64));  // CUP(home)
+    drop(assert_eq("T16a cursor moved home row=0", raw ts_get_cursor_row(), 0i64));
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x38i64));  // ESC 8 = DECRC
+    drop(assert_eq("T16b DECRC row=4", raw ts_get_cursor_row(), 4i64));
+    drop(assert_eq("T16c DECRC col=7", raw ts_get_cursor_col(), 7i64));
+
+    // ─── T17: DECSET 25 (show cursor) / DECRST 25 (hide cursor) ─────
+    drop(pipeline_init(24i64, 80i64));
+    // ESC [ ? 25 l  (hide cursor)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x3Fi64)); drop(pipeline_feed(0x32i64));
+    drop(pipeline_feed(0x35i64)); drop(pipeline_feed(0x6Ci64));
+    drop(assert_eq("T17a cursor hidden", raw ts_get_mode_cursor_visible(), 0i64));
+    // ESC [ ? 25 h  (show cursor)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x3Fi64)); drop(pipeline_feed(0x32i64));
+    drop(pipeline_feed(0x35i64)); drop(pipeline_feed(0x68i64));
+    drop(assert_eq("T17b cursor visible", raw ts_get_mode_cursor_visible(), 1i64));
+
+    // ─── T18: DECSET 7 auto-wrap ─────────────────────────────────────
+    drop(pipeline_init(24i64, 5i64));
+    // ESC [ ? 7 l  (disable auto-wrap)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x3Fi64)); drop(pipeline_feed(0x37i64));
+    drop(pipeline_feed(0x6Ci64));
+    drop(assert_eq("T18a auto_wrap=0", raw ts_get_mode_auto_wrap(), 0i64));
+    // Fill 5 chars — should stay on row 0 (no wrap)
+    drop(pipeline_feed(0x41i64));  // A
+    drop(pipeline_feed(0x42i64));  // B
+    drop(pipeline_feed(0x43i64));  // C
+    drop(pipeline_feed(0x44i64));  // D
+    drop(pipeline_feed(0x45i64));  // E → pending_wrap but no actual wrap
+    drop(pipeline_feed(0x46i64));  // F → overwrites col 4 (no wrap because mode off)
+    drop(assert_eq("T18b no wrap, still row 0", raw ts_get_cursor_row(), 0i64));
+
+    // ─── T19: SGR — bold/dim/color ───────────────────────────────────
+    drop(pipeline_init(24i64, 80i64));
+    // ESC [ 1 m  (bold on)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x31i64)); drop(pipeline_feed(0x6Di64));
+    drop(assert_eq("T19a bold=1", raw attrs_get_bold(), 1i64));
+    // ESC [ 0 m  (reset)
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x30i64)); drop(pipeline_feed(0x6Di64));
+    drop(assert_eq("T19b bold=0 after reset", raw attrs_get_bold(), 0i64));
+
+    // ─── T20: ESC c — RIS full reset ─────────────────────────────────
+    drop(pipeline_init(24i64, 80i64));
+    drop(grid_set(5i64, 5i64, 0x41i64, 0i64, 0i64));
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x5Bi64));
+    drop(pipeline_feed(0x35i64)); drop(pipeline_feed(0x3Bi64));
+    drop(pipeline_feed(0x35i64)); drop(pipeline_feed(0x48i64));  // CUP(5,5)
+    // ESC c
+    drop(pipeline_feed(0x1Bi64)); drop(pipeline_feed(0x63i64));
+    drop(assert_eq("T20a RIS cursor at (0,0)", raw ts_get_cursor_row(), 0i64));
+    drop(assert_eq("T20b RIS screen cleared", raw grid_get_cp(5i64, 5i64), 0x20i64));
+
+    // Summary
+    if (fail_count == 0i64) {
+        drop(write_msg("All integration tests passed.\n\n"));
+        exit 0;
+    }
+    drop(write_msg("SOME INTEGRATION TESTS FAILED.\n"));
+    exit 1;
+};

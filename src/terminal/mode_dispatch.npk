@@ -30,10 +30,23 @@ int64:mode_action_type  = 0i64;
 int64:mode_action_data1 = 0i64;
 int64:mode_action_data2 = 0i64;
 
-func:set_mode_action = NIL(int64:mode_num, int64:enabled) {
+// data2 encoding: is_dec*2 + enabled
+//   DEC  set:   data2 = 3  (2+1)
+//   DEC  reset: data2 = 2  (2+0)
+//   ANSI set:   data2 = 1  (0+1)
+//   ANSI reset: data2 = 0  (0+0)
+// This allows ts_apply_action to distinguish DEC from ANSI modes.
+func:set_dec_mode_action = NIL(int64:mode_num, int64:enabled) {
     mode_action_type  = raw ACT_SET_MODE();
     mode_action_data1 = mode_num;
-    mode_action_data2 = enabled;
+    mode_action_data2 = enabled + 2i64;  // DEC flag
+    pass(NIL);
+};
+
+func:set_std_mode_action = NIL(int64:mode_num, int64:enabled) {
+    mode_action_type  = raw ACT_SET_MODE();
+    mode_action_data1 = mode_num;
+    mode_action_data2 = enabled;          // no DEC flag
     pass(NIL);
 };
 
@@ -82,7 +95,7 @@ int64:_md_enabled = 0i64;
 // Helper: process one DEC private mode param.
 func:_md_proc_dec = NIL(int64:num, int64:enabled) {
     if (raw dec_mode_valid(num) != 0i64) {
-        drop(set_mode_action(num, enabled));
+        drop(set_dec_mode_action(num, enabled));
     }
     pass(NIL);
 };
@@ -90,7 +103,7 @@ func:_md_proc_dec = NIL(int64:num, int64:enabled) {
 // Helper: process one standard mode param.
 func:_md_proc_std = NIL(int64:num, int64:enabled) {
     if (raw std_mode_valid(num) != 0i64) {
-        drop(set_mode_action(num, enabled));
+        drop(set_std_mode_action(num, enabled));
     }
     pass(NIL);
 };

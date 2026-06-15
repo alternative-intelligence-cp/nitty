@@ -1,0 +1,119 @@
+// src/terminal/terminal_pipeline.npk — Byte-feed pipeline
+//
+// v0.2.5: Wires the full terminal processing chain:
+//
+//   raw bytes → vt_parser → dispatch (CSI/ESC/OSC/DCS) → ts_apply_action
+//
+// The parser handles UTF-8 decoding internally and emits one event per
+// call to parser_feed_byte. This module reads the event and routes it
+// to the appropriate dispatch layer, then applies the resulting action
+// to the terminal state.
+//
+// NOTE: No module-level arrays are defined here to avoid the Nitpick
+// compiler stoull bug that fires when additional int64[N] arrays exist
+// alongside grid.npk's large int64[40000] arrays in the same IR unit.
+// Callers that need batch feeding should loop over pipeline_feed().
+//
+// Public API:
+//   pipeline_init(rows, cols) — initialize parser + terminal state
+//   pipeline_feed(byte)       — feed one raw byte end-to-end
+//
+// Event routing:
+//   E_PRINT (1)   → ts_print(codepoint)
+//   E_EXECUTE (2) → ts_execute(byte)
+//   E_CSI (3)     → dispatch_csi → ts_apply_action
+//   E_ESC (4)     → dispatch_esc → ts_apply_action
+//   E_OSC (5)     → dispatch_osc → ts_apply_action
+//   E_DCS (6)     → dispatch_dcs → ts_apply_action
+//   E_PM_APC (7)  → ignore
+//
+// Depends on: vt_parser.npk, csi_dispatch.npk, osc_dispatch.npk,
+//             dcs_dispatch.npk, terminal_state.npk,
+//             terminal_state_apply.npk, actions.npk
+
+use "vt_parser.npk".*;
+use "csi_dispatch.npk".*;
+use "osc_dispatch.npk".*;
+use "dcs_dispatch.npk".*;
+use "terminal_state.npk".*;
+use "terminal_state_apply.npk".*;
+use "actions.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Initialization
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Initialize parser and terminal state for a new session.
+pub func:pipeline_init = NIL(int64:rows, int64:cols) {
+    drop(parser_init());
+    drop(ts_init(rows, cols));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Event Application Helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+// Route E_CSI: dispatch_csi → ts_apply_action.
+func:pl_apply_csi = NIL() {
+    int64:final_byte  = raw parser_get_event_data();
+    int64:param_count = raw parser_get_csi_param_count();
+    drop(dispatch_csi(final_byte, param_count));
+    drop(ts_apply_action(raw dispatch_get_action_type(),
+                         raw dispatch_get_action_data1(),
+                         raw dispatch_get_action_data2()));
+    pass(NIL);
+};
+
+// Route E_ESC: dispatch_esc → ts_apply_action.
+func:pl_apply_esc = NIL() {
+    drop(dispatch_esc(raw parser_get_event_data()));
+    drop(ts_apply_action(raw dispatch_get_action_type(),
+                         raw dispatch_get_action_data1(),
+                         raw dispatch_get_action_data2()));
+    pass(NIL);
+};
+
+// Route E_OSC: dispatch_osc → ts_apply_action.
+func:pl_apply_osc = NIL() {
+    drop(dispatch_osc(raw parser_get_event_data()));
+    drop(ts_apply_action(raw osc_dispatch_get_action(),
+                         raw osc_dispatch_get_data1(),
+                         raw osc_dispatch_get_data2()));
+    pass(NIL);
+};
+
+// Route E_DCS: dispatch_dcs → ts_apply_action.
+func:pl_apply_dcs = NIL() {
+    drop(dispatch_dcs(raw parser_get_event_data(),
+                      raw parser_get_intermediate_count()));
+    drop(ts_apply_action(raw dcs_dispatch_get_action(),
+                         raw dcs_dispatch_get_data1(),
+                         raw dcs_dispatch_get_data2()));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Main Feed Function
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Feed one raw byte through the full pipeline.
+/// parser_feed_byte → event → dispatch → apply to terminal state.
+pub func:pipeline_feed = NIL(int64:byte) {
+    drop(parser_feed_byte(byte));
+    int64:evt = raw parser_get_event_type();
+    // E_PRINT (1)
+    if (evt == 1i64) { drop(ts_print(raw parser_get_event_data()));   pass(NIL); }
+    // E_EXECUTE (2)
+    if (evt == 2i64) { drop(ts_execute(raw parser_get_event_data())); pass(NIL); }
+    // E_CSI (3)
+    if (evt == 3i64) { drop(pl_apply_csi()); pass(NIL); }
+    // E_ESC (4)
+    if (evt == 4i64) { drop(pl_apply_esc()); pass(NIL); }
+    // E_OSC (5)
+    if (evt == 5i64) { drop(pl_apply_osc()); pass(NIL); }
+    // E_DCS (6)
+    if (evt == 6i64) { drop(pl_apply_dcs()); pass(NIL); }
+    // E_NONE (0) and E_PM_APC (7): no action
+    pass(NIL);
+};

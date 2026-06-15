@@ -144,37 +144,37 @@ func:main = int32() {
     drop(decset(1i64));
     drop(assert_eq("T01a DECSET 1 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
     drop(assert_eq("T01b DECSET 1 mode=1", raw dispatch_get_action_data1(), 1i64));
-    drop(assert_eq("T01c DECSET 1 enabled=1", raw dispatch_get_action_data2(), 1i64));
+    drop(assert_eq("T01c DECSET 1 enabled=3 (DEC|set)", raw dispatch_get_action_data2(), 3i64));
 
     // T02: MODE_ORIGIN (6)
     drop(decset(6i64));
     drop(assert_eq("T02a DECSET 6 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
     drop(assert_eq("T02b DECSET 6 mode=6", raw dispatch_get_action_data1(), 6i64));
-    drop(assert_eq("T02c DECSET 6 enabled=1", raw dispatch_get_action_data2(), 1i64));
+    drop(assert_eq("T02c DECSET 6 enabled=3 (DEC|set)", raw dispatch_get_action_data2(), 3i64));
 
     // T03: MODE_AUTO_WRAP (7)
     drop(decset(7i64));
     drop(assert_eq("T03a DECSET 7 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
     drop(assert_eq("T03b DECSET 7 mode=7", raw dispatch_get_action_data1(), 7i64));
-    drop(assert_eq("T03c DECSET 7 enabled=1", raw dispatch_get_action_data2(), 1i64));
+    drop(assert_eq("T03c DECSET 7 enabled=3 (DEC|set)", raw dispatch_get_action_data2(), 3i64));
 
     // T04: MODE_CURSOR_VISIBLE (25)
     drop(decset(25i64));
     drop(assert_eq("T04a DECSET 25 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
     drop(assert_eq("T04b DECSET 25 mode=25", raw dispatch_get_action_data1(), 25i64));
-    drop(assert_eq("T04c DECSET 25 enabled=1", raw dispatch_get_action_data2(), 1i64));
+    drop(assert_eq("T04c DECSET 25 enabled=3 (DEC|set)", raw dispatch_get_action_data2(), 3i64));
 
     // T05: MODE_ALT_SCREEN_FULL (1049)
     drop(decset(1049i64));
     drop(assert_eq("T05a DECSET 1049 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
     drop(assert_eq("T05b DECSET 1049 mode=1049", raw dispatch_get_action_data1(), 1049i64));
-    drop(assert_eq("T05c DECSET 1049 enabled=1", raw dispatch_get_action_data2(), 1i64));
+    drop(assert_eq("T05c DECSET 1049 enabled=3 (DEC|set)", raw dispatch_get_action_data2(), 3i64));
 
     // T06: MODE_BRACKETED_PASTE (2004)
     drop(decset(2004i64));
     drop(assert_eq("T06a DECSET 2004 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
     drop(assert_eq("T06b DECSET 2004 mode=2004", raw dispatch_get_action_data1(), 2004i64));
-    drop(assert_eq("T06c DECSET 2004 enabled=1", raw dispatch_get_action_data2(), 1i64));
+    drop(assert_eq("T06c DECSET 2004 enabled=3 (DEC|set)", raw dispatch_get_action_data2(), 3i64));
 
     // T07: MODE_MOUSE_BUTTON (1000)
     drop(decset(1000i64));
@@ -192,18 +192,18 @@ func:main = int32() {
     drop(decrst(25i64));
     drop(assert_eq("T09a DECRST 25 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
     drop(assert_eq("T09b DECRST 25 mode=25", raw dispatch_get_action_data1(), 25i64));
-    drop(assert_eq("T09c DECRST 25 enabled=0", raw dispatch_get_action_data2(), 0i64));
+    drop(assert_eq("T09c DECRST 25 enabled=2 (DEC|reset)", raw dispatch_get_action_data2(), 2i64));
 
     // T10: DECRST 1049 (exit alt screen)
     drop(decrst(1049i64));
     drop(assert_eq("T10a DECRST 1049 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
     drop(assert_eq("T10b DECRST 1049 mode=1049", raw dispatch_get_action_data1(), 1049i64));
-    drop(assert_eq("T10c DECRST 1049 enabled=0", raw dispatch_get_action_data2(), 0i64));
+    drop(assert_eq("T10c DECRST 1049 enabled=2 (DEC|reset)", raw dispatch_get_action_data2(), 2i64));
 
     // T11: DECRST 7 (disable auto-wrap)
     drop(decrst(7i64));
     drop(assert_eq("T11a DECRST 7 → SET_MODE", raw dispatch_get_action_type(), SET_MODE));
-    drop(assert_eq("T11b DECRST 7 enabled=0", raw dispatch_get_action_data2(), 0i64));
+    drop(assert_eq("T11b DECRST 7 enabled=2 (DEC|reset)", raw dispatch_get_action_data2(), 2i64));
 
     // ── Unknown mode → ACT_NONE ───────────────────────────────────────
 
