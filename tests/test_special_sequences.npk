@@ -6,6 +6,8 @@
 
 use "../src/terminal/csi_dispatch.npk".*;
 use "../src/terminal/mode_dispatch.npk".*;
+use "../src/terminal/vt_parser.npk".*;
+use "../src/terminal/actions.npk".*;
 
 int64:STDOUT = 1i64;
 int64:pass_count = 0i64;
@@ -236,13 +238,13 @@ func:main = int32() {
     drop(decset(1049i64));
     drop(assert_eq("T14a DECSET 1049 → SET_MODE", raw dispatch_get_action_type(), SETMODE));
     drop(assert_eq("T14b DECSET 1049 mode=1049", raw dispatch_get_action_data1(), 1049i64));
-    drop(assert_eq("T14c DECSET 1049 enabled=1", raw dispatch_get_action_data2(), 1i64));
+    drop(assert_eq("T14c DECSET 1049 enabled=3 (DEC|set)", raw dispatch_get_action_data2(), 3i64));
 
     // T15: DECRST 1049 → SET_MODE(1049, enabled=0)
     drop(decrst(1049i64));
     drop(assert_eq("T15a DECRST 1049 → SET_MODE", raw dispatch_get_action_type(), SETMODE));
     drop(assert_eq("T15b DECRST 1049 mode=1049", raw dispatch_get_action_data1(), 1049i64));
-    drop(assert_eq("T15c DECRST 1049 enabled=0", raw dispatch_get_action_data2(), 0i64));
+    drop(assert_eq("T15c DECRST 1049 enabled=2 (DEC|reset)", raw dispatch_get_action_data2(), 2i64));
 
     // ── ESC index/special sequences (regression) ──────────────────────
 

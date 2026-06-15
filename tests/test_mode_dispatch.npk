@@ -3,11 +3,11 @@
 // v0.2.4: Tests DECSET/DECRST (CSI ? Ps h/l) and standard SM/RM (CSI Ps h/l).
 // Verifies ACT_SET_MODE is produced with correct mode number and enable flag.
 // Unknown mode numbers produce ACT_NONE.
-//
-// Import: only csi_dispatch.npk (transitively provides vt_parser, actions, modes).
 
 use "../src/terminal/csi_dispatch.npk".*;
 use "../src/terminal/mode_dispatch.npk".*;
+use "../src/terminal/vt_parser.npk".*;
+use "../src/terminal/actions.npk".*;
 
 int64:STDOUT = 1i64;
 int64:pass_count = 0i64;

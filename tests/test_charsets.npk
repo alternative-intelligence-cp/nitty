@@ -2,12 +2,12 @@
 //
 // v0.2.4: Tests ESC ( B (G0←ASCII), ESC ( 0 (G0←DEC Drawing), etc.
 // Tests SI/SO invocation, and the DEC Drawing character translation map.
-//
-// Import: only csi_dispatch.npk (transitively provides everything else).
 
 use "../src/terminal/csi_dispatch.npk".*;
 use "../src/terminal/mode_dispatch.npk".*;
 use "../src/terminal/modes.npk".*;
+use "../src/terminal/vt_parser.npk".*;
+use "../src/terminal/actions.npk".*;
 
 int64:STDOUT = 1i64;
 int64:pass_count = 0i64;

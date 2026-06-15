@@ -3,14 +3,10 @@
 // v0.2.3: Tests the OSC dispatcher for window titles, hyperlinks,
 // clipboard, color operations, and PM/APC handling.
 // DCS tests are in test_dcs_dispatch.npk.
-//
-// Import chain (transitive):
-//   osc_dispatch.npk → escape_types.npk, actions.npk, vt_parser.npk
-//
-// Do NOT import modules transitively provided by osc_dispatch here —
-// double imports cause identifier collision.
 
 use "../src/terminal/osc_dispatch.npk".*;
+use "../src/terminal/vt_parser.npk".*;
+use "../src/terminal/actions.npk".*;
 
 int64:STDOUT = 1i64;
 int64:pass_count = 0i64;
