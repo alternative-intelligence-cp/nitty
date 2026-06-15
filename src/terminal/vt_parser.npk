@@ -1,8 +1,10 @@
 // src/terminal/vt_parser.npk — VT100/xterm escape sequence parser
 //
+// v0.2.3: Added emit_dcs() and emit_pm_apc() emitters;
+// DCS passthrough and PM/APC string states now emit events on ST.
 // v0.2.0: 14-state machine following Paul Flo Williams' vt100.net
 // DEC ANSI parser reference. Processes raw PTY bytes one at a time
-// and emits structured events (Print, Execute, CSI, ESC, OSC, DCS).
+// and emits structured events (Print, Execute, CSI, ESC, OSC, DCS, PM_APC).
 //
 // Design: Module-level state (single parser instance). Each call to
 // parser_feed_byte() processes one byte and may emit one event, which
@@ -51,6 +53,7 @@ int64:E_CSI     = 3i64;
 int64:E_ESC     = 4i64;
 int64:E_OSC     = 5i64;
 int64:E_DCS     = 6i64;
+int64:E_PM_APC  = 7i64;
 
 int64:LIM_PARAMS  = 16i64;
 int64:LIM_VALUE   = 65535i64;
@@ -165,6 +168,18 @@ func:emit_esc = NIL(int64:final_byte) {
 func:emit_osc = NIL() {
     p_event_type  = E_OSC;
     p_event_data1 = p_osc_cmd;
+    pass(NIL);
+};
+
+func:emit_dcs = NIL() {
+    p_event_type  = E_DCS;
+    p_event_data1 = p_csi_final;
+    pass(NIL);
+};
+
+func:emit_pm_apc = NIL() {
+    p_event_type  = E_PM_APC;
+    p_event_data1 = p_osc_data_len;
     pass(NIL);
 };
 
@@ -582,6 +597,13 @@ func:handle_dcs_passthrough = NIL(int64:byte) {
     pass(NIL);
 };
 
+func:handle_pm_apc_string = NIL(int64:byte) {
+    if (byte >= 0x20i64) {
+        drop(collect_osc_byte(byte));
+    }
+    pass(NIL);
+};
+
 // ═══════════════════════════════════════════════════════════════════════
 // Main Byte Dispatch
 // ═══════════════════════════════════════════════════════════════════════
@@ -633,11 +655,23 @@ pub func:parser_feed_byte = NIL(int64:byte) {
             if (p_state == S_OSC_STRING) {
                 drop(emit_osc());
             }
+            if (p_state == S_DCS_PASSTHROUGH) {
+                drop(emit_dcs());
+            }
+            if (p_state == S_SOS_PM_APC_STRING) {
+                drop(emit_pm_apc());
+            }
             p_state = S_GROUND;
             pass(NIL);
         } else {
             if (p_state == S_OSC_STRING) {
                 drop(emit_osc());
+            }
+            if (p_state == S_DCS_PASSTHROUGH) {
+                drop(emit_dcs());
+            }
+            if (p_state == S_SOS_PM_APC_STRING) {
+                drop(emit_pm_apc());
             }
             p_state = S_ESCAPE;
             p_intermediate_count = 0i64;
@@ -700,9 +734,7 @@ pub func:parser_feed_byte = NIL(int64:byte) {
         pass(NIL);
     }
     if (p_state == S_SOS_PM_APC_STRING) {
-        if (byte >= 0x20i64) {
-            drop(collect_osc_byte(byte));
-        }
+        drop(handle_pm_apc_string(byte));
         pass(NIL);
     }
 

@@ -1,0 +1,441 @@
+// tests/test_osc_dispatch.npk — OSC, PM/APC dispatch tests
+//
+// v0.2.3: Tests the OSC dispatcher for window titles, hyperlinks,
+// clipboard, color operations, and PM/APC handling.
+// DCS tests are in test_dcs_dispatch.npk.
+//
+// Import chain (transitive):
+//   osc_dispatch.npk → escape_types.npk, actions.npk, vt_parser.npk
+//
+// Do NOT import modules transitively provided by osc_dispatch here —
+// double imports cause identifier collision.
+
+use "../src/terminal/osc_dispatch.npk".*;
+
+int64:STDOUT = 1i64;
+int64:pass_count = 0i64;
+int64:fail_count = 0i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:assert_eq = NIL(string:name, int64:actual, int64:expected) {
+    if (actual == expected) {
+        pass_count = pass_count + 1i64;
+        drop(write_stdout("[PASS] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    } else {
+        fail_count = fail_count + 1i64;
+        drop(write_stdout("[FAIL] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    }
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:err) {
+    drop(write_stdout("FAILSAFE\n"));
+    exit 1;
+};
+
+// Feed bytes for OSC then call dispatch_osc with the parsed cmd
+func:run_osc = NIL() {
+    int64:cmd = raw parser_get_event_data();
+    drop(dispatch_osc(cmd));
+    pass(NIL);
+};
+
+// Grab one byte from osc_data at offset (for payload inspection)
+func:osc_byte = int64(int64:idx) {
+    pass(raw parser_get_osc_data_byte(idx));
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T01: Window and Icon Title (OSC 0, 1, 2)
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_titles = NIL() {
+    int64:SET_WIN  = raw ACT_SET_WINDOW_TITLE();
+    int64:SET_ICON = raw ACT_SET_ICON_TITLE();
+
+    // T01a: OSC 0 ; Title BEL → SET_WINDOW_TITLE (cmd=0)
+    // ESC ] 0 ; T i t l e BEL
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x54i64)); drop(parser_feed_byte(0x65i64));
+    drop(parser_feed_byte(0x73i64)); drop(parser_feed_byte(0x74i64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T01a OSC0 → SET_WINDOW_TITLE", raw osc_dispatch_get_action(), SET_WIN));
+    // Payload should start at offset 2 ("T" = 0x54)
+    int64:poff = raw osc_dispatch_get_payload_offset();
+    drop(assert_eq("T01b OSC0 payload[0]='T'", raw osc_byte(poff), 0x54i64));
+
+    // T01c: OSC 1 ; Icon BEL → SET_ICON_TITLE
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x49i64)); drop(parser_feed_byte(0x63i64));
+    drop(parser_feed_byte(0x6Fi64)); drop(parser_feed_byte(0x6Ei64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T01c OSC1 → SET_ICON_TITLE", raw osc_dispatch_get_action(), SET_ICON));
+
+    // T01d: OSC 2 ; Win ESC \ → SET_WINDOW_TITLE via ST
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x57i64)); drop(parser_feed_byte(0x69i64));
+    drop(parser_feed_byte(0x6Ei64));
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Ci64));
+    drop(run_osc());
+    drop(assert_eq("T01d OSC2 via ST → SET_WINDOW_TITLE", raw osc_dispatch_get_action(), SET_WIN));
+
+    // T01e: empty title (OSC 0 ; BEL)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T01e OSC0 empty → SET_WINDOW_TITLE", raw osc_dispatch_get_action(), SET_WIN));
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T02: Hyperlinks (OSC 8)
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_hyperlinks = NIL() {
+    int64:SET_HL = raw ACT_SET_HYPERLINK();
+    int64:END_HL = raw ACT_END_HYPERLINK();
+
+    // T02a: OSC 8 ; params ; uri BEL — open hyperlink
+    // ESC ] 8 ; ; h t t p s : // e x . c o m BEL
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x38i64)); drop(parser_feed_byte(0x3Bi64));
+    // params section (empty):
+    drop(parser_feed_byte(0x3Bi64));
+    // uri: "https://ex.com"
+    drop(parser_feed_byte(0x68i64)); drop(parser_feed_byte(0x74i64));
+    drop(parser_feed_byte(0x74i64)); drop(parser_feed_byte(0x70i64));
+    drop(parser_feed_byte(0x73i64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T02a OSC8 open → SET_HYPERLINK", raw osc_dispatch_get_action(), SET_HL));
+    // data1 = uri_start (offset of 'h' in 'https')
+    // uri bytes: at some offset. Let's just verify action is correct.
+
+    // T02b: OSC 8 ; ; BEL — close hyperlink (empty URI)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x38i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T02b OSC8 close → END_HYPERLINK", raw osc_dispatch_get_action(), END_HL));
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T03: Clipboard (OSC 52)
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_clipboard = NIL() {
+    int64:SET_CB   = raw ACT_SET_CLIPBOARD();
+    int64:QUERY_CB = raw ACT_QUERY_CLIPBOARD();
+
+    // ── DIRECT parse_int test BEFORE dispatch ──
+    // Setup OSC4;1;? data in parser buffer: [4, ;, 1, ;, ?]
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x34i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x3Fi64)); drop(parser_feed_byte(0x07i64));
+    // Parser strips '4;' prefix → osc_data = ['1', ';', '?'] len=3
+    drop(assert_eq("T03pre_len osc_data_len=3", raw parser_get_osc_data_len(), 3i64));
+    drop(assert_eq("T03pre_b0 byte[0]=0x31('1')", raw parser_get_osc_data_byte(0i64), 0x31i64));
+    drop(assert_eq("T03pre_b1 byte[1]=0x3B(';')", raw parser_get_osc_data_byte(1i64), 0x3Bi64));
+    drop(assert_eq("T03pre_b2 byte[2]=0x3F('?')", raw parser_get_osc_data_byte(2i64), 0x3Fi64));
+    // osc_parse_int(0): byte[0]='1', byte[1]=';' → result=1, next=1
+    drop(osc_parse_int(0i64));
+    drop(assert_eq("T03pre_a parse_int(0)=1", raw osc_get_parse_int_result(), 1i64));
+    drop(assert_eq("T03pre_b parse_next(0)=1", raw osc_get_parse_int_next(), 1i64));
+    // ──────────────────────────────────────────
+
+
+
+    // T03a: OSC 52 ; c ; ? BEL — query clipboard
+    // ESC ] 5 2 ; c ; ?
+
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x35i64)); drop(parser_feed_byte(0x32i64));
+    drop(parser_feed_byte(0x3Bi64));
+    // selection = 'c'
+    drop(parser_feed_byte(0x63i64));
+    drop(parser_feed_byte(0x3Bi64));
+    // data = '?'
+    drop(parser_feed_byte(0x3Fi64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T03a OSC52 query → QUERY_CLIPBOARD", raw osc_dispatch_get_action(), QUERY_CB));
+    // data1 = selection byte ('c' = 0x63 = 99)
+    drop(assert_eq("T03b OSC52 sel='c'(=99)", raw osc_dispatch_get_data1(), 99i64));
+
+    // T03b: OSC 52 ; p ; SGVsbG8= BEL — set clipboard
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x35i64)); drop(parser_feed_byte(0x32i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x70i64));  // 'p'
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x53i64)); drop(parser_feed_byte(0x47i64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T03c OSC52 set → SET_CLIPBOARD", raw osc_dispatch_get_action(), SET_CB));
+    drop(assert_eq("T03d OSC52 sel='p'(=112)", raw osc_dispatch_get_data1(), 112i64));
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T04: Palette Color (OSC 4)
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_palette_osc = NIL() {
+    int64:SET_PAL   = raw ACT_SET_PALETTE_COLOR();
+    int64:QUERY_PAL = raw ACT_QUERY_PALETTE_COLOR();
+
+    // T04a: OSC 4 ; 1 ; ? BEL — query palette color 1
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x34i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x3Fi64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T04a OSC4;1;? → QUERY_PALETTE", raw osc_dispatch_get_action(), QUERY_PAL));
+    drop(assert_eq("T04b index=1", raw osc_dispatch_get_data1(), 1i64));
+    // Diagnostics: data = ['1',';','?'], parse starts at 0 → result=1, next=1
+    drop(assert_eq("T04b_d parse_int_result", raw osc_get_parse_int_result(), 1i64));
+    drop(assert_eq("T04b_e parse_int_next", raw osc_get_parse_int_next(), 1i64));
+
+
+
+    // T04b: OSC 4 ; 7 ; rgb:ff/00/00 BEL — set color 7
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x34i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x37i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x72i64)); drop(parser_feed_byte(0x67i64)); drop(parser_feed_byte(0x62i64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T04c OSC4;7;rgb → SET_PALETTE", raw osc_dispatch_get_action(), SET_PAL));
+    drop(assert_eq("T04d index=7", raw osc_dispatch_get_data1(), 7i64));
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T05: FG/BG/Cursor Color (OSC 10, 11, 12)
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_fgbg_colors = NIL() {
+    // T05a: OSC 10 ; ? BEL — query fg color
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x30i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x3Fi64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T05a OSC10;? → QUERY_FG_COLOR", raw osc_dispatch_get_action(), raw ACT_QUERY_FG_COLOR()));
+
+    // T05b: OSC 11 ; ? BEL — query bg color
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x31i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x3Fi64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T05b OSC11;? → QUERY_BG_COLOR", raw osc_dispatch_get_action(), raw ACT_QUERY_BG_COLOR()));
+
+    // T05c: OSC 12 ; ? BEL — query cursor color
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x32i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x3Fi64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T05c OSC12;? → QUERY_CURSOR_COLOR", raw osc_dispatch_get_action(), raw ACT_QUERY_CURSOR_COLOR()));
+
+    // T05d: OSC 10 ; #ffffff BEL — set fg color
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x30i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x23i64)); drop(parser_feed_byte(0x66i64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T05d OSC10;# → SET_FG_COLOR", raw osc_dispatch_get_action(), raw ACT_SET_FG_COLOR()));
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T06: Color Resets (OSC 104, 110, 111, 112)
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_color_resets = NIL() {
+    // T06a: OSC 104 BEL (no index) — reset all palette colors
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x34i64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T06a OSC104 → RESET_PALETTE", raw osc_dispatch_get_action(), raw ACT_RESET_PALETTE_COLOR()));
+    drop(assert_eq("T06b OSC104 all: index=-1", raw osc_dispatch_get_data1(), -1i64));
+
+    // T06c: OSC 104 ; 5 BEL — reset palette color 5
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x30i64)); drop(parser_feed_byte(0x34i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x35i64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T06c OSC104;5 → RESET_PALETTE", raw osc_dispatch_get_action(), raw ACT_RESET_PALETTE_COLOR()));
+    drop(assert_eq("T06d OSC104;5 index=5", raw osc_dispatch_get_data1(), 5i64));
+
+    // T06e: OSC 110 BEL — reset fg
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x30i64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T06e OSC110 → RESET_FG_COLOR", raw osc_dispatch_get_action(), raw ACT_RESET_FG_COLOR()));
+
+    // T06f: OSC 111 BEL — reset bg
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x31i64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T06f OSC111 → RESET_BG_COLOR", raw osc_dispatch_get_action(), raw ACT_RESET_BG_COLOR()));
+
+    // T06g: OSC 112 BEL — reset cursor color
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x31i64)); drop(parser_feed_byte(0x32i64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T06g OSC112 → RESET_CURSOR_COLOR", raw osc_dispatch_get_action(), raw ACT_RESET_CURSOR_COLOR()));
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T07: Unknown OSC — should emit IGNORED
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_unknown_osc = NIL() {
+    // T07: OSC 999 ; data BEL — unknown → IGNORED
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x39i64)); drop(parser_feed_byte(0x39i64)); drop(parser_feed_byte(0x39i64));
+    drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x61i64)); drop(parser_feed_byte(0x62i64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T07 OSC999 → IGNORED", raw osc_dispatch_get_action(), raw ACT_IGNORED()));
+
+    pass(NIL);
+};
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// T09: PM/APC — should emit EVT_PM_APC (parser level) and be ignored
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_pm_apc = NIL() {
+    // T09a: PM string — ESC ^ data ESC \
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Ei64));
+    drop(parser_feed_byte(0x64i64)); drop(parser_feed_byte(0x61i64)); drop(parser_feed_byte(0x74i64));
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Ci64));
+    int64:pm_evt = raw parser_get_event_type();
+    int64:PM_APC = 7i64;
+    drop(assert_eq("T09a PM → EVT_PM_APC=7", pm_evt, PM_APC));
+
+    // T09b: APC string — ESC _ data ESC \
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Fi64));
+    drop(parser_feed_byte(0x78i64)); drop(parser_feed_byte(0x79i64));
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Ci64));
+    int64:apc_evt = raw parser_get_event_type();
+    drop(assert_eq("T09b APC → EVT_PM_APC=7", apc_evt, PM_APC));
+
+    // T09c: Data is accessible via osc buffer
+    int64:apc_len = raw parser_get_osc_data_len();
+    drop(assert_eq("T09c APC data len=2", apc_len, 2i64));
+    drop(assert_eq("T09d APC data[0]='x'", raw parser_get_osc_data_byte(0i64), 0x78i64));
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T10: OSC with both BEL and ST terminators
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_terminators = NIL() {
+    int64:SET_WIN = raw ACT_SET_WINDOW_TITLE();
+
+    // T10a: BEL terminator (OSC 2 ; Foo BEL)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x46i64)); drop(parser_feed_byte(0x6Fi64)); drop(parser_feed_byte(0x6Fi64));
+    drop(parser_feed_byte(0x07i64));
+    drop(run_osc());
+    drop(assert_eq("T10a BEL terminator OK", raw osc_dispatch_get_action(), SET_WIN));
+
+    // T10b: ST terminator (OSC 2 ; Bar ESC \)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Di64));
+    drop(parser_feed_byte(0x32i64)); drop(parser_feed_byte(0x3Bi64));
+    drop(parser_feed_byte(0x42i64)); drop(parser_feed_byte(0x61i64)); drop(parser_feed_byte(0x72i64));
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Ci64));
+    drop(run_osc());
+    drop(assert_eq("T10b ST terminator OK", raw osc_dispatch_get_action(), SET_WIN));
+
+    pass(NIL);
+};
+
+func:main = int32() {
+    drop(write_stdout("=== OSC Dispatch Tests ===\n"));
+    drop(test_titles());
+    drop(test_hyperlinks());
+    drop(test_clipboard());
+    drop(test_palette_osc());
+    drop(test_fgbg_colors());
+    drop(test_color_resets());
+    drop(test_unknown_osc());
+    drop(test_pm_apc());
+    drop(test_terminators());
+    if (fail_count == 0i64) {
+        drop(write_stdout("All OSC dispatch tests passed.\n"));
+        exit 0;
+    }
+    drop(write_stdout("SOME OSC DISPATCH TESTS FAILED.\n"));
+    exit 1;
+};

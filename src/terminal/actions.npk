@@ -1,11 +1,15 @@
 // src/terminal/actions.npk — Terminal action type definitions
 //
-// v0.2.1: Defines the TerminalAction type system produced by CSI/ESC
-// dispatch. Each action represents one semantic terminal operation.
+// v0.2.3: Adds OSC (window title, hyperlink, clipboard, color), DCS,
+// PM, and APC action types to the v0.2.1 CSI/ESC set.
 //
 // Design: Actions use integer type tags + up to 2 data fields.
 // This avoids the need for a generic List<T> and allows the action
 // to be queried via the dispatch API after each dispatch call.
+//
+// String-carrying actions (SetWindowTitle, etc.) store their payload
+// in the parser's OSC data buffer (parser_get_osc_data_byte/len).
+// The caller reads string data from there after dispatch.
 //
 // The dispatch module stores the last action in module-level state.
 // Callers query it via dispatch_get_action_*() functions.
@@ -61,6 +65,39 @@ pub func:ACT_NEXT_LINE           = int64() { pass(28i64); };  // ESC E: CR + LF
 // SGR attribute actions
 pub func:ACT_SET_ATTRS           = int64() { pass(29i64); };  // SGR changed attributes
 pub func:ACT_RESET_ATTRS         = int64() { pass(30i64); };  // SGR 0 reset
+
+// OSC window/icon title actions (string in osc_data buffer)
+pub func:ACT_SET_WINDOW_TITLE    = int64() { pass(31i64); };  // OSC 0/2: set window title
+pub func:ACT_SET_ICON_TITLE      = int64() { pass(32i64); };  // OSC 0/1: set icon title
+
+// OSC hyperlink (OSC 8): data2=id_start,id_len in osc_data; data1=uri_start in osc_data
+pub func:ACT_SET_HYPERLINK       = int64() { pass(33i64); };  // OSC 8 open
+pub func:ACT_END_HYPERLINK       = int64() { pass(34i64); };  // OSC 8 close (empty uri)
+
+// OSC clipboard (OSC 52): data1=selection_byte; string in osc_data
+pub func:ACT_SET_CLIPBOARD       = int64() { pass(35i64); };  // OSC 52 set
+pub func:ACT_QUERY_CLIPBOARD     = int64() { pass(36i64); };  // OSC 52 query
+
+// OSC color operations (OSC 4/10/11/12/104/110/111/112)
+pub func:ACT_SET_PALETTE_COLOR   = int64() { pass(37i64); };  // OSC 4: data1=index; spec in osc_data
+pub func:ACT_QUERY_PALETTE_COLOR = int64() { pass(38i64); };  // OSC 4;?: data1=index
+pub func:ACT_SET_FG_COLOR        = int64() { pass(39i64); };  // OSC 10: spec in osc_data
+pub func:ACT_SET_BG_COLOR        = int64() { pass(40i64); };  // OSC 11: spec in osc_data
+pub func:ACT_SET_CURSOR_COLOR    = int64() { pass(41i64); };  // OSC 12: spec in osc_data
+pub func:ACT_QUERY_FG_COLOR      = int64() { pass(42i64); };  // OSC 10;?
+pub func:ACT_QUERY_BG_COLOR      = int64() { pass(43i64); };  // OSC 11;?
+pub func:ACT_QUERY_CURSOR_COLOR  = int64() { pass(44i64); };  // OSC 12;?
+pub func:ACT_RESET_PALETTE_COLOR = int64() { pass(45i64); };  // OSC 104: data1=index (-1=all)
+pub func:ACT_RESET_FG_COLOR      = int64() { pass(46i64); };  // OSC 110
+pub func:ACT_RESET_BG_COLOR      = int64() { pass(47i64); };  // OSC 111
+pub func:ACT_RESET_CURSOR_COLOR  = int64() { pass(48i64); };  // OSC 112
+
+// DCS (Device Control String) — params via CSI API; data in osc buffer
+pub func:ACT_DCS_RESPONSE        = int64() { pass(49i64); };  // DECRQSS and similar
+pub func:ACT_DCS_IGNORED         = int64() { pass(50i64); };  // Unrecognized DCS
+
+// PM / APC — string data consumed silently
+pub func:ACT_IGNORED             = int64() { pass(51i64); };  // PM, APC, unrecognized OSC
 
 // ═══════════════════════════════════════════════════════════════════════
 // Erase Mode Constants

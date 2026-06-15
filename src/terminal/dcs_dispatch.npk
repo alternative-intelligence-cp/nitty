@@ -1,0 +1,92 @@
+// src/terminal/dcs_dispatch.npk — DCS sequence dispatcher
+//
+// v0.2.3: Dispatches Device Control String (DCS) sequences.
+// DCS format: ESC P Pn $ q Pt ST  (DECRQSS example)
+//
+// When the parser emits EVT_DCS:
+//   - event_data = final byte (p_csi_final)
+//   - CSI params accessible via parser_get_csi_param()
+//   - Intermediates via parser_get_intermediate()
+//   - Passthrough data in osc buffer via parser_get_osc_data_byte()
+//
+// Currently supported:
+//   - DECRQSS (DCS $ q Pt ST): Request Status String
+//     Used to query current terminal settings. Emit ACT_DCS_RESPONSE.
+//   - Sixel graphics (DCS q ...): Recognized but ignored (future work).
+//   - DECUDK (DCS ; ; | ...): Recognized but ignored.
+//   - All others: emit ACT_DCS_IGNORED.
+//
+// Reference:
+//   https://vt100.net/docs/vt510-rm/DECRQSS.html
+//   https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h3-Device-Control-functions
+
+use "escape_types.npk".*;
+use "actions.npk".*;
+use "vt_parser.npk".*;
+
+func:failsafe = int32(tbb32:err) { exit 1; };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Dispatch Output State
+// ═══════════════════════════════════════════════════════════════════════
+
+int64:dcs_action = 0i64;
+int64:dcs_data1  = 0i64;
+int64:dcs_data2  = 0i64;
+
+func:set_dcs_action = NIL(int64:act, int64:d1, int64:d2) {
+    dcs_action = act;
+    dcs_data1  = d1;
+    dcs_data2  = d2;
+    pass(NIL);
+};
+
+pub func:dcs_dispatch_get_action = int64() { pass(dcs_action); };
+pub func:dcs_dispatch_get_data1  = int64() { pass(dcs_data1); };
+pub func:dcs_dispatch_get_data2  = int64() { pass(dcs_data2); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Main DCS Dispatch Entry Point
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Called when EVT_DCS fires.
+//   final_byte: the DCS final byte (from parser_get_event_data)
+//   inter_count: number of intermediate bytes
+//
+// DECRQSS: intermediates = ['$'] (0x24), final = 'q' (0x71)
+// Sixel:   intermediates = [],    final = 'q' (0x71)
+// DECUDK:  intermediates = [],    final = '|' (0x7C)
+
+pub func:dispatch_dcs = NIL(int64:final_byte, int64:inter_count) {
+    // DECRQSS: $ q
+    if (inter_count >= 1i64) {
+        int64:inter0 = raw parser_get_intermediate(0i64);
+        if (inter0 == 0x24i64) {
+            if (final_byte == 0x71i64) {
+                // DECRQSS — DCS $ q Pt ST
+                // data1 = data length; data in osc buffer
+                drop(set_dcs_action(raw ACT_DCS_RESPONSE(), raw parser_get_osc_data_len(), 0i64));
+                pass(NIL);
+            }
+        }
+    }
+
+    // Sixel graphics: no intermediates, final = 'q'
+    if (inter_count == 0i64) {
+        if (final_byte == 0x71i64) {
+            // Sixel — not yet supported, emit DCS_IGNORED
+            drop(set_dcs_action(raw ACT_DCS_IGNORED(), final_byte, 0i64));
+            pass(NIL);
+        }
+
+        // DECUDK: final = '|'
+        if (final_byte == 0x7Ci64) {
+            drop(set_dcs_action(raw ACT_DCS_IGNORED(), final_byte, 0i64));
+            pass(NIL);
+        }
+    }
+
+    // All other DCS sequences — silently ignore
+    drop(set_dcs_action(raw ACT_DCS_IGNORED(), final_byte, inter_count));
+    pass(NIL);
+};

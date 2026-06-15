@@ -1,0 +1,152 @@
+// tests/test_dcs_dispatch.npk — DCS sequence dispatch tests
+//
+// v0.2.3: Tests the DCS dispatcher for DECRQSS, sixel recognition,
+// DECUDK, and parser-level DCS event emission.
+//
+// Import chain (transitive):
+//   dcs_dispatch.npk → escape_types.npk, actions.npk, vt_parser.npk
+//
+// Do NOT import modules transitively provided by dcs_dispatch here —
+// double imports cause identifier collision.
+
+use "../src/terminal/dcs_dispatch.npk".*;
+
+int64:STDOUT = 1i64;
+int64:pass_count = 0i64;
+int64:fail_count = 0i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:assert_eq = NIL(string:name, int64:actual, int64:expected) {
+    if (actual == expected) {
+        pass_count = pass_count + 1i64;
+        drop(write_stdout("[PASS] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    } else {
+        fail_count = fail_count + 1i64;
+        drop(write_stdout("[FAIL] "));
+        drop(write_stdout(name));
+        drop(write_stdout("\n"));
+    }
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:err) {
+    drop(write_stdout("FAILSAFE\n"));
+    exit 1;
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T01: DCS — DECRQSS
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_decrqss = NIL() {
+    // T01a: DCS $ q m ESC \ — DECRQSS for SGR
+    // ESC P $ q m ESC \
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x50i64));
+    drop(parser_feed_byte(0x24i64)); drop(parser_feed_byte(0x71i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Ci64));
+    int64:evt = raw parser_get_event_type();
+    drop(assert_eq("T01a DCS → EVT_DCS=6", evt, 6i64));
+    int64:final = raw parser_get_event_data();
+    drop(assert_eq("T01b DCS final='q'=0x71", final, 0x71i64));
+    int64:ic = raw parser_get_intermediate_count();
+    drop(assert_eq("T01c DCS intermediates=1", ic, 1i64));
+    int64:inter0 = raw parser_get_intermediate(0i64);
+    drop(assert_eq("T01d DCS inter[0]='$'=0x24", inter0, 0x24i64));
+    drop(dispatch_dcs(final, ic));
+    drop(assert_eq("T01e DECRQSS → DCS_RESPONSE", raw dcs_dispatch_get_action(), raw ACT_DCS_RESPONSE()));
+    // data1 = length of passthrough data (1 byte: 'm' = 0x6D)
+    drop(assert_eq("T01f DECRQSS data len=1", raw dcs_dispatch_get_data1(), 1i64));
+
+    // T01g: DECRQSS for DECSTBM (DCS $ q r ESC \)
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x50i64));
+    drop(parser_feed_byte(0x24i64)); drop(parser_feed_byte(0x71i64));
+    drop(parser_feed_byte(0x72i64));
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Ci64));
+    int64:final2 = raw parser_get_event_data();
+    int64:ic2 = raw parser_get_intermediate_count();
+    drop(dispatch_dcs(final2, ic2));
+    drop(assert_eq("T01g DECRQSS(r) → DCS_RESPONSE", raw dcs_dispatch_get_action(), raw ACT_DCS_RESPONSE()));
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T02: DCS — Sixel and DECUDK
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_ignored_dcs = NIL() {
+    // T02a: DCS q A ESC \ — Sixel → DCS_IGNORED
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x50i64));
+    drop(parser_feed_byte(0x71i64));
+    drop(parser_feed_byte(0x41i64));
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Ci64));
+    int64:ic2 = raw parser_get_intermediate_count();
+    int64:fb2 = raw parser_get_event_data();
+    drop(dispatch_dcs(fb2, ic2));
+    drop(assert_eq("T02a Sixel → DCS_IGNORED", raw dcs_dispatch_get_action(), raw ACT_DCS_IGNORED()));
+
+    // T02b: DCS | ESC \ — DECUDK → DCS_IGNORED
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x50i64));
+    drop(parser_feed_byte(0x7Ci64));
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Ci64));
+    int64:ic3 = raw parser_get_intermediate_count();
+    int64:fb3 = raw parser_get_event_data();
+    drop(dispatch_dcs(fb3, ic3));
+    drop(assert_eq("T02b DECUDK → DCS_IGNORED", raw dcs_dispatch_get_action(), raw ACT_DCS_IGNORED()));
+
+    // T02c: unknown DCS → DCS_IGNORED
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x50i64));
+    drop(parser_feed_byte(0x78i64));
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Ci64));
+    int64:ic4 = raw parser_get_intermediate_count();
+    int64:fb4 = raw parser_get_event_data();
+    drop(dispatch_dcs(fb4, ic4));
+    drop(assert_eq("T02c unknown DCS → DCS_IGNORED", raw dcs_dispatch_get_action(), raw ACT_DCS_IGNORED()));
+
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// T03: DCS passthrough data accessible via osc buffer
+// ═══════════════════════════════════════════════════════════════════════
+
+func:test_dcs_data = NIL() {
+    // DCS $ q SGR ESC \ — passthrough data = 'm'
+    drop(parser_init());
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x50i64));
+    drop(parser_feed_byte(0x24i64)); drop(parser_feed_byte(0x71i64));
+    drop(parser_feed_byte(0x6Di64));
+    drop(parser_feed_byte(0x1Bi64)); drop(parser_feed_byte(0x5Ci64));
+    // osc_data should contain the passthrough byte 'm' = 0x6D
+    int64:dlen = raw parser_get_osc_data_len();
+    drop(assert_eq("T03a DCS data len=1", dlen, 1i64));
+    drop(assert_eq("T03b DCS data[0]='m'", raw parser_get_osc_data_byte(0i64), 0x6Di64));
+
+    pass(NIL);
+};
+
+func:main = int32() {
+    drop(write_stdout("=== DCS Dispatch Tests ===\n"));
+    drop(test_decrqss());
+    drop(test_ignored_dcs());
+    drop(test_dcs_data());
+    if (fail_count == 0i64) {
+        drop(write_stdout("All DCS dispatch tests passed.\n"));
+        exit 0;
+    }
+    drop(write_stdout("SOME DCS DISPATCH TESTS FAILED.\n"));
+    exit 1;
+};

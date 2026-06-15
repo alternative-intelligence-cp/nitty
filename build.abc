@@ -172,3 +172,19 @@ deps = []
 flags = []
 link_libraries = []
 link_paths = []
+
+[target.test_osc_dispatch]
+type = "binary"
+sources = ["tests/test_osc_dispatch.npk"]
+deps = []
+flags = []
+link_libraries = []
+link_paths = []
+
+[target.test_dcs_dispatch]
+type = "binary"
+sources = ["tests/test_dcs_dispatch.npk"]
+deps = []
+flags = []
+link_libraries = []
+link_paths = []

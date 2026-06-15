@@ -1,5 +1,6 @@
 // src/terminal/escape_types.npk — VT100/xterm escape sequence constants
 //
+// v0.2.3: Adds EVT_PM_APC event type for PM/APC sequence completion.
 // v0.2.0: Defines all control codes, parser states, and event type tags
 // used by the VT parser state machine.
 //
@@ -100,6 +101,7 @@ pub func:EVT_CSI     = int64() { pass(3i64); };
 pub func:EVT_ESC     = int64() { pass(4i64); };
 pub func:EVT_OSC     = int64() { pass(5i64); };
 pub func:EVT_DCS     = int64() { pass(6i64); };
+pub func:EVT_PM_APC  = int64() { pass(7i64); };  // PM/APC string completed (data in osc buffer)
 
 // ═══════════════════════════════════════════════════════════════════════
 // Parser Limits

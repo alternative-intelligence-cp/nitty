@@ -1,0 +1,367 @@
+// src/terminal/osc_dispatch.npk — OSC sequence dispatcher
+//
+// v0.2.3: Dispatches Operating System Command (OSC) sequences.
+// OSC format: ESC ] Ps ; Pt ST  (or BEL terminator)
+//   Ps = numeric command (already parsed by vt_parser into p_osc_cmd)
+//   Pt = data string (in p_osc_data[] starting after the ';' separator)
+//
+// The parser emits EVT_OSC with event_data = osc_cmd.
+// The payload is accessible via parser_get_osc_data_byte(i) /
+// parser_get_osc_data_len(). The osc_data buffer contains the raw
+// bytes AFTER the 'Ps;' prefix (i.e., only the Pt payload).
+//
+// The parser's collect_osc_byte() separates the stream:
+//   - Digits before ';' are parsed into p_osc_cmd (the Ps integer).
+//   - The ';' separator is consumed.
+//   - Everything after ';' goes into p_osc_data[] as the Pt payload.
+//
+// So osc_data[] already IS the Pt payload. Offset 0 is the first
+// payload byte, NOT a cmd digit.
+//
+// Reference: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+//            §Operating System Commands
+
+
+use "escape_types.npk".*;
+use "actions.npk".*;
+use "vt_parser.npk".*;
+
+func:failsafe = int32(tbb32:err) { exit 1; };
+
+// ═══════════════════════════════════════════════════════════════════════
+// Internal Helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+// The parser's collect_osc_byte() already strips the 'Ps;' prefix:
+// digits go into p_osc_cmd, the ';' separator is consumed, and only
+// bytes AFTER the separator are stored in p_osc_data[]. So osc_data[]
+// already IS the Pt payload — no offset needed.
+func:osc_payload_start = int64() {
+    pass(0i64);
+};
+
+
+// Compare a byte in osc_data with a literal (single char check)
+func:osc_byte_eq = int64(int64:offset, int64:expected) {
+    int64:len = raw parser_get_osc_data_len();
+    if (offset >= len) { pass(0i64); }
+    int64:b = raw parser_get_osc_data_byte(offset);
+    if (b == expected) { pass(1i64); }
+    pass(0i64);
+};
+
+// Returns 1 if the byte at offset is '?'
+func:payload_is_query = int64(int64:start) {
+    int64:len = raw parser_get_osc_data_len();
+    // A query is: payload = "?" only (length = start + 1)
+    if (len == start + 1i64) {
+        pass(raw osc_byte_eq(start, 0x3Fi64));
+    }
+    pass(0i64);
+};
+
+// Integer parser — split into two helper functions to avoid Nitpick's
+// variable-reassignment restrictions:
+//
+// Pattern rules (empirically determined):
+//   - local_var = expr (no raw) at while-body level → TRUE REASSIGNMENT ✓
+//   - local_var = expr at function top level → TRUE REASSIGNMENT ✓
+//   - var = raw func() anywhere → ALWAYS new local declaration (shadow) ✗
+//   - module_var = local_var at function top level → TRUE REASSIGNMENT ✓
+//   - pass(expr) inside if block → works ✓
+//
+// Solution: accumulate with pure arithmetic at while-body level,
+//           detect stop position via pass() inside if,
+//           store results via module_var = local_var at function top level.
+
+int64:parse_int_result = 0i64;
+int64:parse_int_next   = 0i64;
+
+// is_not_digit: 1 if b is NOT an ASCII digit, 0 if it is.
+func:is_not_digit = int64(int64:b) {
+    if (b >= 0x30i64) {
+        if (b <= 0x39i64) { pass(0i64); }
+    }
+    pass(1i64);
+};
+
+// Module-level state for integer parsing.
+// ALL mutable state used inside if blocks must be module-level
+// to avoid Nitpick's local-variable shadowing in if blocks.
+int64:_pi_val      = 0i64;   // accumulated integer value
+int64:_pi_done     = 0i64;   // 1 when non-digit found
+int64:_pi_stop_pos = 0i64;   // index of first non-digit
+
+// Helper: accumulate one digit into _pi_val (module-level).
+func:_pi_accum = NIL(int64:b) {
+    _pi_val = _pi_val * 10i64 + (b - 0x30i64);
+    pass(NIL);
+};
+
+// Helper: mark the stop position (only if not already marked).
+func:_pi_mark_stop = NIL(int64:pos) {
+    if (_pi_done == 0i64) {
+        _pi_stop_pos = pos;
+        _pi_done = 1i64;
+    }
+    pass(NIL);
+};
+
+// osc_parse_int: parse integer at osc_data[start..], store results
+// in parse_int_result (the value) and parse_int_next (first non-digit index).
+// Every if block contains only a single drop(helper()) call — no nested ifs,
+// no local var mutation, no pass() inside if blocks.
+pub func:osc_parse_int = NIL(int64:start) {
+    int64:len = raw parser_get_osc_data_len();
+    int64:i = start;
+    _pi_val  = 0i64;
+    _pi_done = 0i64;
+    _pi_stop_pos = len;
+    while (i < len) {
+        int64:b = raw parser_get_osc_data_byte(i);
+        if (raw is_not_digit(b) != 0i64) {
+            drop(_pi_mark_stop(i));
+        }
+        if (_pi_done == 0i64) {
+            drop(_pi_accum(b));
+        }
+        i = i + 1i64;
+    }
+    parse_int_result = _pi_val;
+    parse_int_next   = _pi_stop_pos;
+    pass(NIL);
+};
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// Dispatch Output State
+// ═══════════════════════════════════════════════════════════════════════
+
+//
+// The dispatch_osc function sets these module-level fields and callers
+// read them via osc_dispatch_get_*() functions.
+
+int64:osc_action       = 0i64;   // ACT_* constant
+int64:osc_data1        = 0i64;   // action-specific data1
+int64:osc_data2        = 0i64;   // action-specific data2
+int64:osc_payload_off  = 0i64;   // byte offset where Pt payload starts in osc_data
+
+func:set_osc_action = NIL(int64:act, int64:d1, int64:d2, int64:poff) {
+    osc_action      = act;
+    osc_data1       = d1;
+    osc_data2       = d2;
+    osc_payload_off = poff;
+    pass(NIL);
+};
+
+pub func:osc_dispatch_get_action  = int64() { pass(osc_action); };
+pub func:osc_dispatch_get_data1   = int64() { pass(osc_data1); };
+pub func:osc_dispatch_get_data2   = int64() { pass(osc_data2); };
+// Payload byte offset for string-carrying actions
+pub func:osc_dispatch_get_payload_offset = int64() { pass(osc_payload_off); };
+
+// ═══════════════════════════════════════════════════════════════════════
+// OSC Title Handlers (OSC 0, 1, 2)
+// ═══════════════════════════════════════════════════════════════════════
+
+func:dispatch_osc_title = NIL(int64:cmd, int64:payload_start) {
+    // OSC 0: set both window and icon title
+    // OSC 1: set icon title only
+    // OSC 2: set window title only
+    // We emit SET_WINDOW_TITLE for cmd=0 or cmd=2
+    // and SET_ICON_TITLE for cmd=0 or cmd=1
+    // For simplicity, emit the primary action; caller checks cmd if needed
+    if (cmd == 0i64) {
+        drop(set_osc_action(raw ACT_SET_WINDOW_TITLE(), cmd, 0i64, payload_start));
+        pass(NIL);
+    }
+    if (cmd == 1i64) {
+        drop(set_osc_action(raw ACT_SET_ICON_TITLE(), cmd, 0i64, payload_start));
+        pass(NIL);
+    }
+    drop(set_osc_action(raw ACT_SET_WINDOW_TITLE(), cmd, 0i64, payload_start));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// OSC Hyperlink Handler (OSC 8)
+// ═══════════════════════════════════════════════════════════════════════
+
+// find_next_semicolon_after: searches osc_data starting at from_idx for ';'
+// Returns index AFTER the found ';', or from_idx if no ';' found.
+// Uses pass(value) directly inside if — known to be safe in Nitpick.
+func:find_next_semicolon_after = int64(int64:from_idx) {
+    int64:len = raw parser_get_osc_data_len();
+    int64:fi = from_idx;
+    while (fi < len) {
+        int64:fb = raw parser_get_osc_data_byte(fi);
+        if (fb == 0x3Bi64) {
+            pass(fi + 1i64);   // Return immediately with (fi+1), no var assignment
+        }
+        fi = fi + 1i64;
+    }
+    pass(from_idx);  // No semicolon found; return from_idx
+};
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// Format: OSC 8 ; params ; uri ST
+// params and uri are separated by ';'
+// If uri is empty: close hyperlink
+// If uri is non-empty: open hyperlink (id= parsed from params if present)
+
+func:dispatch_osc_hyperlink = NIL(int64:payload_start) {
+    int64:len = raw parser_get_osc_data_len();
+    // Find the ';' after params (second ';' in OSC 8 ; params ; uri)
+    int64:uri_start = raw find_next_semicolon_after(payload_start);
+    // If uri_start == len: no second ';' found, treat URI as empty (= end hyperlink)
+    if (len == uri_start) {
+        drop(set_osc_action(raw ACT_END_HYPERLINK(), 0i64, 0i64, payload_start));
+        pass(NIL);
+    }
+    // Non-empty URI → open hyperlink; data1=uri_start, data2=params_start
+    drop(set_osc_action(raw ACT_SET_HYPERLINK(), uri_start, payload_start, payload_start));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// OSC Clipboard Handler (OSC 52)
+// ═══════════════════════════════════════════════════════════════════════
+// Format: OSC 52 ; selection ; data ST
+// selection = one or more of: c p s (clipboard, primary, secondary)
+// If data = "?": query
+// Else: set clipboard (data is base64-encoded)
+
+func:dispatch_osc_clipboard = NIL(int64:payload_start) {
+    // Read selection byte (first char of payload)
+    int64:sel = raw parser_get_osc_data_byte(payload_start);
+    // Find second ';' — search starting after the selection byte
+    int64:search_from = payload_start + 1i64;
+    int64:data_start = raw find_next_semicolon_after(search_from);
+    // Check if data = "?"
+    if (raw payload_is_query(data_start) != 0i64) {
+        drop(set_osc_action(raw ACT_QUERY_CLIPBOARD(), sel, data_start, payload_start));
+        pass(NIL);
+    }
+    drop(set_osc_action(raw ACT_SET_CLIPBOARD(), sel, data_start, payload_start));
+    pass(NIL);
+};
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// OSC Color Handler (OSC 4)
+// ═══════════════════════════════════════════════════════════════════════
+// Format: OSC 4 ; index ; spec ST
+// spec = "?" (query) or color spec
+
+func:dispatch_osc_palette = NIL(int64:payload_start) {
+    // Parse index, stop at ';'
+    drop(osc_parse_int(payload_start));
+    int64:spec_start = parse_int_next + 1i64;
+    int64:color_index = parse_int_result;
+    if (raw payload_is_query(spec_start) != 0i64) {
+        drop(set_osc_action(raw ACT_QUERY_PALETTE_COLOR(), color_index, spec_start, payload_start));
+        pass(NIL);
+    }
+    drop(set_osc_action(raw ACT_SET_PALETTE_COLOR(), color_index, spec_start, payload_start));
+    pass(NIL);
+};
+
+// Diagnostic accessor for parse_int_result (debug; remove when fixed)
+pub func:osc_get_parse_int_result = int64() { pass(parse_int_result); };
+pub func:osc_get_parse_int_next   = int64() { pass(parse_int_next); };
+
+
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// OSC Foreground/Background/Cursor Color (OSC 10/11/12)
+// ═══════════════════════════════════════════════════════════════════════
+
+func:dispatch_osc_fgbg = NIL(int64:cmd, int64:payload_start) {
+    if (raw payload_is_query(payload_start) != 0i64) {
+        if (cmd == 10i64) { drop(set_osc_action(raw ACT_QUERY_FG_COLOR(),     0i64, 0i64, payload_start)); pass(NIL); }
+        if (cmd == 11i64) { drop(set_osc_action(raw ACT_QUERY_BG_COLOR(),     0i64, 0i64, payload_start)); pass(NIL); }
+        drop(set_osc_action(raw ACT_QUERY_CURSOR_COLOR(), 0i64, 0i64, payload_start));
+        pass(NIL);
+    }
+    if (cmd == 10i64) { drop(set_osc_action(raw ACT_SET_FG_COLOR(),     0i64, 0i64, payload_start)); pass(NIL); }
+    if (cmd == 11i64) { drop(set_osc_action(raw ACT_SET_BG_COLOR(),     0i64, 0i64, payload_start)); pass(NIL); }
+    drop(set_osc_action(raw ACT_SET_CURSOR_COLOR(), 0i64, 0i64, payload_start));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// OSC Color Reset (OSC 104/110/111/112)
+// ═══════════════════════════════════════════════════════════════════════
+
+func:dispatch_osc_reset = NIL(int64:cmd, int64:payload_start) {
+    if (cmd == 104i64) {
+        // OSC 104 ; index ST — reset indexed color
+        // If no index provided (empty payload), reset all (-1)
+        int64:len = raw parser_get_osc_data_len();
+        if (len == payload_start) {
+            drop(set_osc_action(raw ACT_RESET_PALETTE_COLOR(), -1i64, 0i64, payload_start));
+            pass(NIL);
+        }
+        drop(osc_parse_int(payload_start));
+        drop(set_osc_action(raw ACT_RESET_PALETTE_COLOR(), parse_int_result, 0i64, payload_start));
+        pass(NIL);
+    }
+    if (cmd == 110i64) { drop(set_osc_action(raw ACT_RESET_FG_COLOR(),     0i64, 0i64, payload_start)); pass(NIL); }
+    if (cmd == 111i64) { drop(set_osc_action(raw ACT_RESET_BG_COLOR(),     0i64, 0i64, payload_start)); pass(NIL); }
+    drop(set_osc_action(raw ACT_RESET_CURSOR_COLOR(), 0i64, 0i64, payload_start));
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Main OSC Dispatch Entry Point
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:dispatch_osc = NIL(int64:cmd) {
+    int64:pstart = raw osc_payload_start();
+
+    // Window/icon title: OSC 0, 1, 2
+    if (cmd >= 0i64) {
+        if (cmd <= 2i64) {
+            drop(dispatch_osc_title(cmd, pstart));
+            pass(NIL);
+        }
+    }
+
+    // Hyperlink: OSC 8
+    if (cmd == 8i64) {
+        drop(dispatch_osc_hyperlink(pstart));
+        pass(NIL);
+    }
+
+    // Palette color: OSC 4
+    if (cmd == 4i64) {
+        drop(dispatch_osc_palette(pstart));
+        pass(NIL);
+    }
+
+    // Fg/Bg/Cursor color: OSC 10, 11, 12
+    if (cmd >= 10i64) {
+        if (cmd <= 12i64) {
+            drop(dispatch_osc_fgbg(cmd, pstart));
+            pass(NIL);
+        }
+    }
+
+    // Clipboard: OSC 52
+    if (cmd == 52i64) {
+        drop(dispatch_osc_clipboard(pstart));
+        pass(NIL);
+    }
+
+    // Reset colors: OSC 104/110/111/112
+    if (cmd == 104i64) { drop(dispatch_osc_reset(cmd, pstart)); pass(NIL); }
+    if (cmd == 110i64) { drop(dispatch_osc_reset(cmd, pstart)); pass(NIL); }
+    if (cmd == 111i64) { drop(dispatch_osc_reset(cmd, pstart)); pass(NIL); }
+    if (cmd == 112i64) { drop(dispatch_osc_reset(cmd, pstart)); pass(NIL); }
+
+    // Unknown OSC — silently ignore
+    drop(set_osc_action(raw ACT_IGNORED(), cmd, 0i64, pstart));
+    pass(NIL);
+};
