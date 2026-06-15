@@ -100,3 +100,11 @@ deps = ["pty_shim"]
 flags = []
 link_libraries = ["nitty_pty_shim", "util"]
 link_paths = [".nitpick_make/build"]
+
+[target.test_pty_io]
+type = "binary"
+sources = ["tests/test_pty_io.npk"]
+deps = ["pty_shim"]
+flags = []
+link_libraries = ["nitty_pty_shim", "util"]
+link_paths = [".nitpick_make/build"]

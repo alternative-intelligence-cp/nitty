@@ -1,0 +1,63 @@
+// src/terminal/pty_io.npk — PTY read/write operations
+//
+// v0.1.2: Non-blocking read/write for shell I/O.
+//
+// The C shim manages a 16KB internal read buffer.
+// Write operations handle partial writes and EAGAIN.
+//
+// Read flow:
+//   1. pty_io_read(master_fd)     → fills buffer, returns byte count
+//   2. pty_io_read_string(fd)     → read + convert to string
+//
+// Write flow:
+//   pty_io_write_string(fd, str)  → write a string
+//   pty_io_write_byte(fd, byte)   → write a single control char
+
+use "pty_ffi.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════
+// Read operations
+// ═══════════════════════════════════════════════════════════════════
+
+/// Non-blocking read from master fd into internal buffer.
+/// Returns bytes read (> 0), 0 for EOF, -2 for EAGAIN, -1 for error.
+pub func:pty_io_read = int64(int64:master_fd) {
+    int64:result = nitty_pty_read_buffered(master_fd);
+    pass(result);
+};
+
+/// Read from master fd and return as string.
+/// Returns empty string if no data, EAGAIN, or error.
+pub func:pty_io_read_string = string(int64:master_fd) {
+    int64:n = nitty_pty_read_buffered(master_fd);
+    if (n > 0i64) {
+        string:data = nitty_pty_read_buf_str();
+        pass(data);
+    }
+    pass("");
+};
+
+/// Get the number of bytes in the last read.
+pub func:pty_io_read_len = int64() {
+    int64:len = nitty_pty_read_buf_len();
+    pass(len);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Write operations
+// ═══════════════════════════════════════════════════════════════════
+
+/// Write a string to the master fd.
+/// Returns bytes written, or -1 on error.
+pub func:pty_io_write_string = int64(int64:master_fd, string:data) {
+    int64:result = nitty_pty_write_string(master_fd, data);
+    pass(result);
+};
+
+/// Write a single byte to the master fd.
+/// Useful for control characters (e.g., 0x03 for Ctrl+C).
+/// Returns 1 on success, -1 on error.
+pub func:pty_io_write_byte = int64(int64:master_fd, int64:byte_val) {
+    int64:result = nitty_pty_write_byte(master_fd, byte_val);
+    pass(result);
+};

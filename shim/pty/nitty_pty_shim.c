@@ -449,3 +449,102 @@ int64_t nitty_pty_kill(int64_t pid, int64_t sig)
 int64_t nitty_pty_SIGTERM(void) { return (int64_t)SIGTERM; }
 int64_t nitty_pty_SIGKILL(void) { return (int64_t)SIGKILL; }
 int64_t nitty_pty_SIGHUP(void)  { return (int64_t)SIGHUP;  }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * PTY I/O (v0.1.2)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Internal 16KB read buffer + 1 byte for null terminator */
+#define PTY_READ_BUF_SIZE 16384
+static char g_read_buf[PTY_READ_BUF_SIZE + 1];
+static int64_t g_read_buf_len = 0;
+
+int64_t nitty_pty_read_raw(int64_t fd, int64_t buf_ptr, int64_t max_len)
+{
+    char *buf = (char *)(uintptr_t)buf_ptr;
+    ssize_t n;
+
+    do {
+        n = read((int)fd, buf, (size_t)max_len);
+    } while (n < 0 && errno == EINTR);  /* Retry on signal interrupt */
+
+    if (n > 0) return (int64_t)n;
+    if (n == 0) return 0;  /* EOF */
+    if (errno == EAGAIN || errno == EWOULDBLOCK) return -2;  /* Would block */
+    return -1;  /* Real error */
+}
+
+int64_t nitty_pty_write_raw(int64_t fd, int64_t buf_ptr, int64_t len)
+{
+    const char *buf = (const char *)(uintptr_t)buf_ptr;
+    int64_t total = 0;
+
+    while (total < len) {
+        ssize_t n = write((int)fd, buf + total, (size_t)(len - total));
+        if (n < 0) {
+            if (errno == EINTR) continue;  /* Retry on signal */
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                /* Non-blocking: return what we've written so far */
+                if (total > 0) return total;
+                return -2;
+            }
+            fprintf(stderr, "PTY: write(%d) failed: %s\n",
+                    (int)fd, strerror(errno));
+            return -1;
+        }
+        total += (int64_t)n;
+    }
+    return total;
+}
+
+int64_t nitty_pty_write_string(int64_t fd, const char *str)
+{
+    if (!str) return -1;
+    size_t len = strlen(str);
+    return nitty_pty_write_raw(fd, (int64_t)(uintptr_t)str, (int64_t)len);
+}
+
+int64_t nitty_pty_read_buffered(int64_t fd)
+{
+    g_read_buf_len = 0;
+    int64_t n = nitty_pty_read_raw(fd, (int64_t)(uintptr_t)g_read_buf,
+                                    PTY_READ_BUF_SIZE);
+    if (n > 0) {
+        g_read_buf_len = n;
+        g_read_buf[n] = '\0';  /* null-terminate for str access */
+    }
+    return n;
+}
+
+int64_t nitty_pty_read_buf_ptr(void)
+{
+    return (int64_t)(uintptr_t)g_read_buf;
+}
+
+int64_t nitty_pty_read_buf_len(void)
+{
+    return g_read_buf_len;
+}
+
+const char *nitty_pty_read_buf_str(void)
+{
+    g_read_buf[g_read_buf_len] = '\0';
+    return g_read_buf;
+}
+
+int64_t nitty_pty_write_byte(int64_t fd, int64_t byte_val)
+{
+    char c = (char)(byte_val & 0xFF);
+    ssize_t n;
+    do {
+        n = write((int)fd, &c, 1);
+    } while (n < 0 && errno == EINTR);
+
+    if (n == 1) return 1;
+    if (n < 0) {
+        fprintf(stderr, "PTY: write_byte(%d, 0x%02X) failed: %s\n",
+                (int)fd, (int)(byte_val & 0xFF), strerror(errno));
+        return -1;
+    }
+    return -1;
+}

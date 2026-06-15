@@ -115,6 +115,53 @@ int64_t nitty_pty_SIGTERM(void);
 int64_t nitty_pty_SIGKILL(void);
 int64_t nitty_pty_SIGHUP(void);
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * PTY I/O (v0.1.2)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Non-blocking read from fd.
+ * Returns bytes read (> 0), 0 for EOF, -1 for error, -2 for EAGAIN.
+ */
+int64_t nitty_pty_read_raw(int64_t fd, int64_t buf_ptr, int64_t max_len);
+
+/**
+ * Write to fd. Handles partial writes by looping.
+ * Returns total bytes written, or -1 on error.
+ */
+int64_t nitty_pty_write_raw(int64_t fd, int64_t buf_ptr, int64_t len);
+
+/**
+ * Write a string to fd. Convenience wrapper.
+ * Returns bytes written, or -1 on error.
+ */
+int64_t nitty_pty_write_string(int64_t fd, const char *str);
+
+/**
+ * Read from fd into a static internal buffer (16KB).
+ * Returns bytes read, 0 for EOF, -2 for EAGAIN, -1 for error.
+ * Use nitty_pty_read_buf_ptr() and nitty_pty_read_buf_len() to access data.
+ */
+int64_t nitty_pty_read_buffered(int64_t fd);
+
+/** Get pointer to internal read buffer. */
+int64_t nitty_pty_read_buf_ptr(void);
+
+/** Get number of valid bytes in internal read buffer. */
+int64_t nitty_pty_read_buf_len(void);
+
+/**
+ * Get contents of read buffer as a null-terminated string.
+ * Returns pointer to buffer (null-terminated after read_buf_len bytes).
+ */
+const char *nitty_pty_read_buf_str(void);
+
+/**
+ * Write a single byte to fd (for control characters).
+ * Returns 1 on success, -1 on error.
+ */
+int64_t nitty_pty_write_byte(int64_t fd, int64_t byte_val);
+
 #ifdef __cplusplus
 }
 #endif

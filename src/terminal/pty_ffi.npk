@@ -65,4 +65,17 @@ extern "nitty_pty_shim" {
     func:nitty_pty_SIGTERM           = int64();
     func:nitty_pty_SIGKILL           = int64();
     func:nitty_pty_SIGHUP            = int64();
+
+    // ═══════════════════════════════════════════════════════════════════
+    // PTY I/O (v0.1.2)
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_pty_read_raw          = int64(int64:fd, int64:buf_ptr, int64:max_len);
+    func:nitty_pty_write_raw         = int64(int64:fd, int64:buf_ptr, int64:len);
+    func:nitty_pty_write_string      = int64(int64:fd, string:str);
+    func:nitty_pty_read_buffered     = int64(int64:fd);
+    func:nitty_pty_read_buf_ptr      = int64();
+    func:nitty_pty_read_buf_len      = int64();
+    func:nitty_pty_read_buf_str      = string();
+    func:nitty_pty_write_byte        = int64(int64:fd, int64:byte_val);
 }
