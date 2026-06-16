@@ -23,6 +23,8 @@
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/src/nitpick_ssh.npk".*;
 use "../../src/ssh/ssh_error.npk".*;
 use "../../src/ssh/ssh_known_hosts.npk".*;
+use "../../src/ssh/ssh_auth.npk".*;
+use "../../src/ssh/auth_dialog.npk".*;
 use "../../src/core/pane.npk".*;
 
 // ── Session State Constants ──────────────────────────────────────────────────
@@ -68,12 +70,10 @@ func:_ssh_recv_dispatch = int32(int64:session) {
 
 // Connect an SSH session and attach it to a pane slot.
 // pane_slot: existing pane slot (created by caller with pane_create)
-// host, port, user, password: SSH credentials
+// host, port, user: SSH credentials (password used only if pubkey/agent fail)
 // cols, rows: initial terminal dimensions
 //
 // Returns: 0 on success, negative error code on failure.
-// On success: pane_slot's type is set to PANE_TYPE_SSH,
-//             ssh_session and ssh_channel fields are populated.
 pub func:ssh_connect = int64(int64:pane_slot, string:host, int64:port, string:user, string:password, int64:cols, int64:rows) {
 
     g_ssh_error[pane_slot] = "";
@@ -209,43 +209,38 @@ pub func:ssh_connect = int64(int64:pane_slot, string:host, int64:port, string:us
 
     g_ssh_state[pane_slot] = 3i64; // SSH_SESS_AUTHENTICATING
 
-    // ── Step 12: Password authentication ─────────────────────────────────────
+    // ── Step 12: Multi-method Authentication (v0.8.2) ────────────────────────
+    // Auth chain: agent → pubkey (ed25519, rsa) → kbd-interactive → password
+    // GTK dialogs are shown synchronously when user input is required.
+
     drop(SSH_auth_init(session));
-    int64:auth_buf = raw SSH_auth_password(session, user, password);
-    int64:auth_sent = raw SSH_send_packet(session, auth_buf);
-    drop(raw SSH_buf_free(auth_buf));
-    if (auth_sent < 0i64) {
-        drop(_ssh_set_error(pane_slot, "Failed to send auth request"));
-        drop(SSH_disconnect(session));
-        pass(-3i64); // SSH_ERROR_AUTH_FAILED
+    drop(auth_init(pane_slot, session, user, ""));
+    drop(auth_dialog_init(pane_slot, host));
+
+    // First send auth_none to discover server-supported methods
+    drop(raw SSH_auth_none(session, user));
+    int64:none_resp = raw SSH_recv_packet(session);
+    if (none_resp != 0i64) {
+        drop(raw SSH_auth_parse_response(session, none_resp));
+        drop(raw SSH_buf_free(none_resp));
     }
 
-    // Receive auth response — may loop for BANNER messages
-    int32:auth_result = 0i32;
-    int64:al = 0i64;
-    while (al < 5i64 && auth_result == 0i32) {
-        int64:auth_resp = raw SSH_recv_packet(session);
-        if (auth_resp == 0i64) {
-            auth_result = -1i32;
-            al = 5i64; // break
-        }
-        if (auth_resp != 0i64) {
-            int32:ar = raw SSH_auth_parse_response(session, auth_resp);
-            drop(raw SSH_buf_free(auth_resp));
-            if (ar == 1i32) {
-                auth_result = 1i32; // SUCCESS
-                al = 5i64; // break
+    // Run the auth loop
+    int32:auth_done   = 0i32;
+    int32:auth_ok     = 0i32;
+    int64:auth_iters  = 0i64;
+    while (auth_iters < 64i64 && auth_done == 0i32) {
+        int32:tick_result = auth_dialog_tick(pane_slot);
+        if (tick_result == AUTH_DIALOG_DONE()) {
+            auth_done = 1i32;
+            if (auth_dialog_success(pane_slot) == 1i32) {
+                auth_ok = 1i32;
             }
-            if (ar == 0i32) {
-                auth_result = -1i32; // FAILURE — no retry in v0.8.1
-                al = 5i64; // break
-            }
-            // ar == -1 means BANNER — continue
         }
-        al = al + 1i64;
+        auth_iters = auth_iters + 1i64;
     }
 
-    if (auth_result != 1i32) {
+    if (auth_ok != 1i32) {
         drop(_ssh_set_error(pane_slot, "Authentication failed"));
         drop(SSH_disconnect(session));
         pass(-3i64); // SSH_ERROR_AUTH_FAILED

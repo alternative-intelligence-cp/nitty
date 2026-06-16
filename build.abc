@@ -593,3 +593,12 @@ deps = []
 flags = []
 link_libraries = ["nitpick_ssh_shim", "nitpick_env_shim"]
 link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+
+# v0.8.2: SSH multi-method auth negotiator tests (needs nitpick-ssh + nitpick-env + nitpick-unix-socket + nitpick-fs)
+[target.test_auth]
+type = "binary"
+sources = ["tests/ssh/test_auth.npk"]
+deps = []
+flags = []
+link_libraries = ["nitpick_ssh_shim", "nitpick_env_shim", "nitpick_unix_socket_shim", "nitpick_fs_shim"]
+link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs"]

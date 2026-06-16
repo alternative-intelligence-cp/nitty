@@ -1,0 +1,138 @@
+// auth_dialog.npk — SSH auth dialog driver (v0.8.2)
+//
+// Runs the auth loop for a single pane, popping GTK dialogs as needed.
+// Called from terminal_widget.npk on_draw when an SSH session is awaiting auth.
+//
+// Designed as a cooperative state machine: call auth_dialog_tick(pane_id)
+// each frame. Returns AUTH_DIALOG_DONE when done (success or failure).
+
+use "ssh_auth.npk".*;
+use "gtk4_ffi.npk".*;
+
+// ── Result codes ─────────────────────────────────────────────────────────────
+
+func:AUTH_DIALOG_DONE    = int32() { pass 0i32; };
+func:AUTH_DIALOG_BUSY    = int32() { pass 1i32; };
+
+// ── Per-pane UI state ─────────────────────────────────────────────────────────
+
+int64[32]:g_adlg_waiting_input;  // 1 = dialog shown and waiting
+int64[32]:g_adlg_result;         // 0 = unknown, 1 = success, 2 = fail
+int64[32]:g_adlg_dialog_type;    // 0=none, 1=password, 2=kbdint, 3=hostkey
+
+string[32]:g_adlg_hostname;      // host for dialog prompts
+string[32]:g_adlg_input_result;  // what the user typed
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+pub func:auth_dialog_init = NIL(int64:pane_id, string:hostname) {
+    if (pane_id < 0i64 || pane_id >= 32i64) { pass(NIL); }
+    g_adlg_waiting_input[pane_id] = 0i64;
+    g_adlg_result[pane_id]        = 0i64;
+    g_adlg_dialog_type[pane_id]   = 0i64;
+    g_adlg_hostname[pane_id]      = string_concat(hostname, "");
+    g_adlg_input_result[pane_id]  = "";
+    pass(NIL);
+};
+
+pub func:auth_dialog_success = int32(int64:pane_id) {
+    if (pane_id < 0i64 || pane_id >= 32i64) { pass 0i32; }
+    if (g_adlg_result[pane_id] == 1i64) { pass 1i32; }
+    pass 0i32;
+};
+
+pub func:auth_dialog_failed = int32(int64:pane_id) {
+    if (pane_id < 0i64 || pane_id >= 32i64) { pass 1i32; }
+    if (g_adlg_result[pane_id] == 2i64) { pass 1i32; }
+    pass 0i32;
+};
+
+// ── Host-key dialog (call once, before auth_dialog_tick) ─────────────────────
+
+// Returns 1 if user accepted, 0 if rejected.
+pub func:auth_dialog_host_key_verify = int32(int64:pane_id, string:key_type) {
+    string:host = string_concat(g_adlg_hostname[pane_id], "");
+    int64:accepted = nitty_gtk4_host_key_dialog(host, key_type);
+    if (accepted == 1i64) { pass 1i32; }
+    pass 0i32;
+};
+
+// ── Main tick ─────────────────────────────────────────────────────────────────
+
+// Call once per frame from the draw loop. Shows dialogs synchronously (they
+// run their own GMainLoop so the GTK main loop doesn't block). Returns
+// AUTH_DIALOG_DONE when the auth chain is finished (check auth_dialog_success).
+pub func:auth_dialog_tick = int32(int64:pane_id) {
+    if (pane_id < 0i64 || pane_id >= 32i64) {
+        pass AUTH_DIALOG_DONE();
+    }
+    int64:p = pane_id;
+
+    // Already finished?
+    if (g_adlg_result[p] != 0i64) { pass AUTH_DIALOG_DONE(); }
+
+    // Waiting for user: check if we just need to feed the response
+    if (g_adlg_waiting_input[p] == 1i64) {
+        // Not done yet — dialog already shown, still waiting (shouldn't happen
+        // with synchronous dialogs, but guard just in case)
+        pass AUTH_DIALOG_BUSY();
+    }
+
+    // Run the auth state machine
+    int32:meth = auth_current_method(p);
+    int32:result = auth_try_next(p);
+
+    if (result == AUTH_RESULT_OK()) {
+        g_adlg_result[p] = 1i64;
+        pass AUTH_DIALOG_DONE();
+    }
+
+    if (result == AUTH_RESULT_FAIL()) {
+        g_adlg_result[p] = 2i64;
+        pass AUTH_DIALOG_DONE();
+    }
+
+    if (result == AUTH_RESULT_NEED_INPUT()) {
+        // Show appropriate dialog
+        string:host = string_concat(g_adlg_hostname[p], "");
+        string:user_input = "";
+
+        // Keyboard-interactive: GTK4 prompt (no masking for now; real kbd-int
+        // would parse the prompt name from the server's INFO_REQUEST packet)
+        if (meth == AUTH_METHOD_KBDINT()) {
+            string:title  = string_concat("SSH Authentication — ", host);
+            string:prompt = string_concat("Verification code or passphrase for ", host);
+            user_input = nitty_gtk4_prompt_password(title, prompt);
+            if (string_length(user_input) > 0i64) {
+                drop(auth_provide_kbdint(p, user_input));
+            }
+            if (string_length(user_input) == 0i64) {
+                // User cancelled — skip to next method
+                drop(auth_provide_kbdint(p, ""));
+            }
+            pass AUTH_DIALOG_BUSY();
+        }
+
+        // Password: masked entry dialog
+        if (meth == AUTH_METHOD_PASSWORD()) {
+            string:title  = string_concat("SSH Password — ", host);
+            string:user_nm = auth_last_error(p); // reuse: actually get username
+            string:prompt = string_concat("Password for ", host);
+            user_input = nitty_gtk4_prompt_password(title, prompt);
+            if (string_length(user_input) > 0i64) {
+                drop(auth_provide_password(p, user_input));
+            }
+            if (string_length(user_input) == 0i64) {
+                // User cancelled — fail out
+                g_adlg_result[p] = 2i64;
+                pass AUTH_DIALOG_DONE();
+            }
+            pass AUTH_DIALOG_BUSY();
+        }
+
+        pass AUTH_DIALOG_BUSY();
+    }
+
+    // AUTH_RESULT_IN_PROGRESS: keep ticking next frame
+    pass AUTH_DIALOG_BUSY();
+};

@@ -3096,3 +3096,160 @@ const char *nitty_gtk4_proc_notify_msg(void)
 {
     return g_proc_notify_msg;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.8.2: SSH Authentication Dialogs
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static char g_ssh_password_result[512];
+
+/* Show a masked password/passphrase input dialog.
+ * title:  dialog window title (e.g. "SSH Password")
+ * prompt: label text (e.g. "Password for user@host:")
+ * Returns the entered password (static buffer), or "" if cancelled. */
+const char *nitty_gtk4_prompt_password(const char *title, const char *prompt)
+{
+    g_ssh_password_result[0] = '\0';
+
+    PromptState state;
+    state.loop      = g_main_loop_new(NULL, FALSE);
+    state.confirmed = 0;
+    state.result[0] = '\0';
+
+    /* Dialog window */
+    GtkWidget *dialog = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(dialog), title ? title : "SSH Password");
+    gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+    gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(g_main_window));
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 380, -1);
+    gtk_window_set_resizable(GTK_WINDOW(dialog), FALSE);
+
+    /* Layout */
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_start(box, 16);
+    gtk_widget_set_margin_end(box, 16);
+    gtk_widget_set_margin_top(box, 16);
+    gtk_widget_set_margin_bottom(box, 16);
+    gtk_window_set_child(GTK_WINDOW(dialog), box);
+
+    GtkWidget *label = gtk_label_new(prompt ? prompt : "Password:");
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(box), label);
+
+    /* Password entry with visibility=FALSE for masking */
+    GtkWidget *entry = gtk_entry_new();
+    gtk_entry_set_visibility(GTK_ENTRY(entry), FALSE);
+    gtk_entry_set_input_purpose(GTK_ENTRY(entry), GTK_INPUT_PURPOSE_PASSWORD);
+    gtk_box_append(GTK_BOX(box), entry);
+    g_signal_connect(entry, "activate", G_CALLBACK(on_prompt_entry_activate), &state);
+
+    GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_halign(btn_box, GTK_ALIGN_END);
+    gtk_box_append(GTK_BOX(box), btn_box);
+
+    GtkWidget *cancel_btn = gtk_button_new_with_label("Cancel");
+    GtkWidget *ok_btn     = gtk_button_new_with_label("OK");
+    gtk_box_append(GTK_BOX(btn_box), cancel_btn);
+    gtk_box_append(GTK_BOX(btn_box), ok_btn);
+
+    g_signal_connect(cancel_btn, "clicked", G_CALLBACK(on_prompt_cancel), &state);
+    g_signal_connect(ok_btn,     "clicked", G_CALLBACK(on_prompt_ok),     &state);
+
+    gtk_widget_set_visible(dialog, TRUE);
+    g_main_loop_run(state.loop);
+
+    if (state.confirmed) {
+        const char *text = gtk_editable_get_text(GTK_EDITABLE(entry));
+        if (text) {
+            strncpy(g_ssh_password_result, text, sizeof(g_ssh_password_result) - 1);
+            g_ssh_password_result[sizeof(g_ssh_password_result) - 1] = '\0';
+        }
+    }
+
+    gtk_window_destroy(GTK_WINDOW(dialog));
+    g_main_loop_unref(state.loop);
+
+    return g_ssh_password_result;
+}
+
+/* Host key verification dialog state */
+typedef struct {
+    GMainLoop *loop;
+    int        accepted; /* 1 = accept, 0 = reject/cancel */
+} HostKeyState;
+
+static void on_hk_accept(GtkButton *btn, gpointer user_data)
+{
+    (void)btn;
+    HostKeyState *state = (HostKeyState *)user_data;
+    state->accepted = 1;
+    g_main_loop_quit(state->loop);
+}
+
+static void on_hk_reject(GtkButton *btn, gpointer user_data)
+{
+    (void)btn;
+    HostKeyState *state = (HostKeyState *)user_data;
+    state->accepted = 0;
+    g_main_loop_quit(state->loop);
+}
+
+/* Show a host key mismatch warning dialog.
+ * host:       the server hostname/IP
+ * key_type:   "ssh-rsa", "ssh-ed25519", etc.
+ * Returns 1 if user accepts (trust anyway), 0 if rejected/cancelled. */
+int64_t nitty_gtk4_host_key_dialog(const char *host, const char *key_type)
+{
+    char msg[768];
+    snprintf(msg, sizeof(msg),
+             "WARNING: Host key for '%s' has changed!\n\n"
+             "Key type: %s\n\n"
+             "This could indicate a man-in-the-middle attack.\n"
+             "Do you want to continue connecting?",
+             host ? host : "(unknown)",
+             key_type ? key_type : "(unknown)");
+
+    HostKeyState state;
+    state.loop     = g_main_loop_new(NULL, FALSE);
+    state.accepted = 0;
+
+    GtkWidget *dialog = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(dialog), "Host Key Verification Failed");
+    gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+    gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(g_main_window));
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 460, -1);
+    gtk_window_set_resizable(GTK_WINDOW(dialog), FALSE);
+
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_start(box, 16);
+    gtk_widget_set_margin_end(box, 16);
+    gtk_widget_set_margin_top(box, 16);
+    gtk_widget_set_margin_bottom(box, 16);
+    gtk_window_set_child(GTK_WINDOW(dialog), box);
+
+    GtkWidget *label = gtk_label_new(msg);
+    gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(box), label);
+
+    GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_halign(btn_box, GTK_ALIGN_END);
+    gtk_box_append(GTK_BOX(box), btn_box);
+
+    GtkWidget *reject_btn = gtk_button_new_with_label("Cancel");
+    GtkWidget *accept_btn = gtk_button_new_with_label("Connect Anyway");
+    gtk_box_append(GTK_BOX(btn_box), reject_btn);
+    gtk_box_append(GTK_BOX(btn_box), accept_btn);
+
+    g_signal_connect(reject_btn, "clicked", G_CALLBACK(on_hk_reject), &state);
+    g_signal_connect(accept_btn, "clicked", G_CALLBACK(on_hk_accept), &state);
+
+    gtk_widget_set_visible(dialog, TRUE);
+    g_main_loop_run(state.loop);
+
+    gtk_window_destroy(GTK_WINDOW(dialog));
+    g_main_loop_unref(state.loop);
+
+    return (int64_t)state.accepted;
+}
+

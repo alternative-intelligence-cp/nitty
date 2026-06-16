@@ -645,5 +645,14 @@ extern "nitty_gtk4_shim" {
 
     // Read process name from /proc/<pid>/comm (shim-side, no fs dependency).
     func:nitty_gtk4_get_proc_comm = string(int64:pid);
+
+    // ── v0.8.2: SSH Authentication Dialogs ─────────────────────────────────
+    // Show a masked password/passphrase entry dialog.
+    // Returns entered text (empty string if cancelled).
+    func:nitty_gtk4_prompt_password = string(string:title, string:prompt);
+
+    // Show a host key mismatch warning dialog.
+    // Returns 1 if user accepted, 0 if cancelled.
+    func:nitty_gtk4_host_key_dialog = int64(string:host, string:key_type);
 }
 

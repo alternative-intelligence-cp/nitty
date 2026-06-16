@@ -864,6 +864,22 @@ const char *nitty_gtk4_proc_notify_msg(void);
  */
 void nitty_gtk4_proc_register(int32_t slot, int64_t pid);
 
+/**
+ * v0.8.2: SSH Authentication Dialogs
+ *
+ * nitty_gtk4_prompt_password: Show a masked password/passphrase dialog.
+ *   title  - dialog title
+ *   prompt - label text shown to user
+ *   Returns entered password (static buffer) or "" if cancelled.
+ *
+ * nitty_gtk4_host_key_dialog: Show a host-key mismatch warning.
+ *   host     - hostname/IP of the server
+ *   key_type - "ssh-rsa", "ssh-ed25519", etc.
+ *   Returns 1 if user chose "Connect Anyway", 0 if cancelled.
+ */
+const char *nitty_gtk4_prompt_password(const char *title, const char *prompt);
+int64_t     nitty_gtk4_host_key_dialog(const char *host, const char *key_type);
+
 #ifdef __cplusplus
 }
 #endif
