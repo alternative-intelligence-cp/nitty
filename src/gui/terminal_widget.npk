@@ -53,6 +53,8 @@ use "tab_context_menu.npk".*;
 use "split_view.npk".*;
 use "settings.npk".*;              // v0.6.5: settings window
 use "search_bar.npk".*;            // v0.7.0: search in scrollback
+use "selection.npk".*;             // v0.7.1: text selection
+use "clipboard.npk".*;             // v0.7.1: clipboard copy/paste
 use "../terminal/terminal_pipeline.npk".*;
 use "../terminal/terminal_state.npk".*;
 use "../terminal/scrollback.npk".*;
@@ -65,6 +67,7 @@ use "../core/global_hotkey.npk".*;  // v0.6.3: global hotkey polling
 use "quake.npk".*;                  // v0.6.3: quake mode animation
 use "input.npk".*;
 use "../config/watcher.npk".*;      // v0.6.5: config hot-reload
+use "../config/config.npk".*;       // v0.7.1: clipboard config getters
 
 // ═══════════════════════════════════════════════════════════════════════
 // Module state
@@ -186,8 +189,14 @@ func:dispatch_action = NIL(string:action, int64:rows, int64:cols) {
         ("tab.8")     { drop(tm_activate_index(7i64)); drop(tw_queue_redraw()); },
         ("tab.9")     { drop(tm_activate_index(8i64)); drop(tw_queue_redraw()); },
         // Clipboard (stubs in v0.6.2 — full in v0.7.x)
-        ("edit.copy")   { drop(nitty_gtk4_clipboard_copy()); },
-        ("edit.paste")  { drop(nitty_gtk4_clipboard_paste()); },
+        ("edit.copy")   {
+            // v0.7.1: real clipboard copy — extract selection text
+            drop(clipboard_do_copy(raw viewport_get_offset(), g_tw_rows, g_tw_cols));
+        },
+        ("edit.paste")  {
+            // v0.7.1: real clipboard paste — async request
+            drop(clipboard_do_paste());
+        },
         // Search
         ("edit.search") { drop(sb_toggle()); },  // v0.7.0
         ("edit.clear")  { drop(nitty_gtk4_show_notification("Clear: coming in v0.7.x")); },
@@ -700,6 +709,7 @@ pub func:tw_on_draw = NIL() {
 
     // v0.3.4 Step 0c: Poll scroll wheel (mouse type 3, dy > 0 = down, dy < 0 = up)
     // v0.4.3: Also handle right-click (button type 1) for context menu
+    // v0.7.1: Selection drag (left-click) and middle-click paste
     int64:mev = nitty_gtk4_mouse_poll();
     if (mev != 0i64) {
         int64:mtype = nitty_gtk4_mouse_get_type();
@@ -709,16 +719,19 @@ pub func:tw_on_draw = NIL() {
             if (dy > 0i64) { drop(viewport_scroll_down(3i64)); }
             if (dy < 0i64) { drop(viewport_scroll_up(3i64, sb_len)); }
         }
-        // Right-click (button type 1 = button event, check for right button)
+        // Button press events
         if (mtype == 1i64) {
-            int64:btn = nitty_gtk4_mouse_get_button();
-            // Left-click (btn=1) during swap mode: complete the swap
+            int64:btn     = nitty_gtk4_mouse_get_button();
+            int64:n_press = nitty_gtk4_mouse_get_n_press();
+            int64:mx      = nitty_gtk4_mouse_get_x();   // ×1000 fixed-point pixels
+            int64:my      = nitty_gtk4_mouse_get_y();
+
+            // Left-click (btn=1) — selection and swap mode
             if (btn == 1i64) {
                 if (raw split_view_is_swap_mode() != 0i64) {
-                    int64:swm_x = nitty_gtk4_mouse_get_x();
-                    int64:swm_y = nitty_gtk4_mouse_get_y();
+                    // Swap mode: complete the pane swap
                     int64:swm_src = raw split_view_get_swap_source();
-                    int64:swm_dst = raw split_tree_find_pane_at(swm_x, swm_y);
+                    int64:swm_dst = raw split_tree_find_pane_at(mx, my);
                     drop(split_view_cancel_swap_mode());
                     drop(nitty_gtk4_set_swap_mode(0i64));
                     if (swm_dst >= 0i64) {
@@ -729,19 +742,110 @@ pub func:tw_on_draw = NIL() {
                     }
                     drop(tw_queue_redraw());
                 }
+                if (raw split_view_is_swap_mode() == 0i64) {
+                    // Normal mode: start selection
+                    // Convert pixel → display cell (x/y are ×1000 fixed-point)
+                    int64:tab_h = nitty_render_get_tab_bar_height();
+                    int64:cw = g_tw_cell_w;
+                    int64:ch = g_tw_cell_h;
+                    if (cw <= 0i64) { cw = 8i64; }
+                    if (ch <= 0i64) { ch = 16i64; }
+                    int64:adj_y = my - tab_h * 1000i64;
+                    int64:col = mx / (cw * 1000i64);
+                    int64:row = adj_y / (ch * 1000i64);
+                    // Clamp to valid range
+                    if (col < 0i64) { col = 0i64; }
+                    if (row < 0i64) { row = 0i64; }
+                    if (col >= g_tw_cols) { col = g_tw_cols - 1i64; }
+                    if (row >= g_tw_rows) { row = g_tw_rows - 1i64; }
+
+                    if (n_press == 3i64) {
+                        // Triple-click: select full line
+                        int64:offset = raw viewport_get_offset();
+                        drop(sel_select_line(row, offset, g_tw_cols));
+                        drop(tw_queue_redraw());
+                    }
+                    if (n_press == 2i64) {
+                        // Double-click: select word
+                        int64:offset = raw viewport_get_offset();
+                        drop(sel_select_word(row, col, offset, g_tw_cols));
+                        drop(tw_queue_redraw());
+                    }
+                    if (n_press == 1i64) {
+                        // Single-click: start drag selection
+                        // Alt held = block mode (2), otherwise line mode (1)
+                        int64:alt  = nitty_gtk4_key_modifiers_alt();
+                        int64:mode = 1i64;  // SEL_LINE
+                        if (alt != 0i64) { mode = 2i64; }  // SEL_BLOCK
+                        int64:offset = raw viewport_get_offset();
+                        drop(sel_start(row, col, mode, offset));
+                        drop(tw_queue_redraw());
+                    }
+                }
             }
+            // Middle-click (btn=2): paste primary selection
+            if (btn == 2i64) {
+                drop(clipboard_do_paste_primary());
+            }
+            // Right-click (btn=3)
             if (btn == 3i64) {
-                // Right-click: hit-test to see if in tab bar
-                int64:rx = nitty_gtk4_mouse_get_x();
-                int64:ry = nitty_gtk4_mouse_get_y();
-                int64:hit_idx = raw tb_hit_test(rx, ry);
-                if (hit_idx >= 0i64) {
-                    // Clicked on a tab — show context menu
-                    nitty_gtk4_context_menu_show(rx, ry, hit_idx);
+                int64:rcp = raw cfg_right_click_paste();
+                if (rcp != 0i64) {
+                    // right_click_paste=true: paste selection
+                    if (raw sel_is_active() != 0i64) {
+                        drop(clipboard_do_paste());
+                    }
+                }
+                if (rcp == 0i64) {
+                    // Right-click: hit-test to see if in tab bar
+                    int64:rx = mx;
+                    int64:ry = my;
+                    int64:hit_idx = raw tb_hit_test(rx, ry);
+                    if (hit_idx >= 0i64) {
+                        // Clicked on a tab — show context menu
+                        nitty_gtk4_context_menu_show(rx, ry, hit_idx);
+                    }
                 }
             }
         }
+        // Motion event (type=4): extend selection if drag is active
+        if (mtype == 4i64) {
+            if (raw sel_is_dragging() != 0i64) {
+                int64:mx4     = nitty_gtk4_mouse_get_x();
+                int64:my4     = nitty_gtk4_mouse_get_y();
+                int64:tab_h4  = nitty_render_get_tab_bar_height();
+                int64:cw4     = g_tw_cell_w;
+                int64:ch4     = g_tw_cell_h;
+                if (cw4 <= 0i64) { cw4 = 8i64; }
+                if (ch4 <= 0i64) { ch4 = 16i64; }
+                int64:adj4_y  = my4 - tab_h4 * 1000i64;
+                int64:col4    = mx4 / (cw4 * 1000i64);
+                int64:row4    = adj4_y / (ch4 * 1000i64);
+                if (col4 < 0i64)       { col4 = 0i64; }
+                if (row4 < 0i64)       { row4 = 0i64; }
+                if (col4 >= g_tw_cols) { col4 = g_tw_cols - 1i64; }
+                if (row4 >= g_tw_rows) { row4 = g_tw_rows - 1i64; }
+                drop(sel_update(row4, col4));
+                drop(tw_queue_redraw());
+            }
+        }
+        // Release event (type=2): finalize selection
+        if (mtype == 2i64) {
+            if (raw sel_is_dragging() != 0i64) {
+                drop(sel_finalize());
+                // copy-on-select
+                if (raw cfg_copy_on_select() != 0i64) {
+                    if (raw sel_is_active() != 0i64) {
+                        drop(clipboard_do_copy(raw viewport_get_offset(), g_tw_rows, g_tw_cols));
+                    }
+                }
+                drop(tw_queue_redraw());
+            }
+        }
     }
+
+    // v0.7.1: Clear selection on any key press (unless Shift held for extend)
+    // (only when key was not consumed by a hotkey action)
 
     // v0.4.3: Poll for pending context menu selections (rename/duplicate/etc)
     drop(tcm_poll());
@@ -797,6 +901,9 @@ pub func:tw_on_draw = NIL() {
 
     // Step 2: Sync terminal state to C render grid
     drop(renderer_sync_frame());
+
+    // v0.7.1: Poll pending clipboard paste result (async GdkClipboard read)
+    drop(clipboard_poll_paste());
 
     // v0.6.5: Poll settings window events (Apply/OK/Cancel)
     drop(settings_poll());

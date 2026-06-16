@@ -40,6 +40,7 @@ use "color_scheme.npk".*;
 use "color_resolve.npk".*;
 use "tab_bar.npk".*;
 use "../terminal/search.npk".*;  // v0.7.0: search highlight
+use "selection.npk".*;           // v0.7.1: selection highlight
 
 // ═══════════════════════════════════════════════════════════════════════
 // Module state
@@ -237,6 +238,22 @@ pub func:renderer_sync_frame = NIL() {
                     // Current focused match: orange bg, black fg
                     nitty_render_set_cell_bg(c, r, 1000i64, 550i64, 0i64);
                     nitty_render_set_cell_fg(c, r, 0i64, 0i64, 0i64);
+                }
+            }
+
+            // v0.7.1: Selection highlight (overrides search — selection takes priority)
+            if (raw sel_is_active() == 1i64) {
+                if (raw sel_cell_selected(r, c) == 1i64) {
+                    // Selection colors: blue bg (#4D80CC), white fg
+                    nitty_render_set_cell_bg(c, r, 300i64, 500i64, 800i64);
+                    nitty_render_set_cell_fg(c, r, 1000i64, 1000i64, 1000i64);
+                }
+            }
+            // v0.7.1: Also show selection outline during active drag
+            if (raw sel_is_dragging() == 1i64) {
+                if (raw sel_cell_selected(r, c) == 1i64) {
+                    nitty_render_set_cell_bg(c, r, 300i64, 500i64, 800i64);
+                    nitty_render_set_cell_fg(c, r, 1000i64, 1000i64, 1000i64);
                 }
             }
 

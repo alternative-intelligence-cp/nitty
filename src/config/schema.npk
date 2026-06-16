@@ -146,6 +146,14 @@ pub func:schema_init = NIL() {
                        "top", "bottom", "", "", 2i64));
     drop(_sch_add("quake.animation_duration",  T_INT,  "150",       0i64,   500i64));
 
+    // terminal.* — v0.7.1: copy & paste behaviour
+    //   terminal.copy_on_select:      bool — 1 = copy to clipboard immediately on drag release
+    //   terminal.warn_multiline_paste: bool — 1 = confirm dialog before pasting multiple lines
+    //   terminal.right_click_paste:   bool — 1 = right-click pastes selection (not context menu)
+    drop(_sch_add("terminal.copy_on_select",       T_BOOL, "0", 0i64, 0i64));
+    drop(_sch_add("terminal.warn_multiline_paste",  T_BOOL, "1", 0i64, 0i64));
+    drop(_sch_add("terminal.right_click_paste",     T_BOOL, "0", 0i64, 0i64));
+
     pass(NIL);
 };
 

@@ -41,6 +41,11 @@ int64:g_cfg_quake_height_pct    = 50i64;
 string:g_cfg_quake_position     = "top";
 int64:g_cfg_quake_anim_duration = 150i64;
 
+// v0.7.1: clipboard behaviour state vars
+int64:g_cfg_copy_on_select       = 0i64;
+int64:g_cfg_warn_multiline_paste = 1i64;
+int64:g_cfg_right_click_paste    = 0i64;
+
 // State flags
 int64:g_cfg_is_default = 1i64;  // 1 if no config file found; 0 if loaded from disk
 int64:g_cfg_loaded     = 0i64;  // set to 1 after config_load() completes
@@ -210,6 +215,28 @@ func:_read_from_toml = NIL() {
         if (vv >= 0i64) { if (vv <= 500i64) { g_cfg_quake_anim_duration = vv; } }
     }
 
+    // v0.7.1: clipboard behaviour
+    int32:has_cos = raw Toml.has_key("terminal.copy_on_select");
+    if (has_cos == 1i32) {
+        int32:v = raw Toml.get_bool("terminal.copy_on_select");
+        if (v == 1i32) { g_cfg_copy_on_select = 1i64; }
+        if (v == 0i32) { g_cfg_copy_on_select = 0i64; }
+    }
+
+    int32:has_wmp = raw Toml.has_key("terminal.warn_multiline_paste");
+    if (has_wmp == 1i32) {
+        int32:v = raw Toml.get_bool("terminal.warn_multiline_paste");
+        if (v == 1i32) { g_cfg_warn_multiline_paste = 1i64; }
+        if (v == 0i32) { g_cfg_warn_multiline_paste = 0i64; }
+    }
+
+    int32:has_rcp = raw Toml.has_key("terminal.right_click_paste");
+    if (has_rcp == 1i32) {
+        int32:v = raw Toml.get_bool("terminal.right_click_paste");
+        if (v == 1i32) { g_cfg_right_click_paste = 1i64; }
+        if (v == 0i32) { g_cfg_right_click_paste = 0i64; }
+    }
+
     pass(NIL);
 };
 
@@ -354,6 +381,10 @@ pub func:config_save = int32() {
     drop(Toml.set_string("appearance.theme",           g_cfg_theme));
     drop(Toml.set_bool("general.close_on_exit",        @cast_unchecked<int32>(g_cfg_close_on_exit)));
     drop(Toml.set_bool("general.confirm_on_close",     @cast_unchecked<int32>(g_cfg_confirm_on_close)));
+    // v0.7.1: clipboard keys
+    drop(Toml.set_bool("terminal.copy_on_select",       @cast_unchecked<int32>(g_cfg_copy_on_select)));
+    drop(Toml.set_bool("terminal.warn_multiline_paste",  @cast_unchecked<int32>(g_cfg_warn_multiline_paste)));
+    drop(Toml.set_bool("terminal.right_click_paste",     @cast_unchecked<int32>(g_cfg_right_click_paste)));
 
     // v0.6.1: Serialize profiles into the same TOML document
     drop(profiles_save_toml());
@@ -439,4 +470,9 @@ pub func:cfg_quake_width_percent = int64()  { pass(g_cfg_quake_width_pct); };
 pub func:cfg_quake_height_percent = int64() { pass(g_cfg_quake_height_pct); };
 pub func:cfg_quake_position      = string() { pass(g_cfg_quake_position); };
 pub func:cfg_quake_anim_duration = int64()  { pass(g_cfg_quake_anim_duration); };
+
+// v0.7.1: Clipboard behaviour getters
+pub func:cfg_copy_on_select       = int64() { pass(g_cfg_copy_on_select); };
+pub func:cfg_warn_multiline_paste = int64() { pass(g_cfg_warn_multiline_paste); };
+pub func:cfg_right_click_paste    = int64() { pass(g_cfg_right_click_paste); };
 

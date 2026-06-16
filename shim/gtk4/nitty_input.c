@@ -104,6 +104,7 @@ static int    g_mouse_type      = 0;   /* 1=click, 2=release, 3=scroll, 4=motion
 static double g_mouse_x         = 0.0;
 static double g_mouse_y         = 0.0;
 static int    g_mouse_button    = 0;
+static int    g_mouse_n_press   = 1;   /* v0.7.1: click count (1=single, 2=double, 3=triple) */
 static double g_mouse_scroll_dx = 0.0;
 static double g_mouse_scroll_dy = 0.0;
 
@@ -369,6 +370,7 @@ static void on_click_pressed(GtkGestureClick *gesture,
     g_mouse_type    = 1;
     g_mouse_x       = x;
     g_mouse_y       = y;
+    g_mouse_n_press = (int)n_press;
     g_mouse_button  = (int)gtk_gesture_single_get_current_button(
                           GTK_GESTURE_SINGLE(gesture));
     g_mouse_pending = 1;
@@ -640,6 +642,18 @@ int64_t nitty_gtk4_mouse_get_scroll_dx(void)
 int64_t nitty_gtk4_mouse_get_scroll_dy(void)
 {
     return (int64_t)(g_mouse_scroll_dy * 1000.0);
+}
+
+/* v0.7.1: Double/triple-click count */
+int64_t nitty_gtk4_mouse_get_n_press(void)
+{
+    return (int64_t)g_mouse_n_press;
+}
+
+/* v0.7.1: Check if Alt was held during the last key/mouse event */
+int64_t nitty_gtk4_key_modifiers_alt(void)
+{
+    return (g_key_modifiers & (guint)GDK_ALT_MASK) ? 1 : 0;
 }
 
 /* ── Terminal mode (v0.1.4) ───────────────────────────────────────────── */

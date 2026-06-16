@@ -1747,22 +1747,121 @@ void nitty_gtk4_set_key_consumed(int consumed)
 }
 
 /**
- * Clipboard copy: copy the current terminal selection to the system clipboard.
- * Stub in v0.6.2 — full implementation in v0.7.x.
+ * v0.7.1 Clipboard — Copy & Paste
+ *
+ * Copy: nitty_gtk4_clipboard_copy_text(text)
+ *   Writes text to the system clipboard via GdkClipboard.
+ *
+ * Paste (async):
+ *   1. Nitpick calls nitty_gtk4_clipboard_paste_request() to start read.
+ *   2. GDK calls on_paste_text() asynchronously.
+ *   3. Nitpick polls nitty_gtk4_clipboard_paste_ready() each frame.
+ *   4. When ready==1, Nitpick reads bytes via nitty_gtk4_clipboard_paste_get_byte(i).
+ *
+ * Primary selection (X11 middle-click):
+ *   nitty_gtk4_primary_paste_request() — same flow, uses PRIMARY clipboard.
+ *
+ * The legacy stub functions (copy/paste with no args) remain as no-ops
+ * for backward compatibility with existing hotkey dispatch.
  */
-void nitty_gtk4_clipboard_copy(void)
+
+/* Selection text buffer (written by Nitpick via copy_text) */
+static char g_selection_text[1024 * 1024];
+
+/* Paste text buffer (written by async callback) */
+static char g_paste_text[1024 * 1024];
+static int  g_paste_ready = 0;
+
+/* Legacy stubs — kept for backward compat with edit.copy/edit.paste dispatch.
+ * The real work is now done by nitty_gtk4_clipboard_copy_text / paste_request. */
+void nitty_gtk4_clipboard_copy(void)  { /* superseded by copy_text */ }
+void nitty_gtk4_clipboard_paste(void) { /* superseded by paste_request */ }
+
+/* Copy selection text to the system clipboard. */
+void nitty_gtk4_clipboard_copy_text(const char *text)
 {
-    /* TODO v0.7.x: use GdkClipboard to copy g_selection_text */
+    if (!text) return;
+    GdkDisplay  *display = gdk_display_get_default();
+    if (!display) return;
+    GdkClipboard *cb = gdk_display_get_clipboard(display);
+    if (!cb) return;
+    gdk_clipboard_set_text(cb, text);
+    /* Keep a local copy for primary selection auto-set */
+    strncpy(g_selection_text, text, sizeof(g_selection_text) - 1);
+    g_selection_text[sizeof(g_selection_text) - 1] = '\0';
+    /* Also set the primary (X11 middle-click) selection on copy */
+#ifdef GDK_WINDOWING_X11
+    GdkClipboard *primary = gdk_display_get_primary_clipboard(display);
+    if (primary) gdk_clipboard_set_text(primary, text);
+#endif
 }
 
-/**
- * Clipboard paste: read system clipboard and write to active PTY master fd.
- * Stub in v0.6.2 — full implementation in v0.7.x.
- */
-void nitty_gtk4_clipboard_paste(void)
+/* Async callback — fired when clipboard read completes */
+static void on_paste_text_ready(GObject *source, GAsyncResult *res,
+                                gpointer user_data)
 {
-    /* TODO v0.7.x: use GdkClipboard to read and write to g_pty_master_fd */
+    (void)user_data;
+    GError *err = NULL;
+    char *text = gdk_clipboard_read_text_finish(GDK_CLIPBOARD(source), res, &err);
+    if (text) {
+        strncpy(g_paste_text, text, sizeof(g_paste_text) - 1);
+        g_paste_text[sizeof(g_paste_text) - 1] = '\0';
+        g_free(text);
+    } else {
+        g_paste_text[0] = '\0';
+        if (err) g_error_free(err);
+    }
+    g_paste_ready = 1;
 }
+
+/* Start an async clipboard read. Nitpick polls paste_ready() each frame. */
+void nitty_gtk4_clipboard_paste_request(void)
+{
+    g_paste_ready  = 0;
+    g_paste_text[0] = '\0';
+    GdkDisplay  *display = gdk_display_get_default();
+    if (!display) { g_paste_ready = 1; return; }
+    GdkClipboard *cb = gdk_display_get_clipboard(display);
+    if (!cb) { g_paste_ready = 1; return; }
+    gdk_clipboard_read_text_async(cb, NULL, on_paste_text_ready, NULL);
+}
+
+/* Start an async PRIMARY selection read (X11 middle-click). */
+void nitty_gtk4_primary_paste_request(void)
+{
+    g_paste_ready  = 0;
+    g_paste_text[0] = '\0';
+    GdkDisplay  *display = gdk_display_get_default();
+    if (!display) { g_paste_ready = 1; return; }
+#ifdef GDK_WINDOWING_X11
+    GdkClipboard *cb = gdk_display_get_primary_clipboard(display);
+#else
+    GdkClipboard *cb = gdk_display_get_clipboard(display);
+#endif
+    if (!cb) { g_paste_ready = 1; return; }
+    gdk_clipboard_read_text_async(cb, NULL, on_paste_text_ready, NULL);
+}
+
+/* Poll: returns 1 when paste text is ready to read. */
+int64_t nitty_gtk4_clipboard_paste_ready(void)
+{
+    return (int64_t)g_paste_ready;
+}
+
+/* Length of the pending paste text (bytes). */
+int64_t nitty_gtk4_clipboard_paste_text_len(void)
+{
+    return (int64_t)strlen(g_paste_text);
+}
+
+/* Read one byte from the paste text buffer at position offset. */
+int64_t nitty_gtk4_clipboard_paste_get_byte(int64_t offset)
+{
+    size_t len = strlen(g_paste_text);
+    if (offset < 0 || (size_t)offset >= len) return 0;
+    return (int64_t)(unsigned char)g_paste_text[(size_t)offset];
+}
+
 
 /* ═══════════════════════════════════════════════════════════════════════
  * v0.6.3: Global Hotkey Registration + Quake Mode Window Management

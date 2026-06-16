@@ -1,0 +1,420 @@
+// src/gui/selection.npk — Text selection data model for Nitty v0.7.1
+//
+// Tracks mouse selection state in flat int64 module globals.
+// No structs — follows the established Nitpick data model pattern.
+//
+// Row encoding (used in sel_cell_selected and sel_get_text):
+//   sb_idx >= 0  → scrollback row (0=newest, oldest has highest index)
+//   sb_idx <  0  → active screen row: actual_row = -(sb_idx + 1)
+//   This mirrors the renderer.npk and search.npk convention.
+//
+// Selection modes:
+//   SEL_NONE  = 0  (no selection)
+//   SEL_LINE  = 1  (normal click-and-drag, line-by-line)
+//   SEL_BLOCK = 2  (Alt+drag, rectangular block)
+
+use "../terminal/scrollback.npk".*;
+use "../terminal/grid.npk".*;
+
+// ── Mode constants ────────────────────────────────────────────────────────
+
+int64:SEL_NONE  = 0i64;
+int64:SEL_LINE  = 1i64;
+int64:SEL_BLOCK = 2i64;
+
+// ── Module state ──────────────────────────────────────────────────────────
+
+int64:g_sel_mode       = 0i64;   // SEL_NONE/LINE/BLOCK
+int64:g_sel_active     = 0i64;   // 1 = has a valid finalized selection
+int64:g_sel_dragging   = 0i64;   // 1 = left button held, drag in progress
+int64:g_sel_anchor_row = 0i64;   // row encoding where the press started
+int64:g_sel_anchor_col = 0i64;
+int64:g_sel_end_row    = 0i64;   // row encoding at current drag end
+int64:g_sel_end_col    = 0i64;
+int64:g_sel_offset     = 0i64;   // viewport offset when selection started
+
+// ── Public API ────────────────────────────────────────────────────────────
+
+pub func:sel_is_active   = int64() { pass(g_sel_active);   };
+pub func:sel_is_dragging = int64() { pass(g_sel_dragging); };
+pub func:sel_get_mode    = int64() { pass(g_sel_mode);     };
+
+/// Begin a selection at the given row encoding + column, in mode.
+/// Called on left mouse button press.
+pub func:sel_start = NIL(int64:row_enc, int64:col, int64:mode, int64:offset) {
+    g_sel_mode       = mode;
+    g_sel_active     = 0i64;
+    g_sel_dragging   = 1i64;
+    g_sel_anchor_row = row_enc;
+    g_sel_anchor_col = col;
+    g_sel_end_row    = row_enc;
+    g_sel_end_col    = col;
+    g_sel_offset     = offset;
+    pass(NIL);
+};
+
+/// Update the end point of the selection during a drag.
+pub func:sel_update = NIL(int64:row_enc, int64:col) {
+    if (g_sel_dragging == 0i64) { pass(NIL); }
+    g_sel_end_row = row_enc;
+    g_sel_end_col = col;
+    pass(NIL);
+};
+
+/// Mark drag as complete. Sets active flag.
+pub func:sel_finalize = NIL() {
+    if (g_sel_dragging == 0i64) { pass(NIL); }
+    g_sel_dragging = 0i64;
+    // Only activate if anchor != end (not a zero-size selection from a click)
+    if (g_sel_anchor_row != g_sel_end_row) {
+        g_sel_active = 1i64;
+        pass(NIL);
+    }
+    if (g_sel_anchor_col != g_sel_end_col) {
+        g_sel_active = 1i64;
+        pass(NIL);
+    }
+    // Zero-size click: clear
+    g_sel_active = 0i64;
+    pass(NIL);
+};
+
+/// Clear the selection entirely.
+pub func:sel_clear = NIL() {
+    g_sel_active   = 0i64;
+    g_sel_dragging = 0i64;
+    g_sel_mode     = SEL_NONE;
+    pass(NIL);
+};
+
+// ── Internal: normalize anchor/end into min/max ───────────────────────────
+//
+// Row ordering: scrollback rows (>= 0) come before active screen rows (< 0).
+// Within scrollback: higher index = older = visually higher.
+// So display order: sb_row (high) → sb_row (0) → active_row (0) → ...
+// For comparison, we convert to a "display rank":
+//   sb_row >= 0  → rank = offset - 1 - sb_row   (higher sb_idx = earlier row = lower rank)
+//   sb_row <  0  → rank = offset + (-(sb_row+1))  = offset - sb_row - 1
+//
+// Actually simpler: just compare the display row r directly.
+// The caller passes display_row (0-based from top of screen including scrollback).
+// We store display_row directly in g_sel_anchor_row/end_row for simplicity.
+// This avoids the encoding complexity in the drag path.
+//
+// NOTE: We store DISPLAY rows (0 = topmost visible, increasing downward).
+// sel_cell_selected receives a display row in the same coordinate space.
+
+/// Returns 1 if (display_row, col) falls within the current selection.
+/// Works for both dragging and finalized selections.
+/// display_row: 0 = top of viewport (may be scrollback or active grid).
+pub func:sel_cell_selected = int64(int64:display_row, int64:col) {
+    if (g_sel_active == 0i64) {
+        if (g_sel_dragging == 0i64) { pass(0i64); }
+    }
+
+    // Normalize: ensure min_row <= max_row
+    int64:min_row = g_sel_anchor_row;
+    int64:max_row = g_sel_end_row;
+    int64:min_col = g_sel_anchor_col;
+    int64:max_col = g_sel_end_col;
+
+    if (g_sel_end_row < g_sel_anchor_row) {
+        min_row = g_sel_end_row;
+        max_row = g_sel_anchor_row;
+        min_col = g_sel_end_col;
+        max_col = g_sel_anchor_col;
+    }
+    if (g_sel_end_row == g_sel_anchor_row) {
+        if (g_sel_end_col < g_sel_anchor_col) {
+            min_col = g_sel_end_col;
+            max_col = g_sel_anchor_col;
+        }
+    }
+
+    // Row not in range
+    if (display_row < min_row) { pass(0i64); }
+    if (display_row > max_row) { pass(0i64); }
+
+    // Block mode: rectangular region
+    if (g_sel_mode == SEL_BLOCK) {
+        // For block, we need col range independent of row
+        int64:bc_min = min_col;
+        int64:bc_max = max_col;
+        if (g_sel_anchor_col > g_sel_end_col) {
+            bc_min = g_sel_end_col;
+            bc_max = g_sel_anchor_col;
+        }
+        if (col < bc_min) { pass(0i64); }
+        if (col > bc_max) { pass(0i64); }
+        pass(1i64);
+    }
+
+    // Line mode: full lines in middle, partial on first/last
+    if (display_row > min_row) {
+        if (display_row < max_row) {
+            pass(1i64);   // full interior row
+        }
+    }
+    // Single-row selection
+    if (min_row == max_row) {
+        if (col >= min_col) {
+            if (col <= max_col) { pass(1i64); }
+        }
+        pass(0i64);
+    }
+    // First row: from min_col to end of line
+    if (display_row == min_row) {
+        if (col >= min_col) { pass(1i64); }
+        pass(0i64);
+    }
+    // Last row: from start of line to max_col
+    if (display_row == max_row) {
+        if (col <= max_col) { pass(1i64); }
+        pass(0i64);
+    }
+    pass(0i64);
+};
+
+// ── Double/triple-click helpers ───────────────────────────────────────────
+
+/// Select the word under (display_row, col).
+/// Word = run of non-space, non-punctuation characters.
+/// Sets selection state as a finalized single-row LINE selection.
+pub func:sel_select_word = NIL(int64:display_row, int64:col,
+                               int64:offset, int64:cols) {
+    int64:sb_len = raw scrollback_len();
+    int64:sb_idx = offset - 1i64 - display_row;
+    int64:active_row = display_row - offset;
+
+    // Expand left
+    int64:lc = col;
+    int64:searching = 1i64;
+    while (searching == 1i64) {
+        if (lc <= 0i64) { searching = 0i64; }
+        if (searching == 1i64) {
+            int64:prev = lc - 1i64;
+            int64:pcp = 32i64;
+            if (sb_idx >= 0i64) {
+                if (sb_idx < sb_len) {
+                    pcp = raw scrollback_get_cp(sb_idx, prev);
+                }
+            }
+            if (sb_idx < 0i64) {
+                pcp = raw grid_get_cp(active_row, prev);
+            }
+            if (pcp == 0i64) { pcp = 32i64; }
+            if (raw _is_word_char(pcp) == 1i64) {
+                lc = prev;
+            }
+            if (raw _is_word_char(pcp) == 0i64) {
+                searching = 0i64;
+            }
+        }
+    }
+
+    // Expand right
+    int64:rc = col;
+    searching = 1i64;
+    while (searching == 1i64) {
+        int64:next = rc + 1i64;
+        if (next >= cols) { searching = 0i64; }
+        if (searching == 1i64) {
+            int64:ncp = 32i64;
+            if (sb_idx >= 0i64) {
+                if (sb_idx < sb_len) {
+                    ncp = raw scrollback_get_cp(sb_idx, next);
+                }
+            }
+            if (sb_idx < 0i64) {
+                ncp = raw grid_get_cp(active_row, next);
+            }
+            if (ncp == 0i64) { ncp = 32i64; }
+            if (raw _is_word_char(ncp) == 1i64) {
+                rc = next;
+            }
+            if (raw _is_word_char(ncp) == 0i64) {
+                searching = 0i64;
+            }
+        }
+    }
+
+    g_sel_mode       = SEL_LINE;
+    g_sel_active     = 1i64;
+    g_sel_dragging   = 0i64;
+    g_sel_anchor_row = display_row;
+    g_sel_anchor_col = lc;
+    g_sel_end_row    = display_row;
+    g_sel_end_col    = rc;
+    g_sel_offset     = offset;
+    pass(NIL);
+};
+
+/// Select the entire visible display row.
+pub func:sel_select_line = NIL(int64:display_row, int64:offset, int64:cols) {
+    g_sel_mode       = SEL_LINE;
+    g_sel_active     = 1i64;
+    g_sel_dragging   = 0i64;
+    g_sel_anchor_row = display_row;
+    g_sel_anchor_col = 0i64;
+    g_sel_end_row    = display_row;
+    g_sel_end_col    = cols - 1i64;
+    g_sel_offset     = offset;
+    pass(NIL);
+};
+
+// ── Word character test ───────────────────────────────────────────────────
+
+func:_is_word_char = int64(int64:cp) {
+    // Space, TAB → not a word char
+    if (cp == 32i64)  { pass(0i64); }
+    if (cp == 9i64)   { pass(0i64); }
+    if (cp == 0i64)   { pass(0i64); }
+    // Common punctuation that breaks words
+    if (cp == 40i64)  { pass(0i64); }  // (
+    if (cp == 41i64)  { pass(0i64); }  // )
+    if (cp == 91i64)  { pass(0i64); }  // [
+    if (cp == 93i64)  { pass(0i64); }  // ]
+    if (cp == 123i64) { pass(0i64); }  // {
+    if (cp == 125i64) { pass(0i64); }  // }
+    if (cp == 34i64)  { pass(0i64); }  // "
+    if (cp == 39i64)  { pass(0i64); }  // '
+    if (cp == 96i64)  { pass(0i64); }  // `
+    if (cp == 44i64)  { pass(0i64); }  // ,
+    if (cp == 59i64)  { pass(0i64); }  // ;
+    // Everything else (letters, digits, _, -, /, :, .) is word char
+    pass(1i64);
+};
+
+// ── Text extraction ───────────────────────────────────────────────────────
+// Extract selected text as a string.
+// Parameters:
+//   offset   : current viewport scroll offset (rows)
+//   rows     : terminal rows count
+//   cols     : terminal columns count
+// Returns the extracted text (newline-separated rows, trailing spaces trimmed).
+
+pub func:sel_get_text = string(int64:offset, int64:rows, int64:cols) {
+    if (g_sel_active == 0i64) { pass(""); }
+    if (g_sel_mode == SEL_NONE) { pass(""); }
+
+    int64:sb_len = raw scrollback_len();
+    string:result = "";
+
+    // Normalize rows
+    int64:min_row = g_sel_anchor_row;
+    int64:max_row = g_sel_end_row;
+    int64:min_col = g_sel_anchor_col;
+    int64:max_col = g_sel_end_col;
+    if (g_sel_end_row < g_sel_anchor_row) {
+        min_row = g_sel_end_row;
+        max_row = g_sel_anchor_row;
+        min_col = g_sel_end_col;
+        max_col = g_sel_anchor_col;
+    }
+    if (g_sel_end_row == g_sel_anchor_row) {
+        if (g_sel_end_col < g_sel_anchor_col) {
+            min_col = g_sel_end_col;
+            max_col = g_sel_anchor_col;
+        }
+    }
+
+    // Block col range (used in BLOCK mode)
+    int64:bc_min = g_sel_anchor_col;
+    int64:bc_max = g_sel_end_col;
+    if (g_sel_anchor_col > g_sel_end_col) {
+        bc_min = g_sel_end_col;
+        bc_max = g_sel_anchor_col;
+    }
+
+    int64:dr = min_row;
+    while (dr <= max_row) {
+        // Determine start/end col for this row
+        int64:cs = 0i64;
+        int64:ce = cols - 1i64;
+
+        if (g_sel_mode == SEL_LINE) {
+            if (dr == min_row) { cs = min_col; }
+            if (dr == max_row) { ce = max_col; }
+        }
+        if (g_sel_mode == SEL_BLOCK) {
+            cs = bc_min;
+            ce = bc_max;
+        }
+
+        // Map display row → source
+        int64:sb_idx    = offset - 1i64 - dr;
+        int64:active_row = dr - offset;
+
+        // Build row string (trim trailing spaces)
+        string:row_str = "";
+        int64:c = cs;
+        while (c <= ce) {
+            int64:cp = 32i64;
+            if (sb_idx >= 0i64) {
+                if (sb_idx < sb_len) {
+                    cp = raw scrollback_get_cp(sb_idx, c);
+                }
+            }
+            if (sb_idx < 0i64) {
+                if (active_row >= 0i64) {
+                    if (active_row < rows) {
+                        cp = raw grid_get_cp(active_row, c);
+                    }
+                }
+            }
+            if (cp == 0i64) { cp = 32i64; }
+
+            // Append codepoint as UTF-8 (ASCII only for now; wide chars TBD)
+            if (cp >= 32i64) {
+                if (cp < 128i64) {
+                    row_str = row_str + string_from_char(cp);
+                }
+            }
+            c = c + 1i64;
+        }
+
+        // Trim trailing spaces from row_str
+        row_str = raw _trim_trailing_spaces(row_str);
+
+        // Append to result (with newline separator except last row)
+        if (string_length(result) > 0i64) {
+            result = result + "\n";
+        }
+        result = result + row_str;
+
+        dr = dr + 1i64;
+    }
+
+    pass(result);
+};
+
+// ── Internal: trim trailing spaces ───────────────────────────────────────
+
+func:_trim_trailing_spaces = string(string:s) {
+    int64:len = string_length(s);
+    if (len == 0i64) { pass(s); }
+    // Walk backwards finding last non-space
+    int64:last = len - 1i64;
+    int64:scanning = 1i64;
+    while (scanning == 1i64) {
+        if (last < 0i64) { scanning = 0i64; }
+        if (scanning == 1i64) {
+            string:ch = string_char_at(s, last);
+            if (ch == " ") {
+                last = last - 1i64;
+            }
+            if (ch != " ") {
+                scanning = 0i64;
+            }
+        }
+    }
+    if (last < 0i64) { pass(""); }
+    // Rebuild string up to last+1
+    string:trimmed = "";
+    int64:i = 0i64;
+    while (i <= last) {
+        trimmed = trimmed + string_char_at(s, i);
+        i = i + 1i64;
+    }
+    pass(trimmed);
+};

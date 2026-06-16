@@ -1,0 +1,136 @@
+// src/gui/clipboard.npk — Clipboard copy/paste for Nitty v0.7.1
+//
+// Handles:
+//   - Copy: extract selected text via selection.npk, send to GdkClipboard
+//   - Paste: async clipboard read, bracketed paste wrapping, multi-line warning
+//   - Primary selection paste (X11 middle-click)
+//
+// Paste flow (per-frame polling):
+//   clipboard_do_paste()  → nitty_gtk4_clipboard_paste_request()
+//   clipboard_poll_paste() → called every tw_on_draw frame
+//     - when nitty_gtk4_clipboard_paste_ready() == 1:
+//         reads bytes, applies bracketed paste, writes to PTY
+//
+// Config keys queried (from config.npk):
+//   terminal.copy_on_select    (Bool, default 0)
+//   terminal.warn_multiline_paste (Bool, default 1)
+
+use "gtk4_ffi.npk".*;
+use "selection.npk".*;
+use "../terminal/terminal_state.npk".*;
+use "../config/config.npk".*;
+
+// ── Module state ──────────────────────────────────────────────────────────
+
+int64:g_cb_paste_pending = 0i64;  // 1 = async paste request is in flight
+
+// ── Copy ──────────────────────────────────────────────────────────────────
+
+/// Extract selected text and copy it to the system clipboard.
+/// offset/rows/cols: current viewport/terminal dimensions.
+pub func:clipboard_do_copy = NIL(int64:offset, int64:rows, int64:cols) {
+    if (raw sel_is_active() == 0i64) { pass(NIL); }
+    string:txt = raw sel_get_text(offset, rows, cols);
+    if (string_length(txt) == 0i64) { pass(NIL); }
+    nitty_gtk4_clipboard_copy_text(txt);
+    pass(NIL);
+};
+
+// ── Paste — system clipboard ──────────────────────────────────────────────
+
+/// Begin an async paste from the system clipboard.
+pub func:clipboard_do_paste = NIL() {
+    if (g_cb_paste_pending != 0i64) { pass(NIL); }  // already in flight
+    g_cb_paste_pending = 1i64;
+    nitty_gtk4_clipboard_paste_request();
+    pass(NIL);
+};
+
+/// Begin an async paste from the X11 PRIMARY selection (middle-click).
+pub func:clipboard_do_paste_primary = NIL() {
+    if (g_cb_paste_pending != 0i64) { pass(NIL); }
+    g_cb_paste_pending = 1i64;
+    nitty_gtk4_primary_paste_request();
+    pass(NIL);
+};
+
+// ── Paste — polling (called every frame from tw_on_draw) ──────────────────
+//
+// When the async request completes:
+//   1. Read bytes from C buffer
+//   2. Detect multi-line (any 0x0A byte)
+//   3. If multi-line AND warn_multiline_paste AND NOT bracketed_paste:
+//        show confirmation dialog
+//   4. Write bracketed or plain bytes to PTY
+
+pub func:clipboard_poll_paste = NIL() {
+    if (g_cb_paste_pending == 0i64) { pass(NIL); }
+    if (nitty_gtk4_clipboard_paste_ready() == 0i64) { pass(NIL); }
+
+    // Paste text is ready — consume it
+    g_cb_paste_pending = 0i64;
+
+    int64:len = nitty_gtk4_clipboard_paste_text_len();
+    if (len == 0i64) { pass(NIL); }
+
+    int64:bracketed = raw ts_get_mode_bracketed_paste();
+    int64:warn      = raw cfg_warn_multiline_paste();
+
+    // Detect newlines for multi-line warning
+    int64:has_newline = 0i64;
+    if (warn != 0i64) {
+        if (bracketed == 0i64) {
+            int64:si = 0i64;
+            while (si < len) {
+                int64:b = nitty_gtk4_clipboard_paste_get_byte(si);
+                if (b == 0x0Ai64) { has_newline = 1i64; }
+                si = si + 1i64;
+            }
+        }
+    }
+
+    // If multi-line and not bracketed: show dialog
+    if (has_newline != 0i64) {
+        // Count lines for the dialog message
+        int64:line_count = 1i64;
+        int64:ci = 0i64;
+        while (ci < len) {
+            int64:b = nitty_gtk4_clipboard_paste_get_byte(ci);
+            if (b == 0x0Ai64) { line_count = line_count + 1i64; }
+            ci = ci + 1i64;
+        }
+        string:msg = "Paste " + string_from_int(line_count) + " lines? This may execute commands.";
+        int64:confirmed = nitty_gtk4_confirm_close(msg);
+        if (confirmed == 0i64) { pass(NIL); }
+    }
+
+    // Write to PTY with optional bracketed paste wrapping
+    if (bracketed != 0i64) {
+        // ESC [ 2 0 0 ~  = 0x1B 0x5B 0x32 0x30 0x30 0x7E
+        drop(nitty_gtk4_pty_write_byte(0x1Bi64));
+        drop(nitty_gtk4_pty_write_byte(0x5Bi64));
+        drop(nitty_gtk4_pty_write_byte(0x32i64));
+        drop(nitty_gtk4_pty_write_byte(0x30i64));
+        drop(nitty_gtk4_pty_write_byte(0x30i64));
+        drop(nitty_gtk4_pty_write_byte(0x7Ei64));
+    }
+
+    int64:i = 0i64;
+    while (i < len) {
+        int64:b = nitty_gtk4_clipboard_paste_get_byte(i);
+        drop(nitty_gtk4_pty_write_byte(b));
+        i = i + 1i64;
+    }
+
+    if (bracketed != 0i64) {
+        // ESC [ 2 0 1 ~  = 0x1B 0x5B 0x32 0x30 0x31 0x7E
+        drop(nitty_gtk4_pty_write_byte(0x1Bi64));
+        drop(nitty_gtk4_pty_write_byte(0x5Bi64));
+        drop(nitty_gtk4_pty_write_byte(0x32i64));
+        drop(nitty_gtk4_pty_write_byte(0x30i64));
+        drop(nitty_gtk4_pty_write_byte(0x31i64));
+        drop(nitty_gtk4_pty_write_byte(0x7Ei64));
+    }
+
+    pass(NIL);
+};

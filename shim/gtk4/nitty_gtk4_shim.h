@@ -542,13 +542,38 @@ int64_t nitty_gtk4_spawn_tab_shell_cmd(int64_t rows, int64_t cols,
  * nitty_gtk4_key_was_consumed:  returns 1 if the last key event was intercepted
  *   by the C shim (tab/pane/scroll event fired), 0 if it passed through.
  *   Prevents the Nitpick hotkey engine from double-dispatching intercepted keys.
- * nitty_gtk4_clipboard_copy:   copy terminal selection to clipboard (stub v0.6.2).
- * nitty_gtk4_clipboard_paste:  paste clipboard into active PTY (stub v0.6.2).
+ * nitty_gtk4_clipboard_copy:   legacy no-op stub (superseded by copy_text).
+ * nitty_gtk4_clipboard_paste:  legacy no-op stub (superseded by paste_request).
  */
 int64_t nitty_gtk4_get_monotonic_ms(void);
 int64_t nitty_gtk4_key_was_consumed(void);
 void    nitty_gtk4_clipboard_copy(void);
 void    nitty_gtk4_clipboard_paste(void);
+
+/**
+ * v0.7.1: Full clipboard copy/paste implementation.
+ *
+ * nitty_gtk4_clipboard_copy_text(text):    write text to system clipboard.
+ *   Also writes to X11 PRIMARY selection automatically.
+ * nitty_gtk4_clipboard_paste_request():    begin async clipboard read.
+ * nitty_gtk4_primary_paste_request():      begin async PRIMARY selection read.
+ * nitty_gtk4_clipboard_paste_ready():      returns 1 when paste text is available.
+ * nitty_gtk4_clipboard_paste_text_len():   byte length of pending paste text.
+ * nitty_gtk4_clipboard_paste_get_byte(i):  read byte i of paste text.
+ *
+ * v0.7.1: Mouse helpers.
+ * nitty_gtk4_mouse_get_n_press():  click count (1=single, 2=double, 3=triple).
+ * nitty_gtk4_key_modifiers_alt():  1 if Alt was held during last key/mouse event.
+ */
+void    nitty_gtk4_clipboard_copy_text(const char *text);
+void    nitty_gtk4_clipboard_paste_request(void);
+void    nitty_gtk4_primary_paste_request(void);
+int64_t nitty_gtk4_clipboard_paste_ready(void);
+int64_t nitty_gtk4_clipboard_paste_text_len(void);
+int64_t nitty_gtk4_clipboard_paste_get_byte(int64_t offset);
+int64_t nitty_gtk4_mouse_get_n_press(void);
+int64_t nitty_gtk4_key_modifiers_alt(void);
+
 
 /**
  * v0.6.3: Global hotkey registration (X11 XGrabKey) and Quake mode.

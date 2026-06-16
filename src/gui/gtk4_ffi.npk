@@ -473,11 +473,29 @@ extern "nitty_gtk4_shim" {
     // get_monotonic_ms: milliseconds from arbitrary epoch (for chord timeout).
     // key_was_consumed: 1 if the last key event was intercepted by the C shim
     //   (tab/pane/scroll event fired), 0 otherwise. Clears after read.
-    // clipboard_copy/paste: stub implementations (full in v0.7.x).
+    // clipboard_copy/paste: legacy no-op stubs (kept for dispatch compatibility).
     func:nitty_gtk4_get_monotonic_ms   = int64();
     func:nitty_gtk4_key_was_consumed   = int64();
     func:nitty_gtk4_clipboard_copy     = NIL();
     func:nitty_gtk4_clipboard_paste    = NIL();
+
+    // v0.7.1: Full clipboard copy/paste.
+    // nitty_gtk4_clipboard_copy_text(text): write text to system clipboard + PRIMARY.
+    // nitty_gtk4_clipboard_paste_request(): begin async clipboard read.
+    // nitty_gtk4_primary_paste_request():   begin async X11 PRIMARY selection read.
+    // nitty_gtk4_clipboard_paste_ready():   returns 1 when paste text available.
+    // nitty_gtk4_clipboard_paste_text_len(): byte length of pending paste.
+    // nitty_gtk4_clipboard_paste_get_byte(i): byte i of paste text buffer.
+    // nitty_gtk4_mouse_get_n_press(): click count (1=single 2=double 3=triple).
+    // nitty_gtk4_key_modifiers_alt(): 1 if Alt held during last key event.
+    func:nitty_gtk4_clipboard_copy_text       = NIL(string:text);
+    func:nitty_gtk4_clipboard_paste_request   = NIL();
+    func:nitty_gtk4_primary_paste_request     = NIL();
+    func:nitty_gtk4_clipboard_paste_ready     = int64();
+    func:nitty_gtk4_clipboard_paste_text_len  = int64();
+    func:nitty_gtk4_clipboard_paste_get_byte  = int64(int64:offset);
+    func:nitty_gtk4_mouse_get_n_press         = int64();
+    func:nitty_gtk4_key_modifiers_alt         = int64();
 
     // v0.6.3: Global hotkey registration (X11 XGrabKey).
     // nitty_x11_grab_key: register hotkey. keyval = GDK keyval (see nitty_gdk_key_f12 etc).
