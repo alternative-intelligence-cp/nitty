@@ -654,5 +654,51 @@ extern "nitty_gtk4_shim" {
     // Show a host key mismatch warning dialog.
     // Returns 1 if user accepted, 0 if cancelled.
     func:nitty_gtk4_host_key_dialog = int64(string:host, string:key_type);
+
+    // ── v0.8.3: Connection Manager UI ──────────────────────────────────────
+    // GtkListBox
+    func:nitty_gtk4_list_box_new            = int64();
+    func:nitty_gtk4_list_box_append         = int64(int64:lb, string:label);
+    func:nitty_gtk4_list_box_get_selected   = int64(int64:lb);
+    func:nitty_gtk4_list_box_clear          = NIL(int64:lb);
+    func:nitty_gtk4_list_box_set_group_header = NIL(int64:lb, int64:row_idx, string:header);
+
+    // GtkEntry
+    func:nitty_gtk4_entry_new             = int64();
+    func:nitty_gtk4_entry_get_text        = string(int64:entry);
+    func:nitty_gtk4_entry_set_placeholder = NIL(int64:entry, string:text);
+
+    // GtkButton
+    func:nitty_gtk4_button_new           = int64(string:label);
+    func:nitty_gtk4_button_set_sensitive = NIL(int64:btn, int32:sensitive);
+
+    // GtkLabel
+    func:nitty_gtk4_label_new      = int64(string:text);
+    func:nitty_gtk4_label_set_text = NIL(int64:label, string:text);
+
+    // Connection Manager composite sidebar
+    func:nitty_gtk4_cm_create           = int64();
+    func:nitty_gtk4_cm_set_visible      = NIL(int64:cm, int32:visible);
+    func:nitty_gtk4_cm_list_box         = int64(int64:cm);
+    func:nitty_gtk4_cm_entry            = int64(int64:cm);
+    func:nitty_gtk4_cm_event_poll       = int64();
+    func:nitty_gtk4_cm_event_profile_id = int64();
+
+    // Sidebar attach
+    func:nitty_gtk4_sidebar_attach      = NIL(int64:win, int64:drawing_area, int64:sidebar);
+    func:nitty_gtk4_sidebar_set_visible = NIL(int32:visible);
+
+    // Profile editor dialog (returns 1 if OK, 0 if cancelled)
+    func:nitty_gtk4_profile_editor_open         = int32(string:name, string:group,
+                                                        string:host, int64:port,
+                                                        string:user, string:auth_method,
+                                                        string:key_path);
+    func:nitty_gtk4_profile_editor_get_name     = string();
+    func:nitty_gtk4_profile_editor_get_group    = string();
+    func:nitty_gtk4_profile_editor_get_host     = string();
+    func:nitty_gtk4_profile_editor_get_port     = int64();
+    func:nitty_gtk4_profile_editor_get_user     = string();
+    func:nitty_gtk4_profile_editor_get_auth     = string();
+    func:nitty_gtk4_profile_editor_get_key_path = string();
 }
 

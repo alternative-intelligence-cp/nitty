@@ -1,0 +1,279 @@
+// src/ssh/ssh_config_parser.npk — ~/.ssh/config parser (v0.8.3)
+//
+// Parses OpenSSH client config format into flat parallel arrays.
+// Supports: Host, HostName, Port, User, IdentityFile keywords.
+// Skips: Match blocks, wildcard Host patterns on import.
+//
+// Usage:
+//   drop(scp_parse(path));         // parse the file
+//   int64:n = raw scp_count();     // how many entries
+//   string:h = raw scp_get_hostname(0i64);
+//
+// scp_import_to_profiles() copies non-wildcard entries into profile.npk slots.
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
+use "/home/randy/Workspace/REPOS/nitty/src/config/profile.npk".*;
+
+// ── Parse state (flat parallel arrays, max 64 entries) ───────────────────────
+
+pub fixed int64:SCP_MAX = 64i64;
+
+string[64]:g_scp_host_pattern;    // the Host pattern (may contain * or ?)
+string[64]:g_scp_hostname;        // HostName (resolved hostname)
+int64[64]:g_scp_port;             // Port (0 = not specified → default 22)
+string[64]:g_scp_user;            // User
+string[64]:g_scp_identity_file;   // IdentityFile (~ expanded)
+int64[64]:g_scp_is_wildcard;      // 1 if host_pattern contains * or ?
+int64:g_scp_count = 0i64;
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+/// Check if a string contains a wildcard character (* or ?).
+func:_has_wildcard = int64(string:s) {
+    int64:len = string_length(s);
+    int64:i = 0i64;
+    while (i < len) {
+        string:ch = string_substring(s, i, i + 1i64);
+        if (ch == "*" || ch == "?") { pass(1i64); }
+        i = i + 1i64;
+    }
+    pass(0i64);
+};
+
+/// Expand a leading ~ to $HOME in a path string.
+func:_expand_tilde = string(string:path) {
+    if (string_length(path) == 0i64) { pass(path); }
+    string:first = string_substring(path, 0i64, 1i64);
+    if (first != "~") { pass(path); }
+    string:home = raw env_get("HOME");
+    if (string_length(home) == 0i64) { pass(path); }
+    pass(string_concat(home, string_substring(path, 1i64, string_length(path))));
+};
+
+/// Trim leading whitespace from a string (spaces and tabs).
+func:_ltrim = string(string:s) {
+    int64:len = string_length(s);
+    int64:i = 0i64;
+    while (i < len) {
+        string:ch = string_substring(s, i, i + 1i64);
+        if (ch != " " && ch != "\t") {
+            pass(string_substring(s, i, len));
+        }
+        i = i + 1i64;
+    }
+    pass("");
+};
+
+/// Trim trailing whitespace + newline from a string.
+func:_rtrim = string(string:s) {
+    int64:len = string_length(s);
+    int64:i = len - 1i64;
+    while (i >= 0i64) {
+        string:ch = string_substring(s, i, i + 1i64);
+        if (ch != " " && ch != "\t" && ch != "\n" && ch != "\r") {
+            pass(string_substring(s, 0i64, i + 1i64));
+        }
+        i = i - 1i64;
+    }
+    pass("");
+};
+
+/// Find the first space or tab in a string. Returns index, or -1.
+func:_find_space = int64(string:s) {
+    int64:len = string_length(s);
+    int64:i = 0i64;
+    while (i < len) {
+        string:ch = string_substring(s, i, i + 1i64);
+        if (ch == " " || ch == "\t") { pass(i); }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+/// Parse integer from string. Returns 0 on invalid input.
+func:_parse_int = int64(string:s) {
+    int64:len = string_length(s);
+    int64:result = 0i64;
+    int64:i = 0i64;
+    while (i < len) {
+        string:ch = string_substring(s, i, i + 1i64);
+        if (ch == "0") { result = result * 10i64; }
+        if (ch == "1") { result = result * 10i64 + 1i64; }
+        if (ch == "2") { result = result * 10i64 + 2i64; }
+        if (ch == "3") { result = result * 10i64 + 3i64; }
+        if (ch == "4") { result = result * 10i64 + 4i64; }
+        if (ch == "5") { result = result * 10i64 + 5i64; }
+        if (ch == "6") { result = result * 10i64 + 6i64; }
+        if (ch == "7") { result = result * 10i64 + 7i64; }
+        if (ch == "8") { result = result * 10i64 + 8i64; }
+        if (ch == "9") { result = result * 10i64 + 9i64; }
+        i = i + 1i64;
+    }
+    pass(result);
+};
+
+/// Clear a single entry slot.
+func:_scp_clear = NIL(int64:i) {
+    g_scp_host_pattern[i]  = "";
+    g_scp_hostname[i]      = "";
+    g_scp_port[i]          = 0i64;
+    g_scp_user[i]          = "";
+    g_scp_identity_file[i] = "";
+    g_scp_is_wildcard[i]   = 0i64;
+    pass(NIL);
+};
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/// Parse an SSH config file at the given path.
+/// Resets the entry table first. Returns the number of entries parsed.
+pub func:scp_parse = int64(string:path) {
+    // Reset
+    g_scp_count = 0i64;
+    int64:ci = 0i64;
+    while (ci < SCP_MAX) { drop(_scp_clear(ci)); ci = ci + 1i64; }
+
+    // Read file
+    string:content = raw fs_read_file(path);
+    if (string_length(content) == 0i64) { pass(0i64); }
+
+    int64:len        = string_length(content);
+    int64:cur_entry  = -1i64;  // index of current Host block (-1 = before first Host)
+    int64:in_match   = 0i64;   // 1 = inside a Match block (skip until next Host)
+
+    int64:pos = 0i64;
+    while (pos < len) {
+        // Find end of current line (scan for \n)
+        int64:line_end  = pos;
+        int64:found_nl  = 0i64;
+        while (line_end < len && found_nl == 0i64) {
+            string:ch = string_substring(content, line_end, line_end + 1i64);
+            if (ch == "\n") { found_nl = 1i64; }
+            if (found_nl == 0i64) { line_end = line_end + 1i64; }
+        }
+        // line_end now points to the \n (or len if no trailing newline)
+        string:raw_line = string_substring(content, pos, line_end);
+        string:line = raw _rtrim(raw _ltrim(raw_line));
+
+        // Advance pos past the \n (or to len to exit loop after last line)
+        if (found_nl == 1i64) { pos = line_end + 1i64; }
+        if (found_nl == 0i64) { pos = len; }
+
+        // Skip blank lines and comments
+        int64:llen = string_length(line);
+        if (llen > 0i64) {
+            string:first_ch = string_substring(line, 0i64, 1i64);
+            if (first_ch != "#") {
+                // Split keyword and value at first whitespace
+                int64:sp = raw _find_space(line);
+                string:kw    = line;
+                string:value = "";
+                if (sp >= 0i64) {
+                    kw    = string_substring(line, 0i64, sp);
+                    value = raw _ltrim(string_substring(line, sp + 1i64, llen));
+                }
+
+                // Host keyword - start new entry
+                if (kw == "Host" || kw == "host" || kw == "HOST") {
+                    in_match = 0i64;
+                    if (g_scp_count < SCP_MAX) {
+                        cur_entry = g_scp_count;
+                        drop(_scp_clear(cur_entry));
+                        g_scp_host_pattern[cur_entry] = value;
+                        g_scp_is_wildcard[cur_entry]  = raw _has_wildcard(value);
+                        // hostname defaults to same as host pattern if not overridden
+                        g_scp_hostname[cur_entry]     = value;
+                        g_scp_count = g_scp_count + 1i64;
+                    }
+                }
+
+                // Match keyword - skip block
+                if (kw == "Match" || kw == "match") {
+                    in_match = 1i64;
+                    cur_entry = -1i64;
+                }
+
+                // Sub-keywords (only inside a Host block, not a Match block)
+                if (cur_entry >= 0i64 && in_match == 0i64) {
+                    if (kw == "HostName" || kw == "Hostname" || kw == "hostname") {
+                        g_scp_hostname[cur_entry] = value;
+                    }
+                    if (kw == "Port" || kw == "port") {
+                        g_scp_port[cur_entry] = raw _parse_int(value);
+                    }
+                    if (kw == "User" || kw == "user") {
+                        g_scp_user[cur_entry] = value;
+                    }
+                    if (kw == "IdentityFile" || kw == "identityfile") {
+                        g_scp_identity_file[cur_entry] = raw _expand_tilde(value);
+                    }
+                }
+            }
+        }
+    }
+
+    pass(g_scp_count);
+};
+
+/// Number of parsed entries.
+pub func:scp_count = int64() { pass(g_scp_count); };
+
+pub func:scp_get_host_pattern  = string(int64:i) { pass(g_scp_host_pattern[i]); };
+pub func:scp_get_hostname      = string(int64:i) { pass(g_scp_hostname[i]); };
+pub func:scp_get_port          = int64(int64:i)  {
+    if (g_scp_port[i] <= 0i64) { pass(22i64); }
+    pass(g_scp_port[i]);
+};
+pub func:scp_get_user          = string(int64:i) { pass(g_scp_user[i]); };
+pub func:scp_get_identity_file = string(int64:i) { pass(g_scp_identity_file[i]); };
+pub func:scp_is_wildcard       = int64(int64:i)  { pass(g_scp_is_wildcard[i]); };
+
+/// Import non-wildcard SSH config entries as profiles.
+/// Profiles are placed in the "Imported from SSH Config" group.
+/// Returns the number of profiles created.
+pub func:scp_import_to_profiles = int64() {
+    int64:imported = 0i64;
+    int64:i = 0i64;
+    while (i < g_scp_count) {
+        // Skip wildcard entries (Host *, Host *.example.com, etc.)
+        if (g_scp_is_wildcard[i] == 0i64) {
+            // Use HostName as the display name, or host pattern if same
+            string:disp_name = g_scp_host_pattern[i];
+
+            // Check for duplicate (already imported)
+            int64:existing = raw profile_find_by_name(disp_name);
+            if (existing < 0i64) {
+                // Create the profile slot
+                int64:slot = raw profile_add(
+                    disp_name,
+                    PROF_TYPE_SSH,
+                    0i64,   // not default
+                    "",     // no inheritance
+                    "Imported from SSH Config",
+                    "",     // no shell
+                    "",     // no working dir
+                    "",     // no startup cmd
+                    1i64    // login shell (irrelevant for SSH)
+                );
+                if (slot >= 0i64) {
+                    // Port: use parsed value or default 22
+                    int64:port = g_scp_port[i];
+                    if (port <= 0i64) { port = 22i64; }
+                    drop(profile_set_ssh(
+                        slot,
+                        g_scp_hostname[i],
+                        port,
+                        g_scp_user[i],
+                        "",   // auth method: auto
+                        g_scp_identity_file[i],
+                        30i64 // default keepalive
+                    ));
+                    imported = imported + 1i64;
+                }
+            }
+        }
+        i = i + 1i64;
+    }
+    pass(imported);
+};

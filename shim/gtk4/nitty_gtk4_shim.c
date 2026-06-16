@@ -3253,3 +3253,430 @@ int64_t nitty_gtk4_host_key_dialog(const char *host, const char *key_type)
     return (int64_t)state.accepted;
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/* v0.8.3 — Connection Manager UI                                            */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/* Note: paned/box/scrolled_window already exist from v0.5.x — reused as-is */
+
+int64_t nitty_gtk4_list_box_new(void) {
+    GtkWidget *lb = gtk_list_box_new();
+    gtk_list_box_set_selection_mode(GTK_LIST_BOX(lb), GTK_SELECTION_SINGLE);
+    return (int64_t)(uintptr_t)lb;
+}
+
+/* Append a row with label text. Returns the row index. */
+int64_t nitty_gtk4_list_box_append(int64_t lb, const char *label) {
+    GtkWidget *lbox = (GtkWidget *)(uintptr_t)lb;
+    GtkWidget *row  = gtk_list_box_row_new();
+    GtkWidget *lbl  = gtk_label_new(label);
+    gtk_label_set_xalign(GTK_LABEL(lbl), 0.0f);
+    gtk_widget_set_margin_start(lbl, 8);
+    gtk_widget_set_margin_end(lbl, 8);
+    gtk_widget_set_margin_top(lbl, 4);
+    gtk_widget_set_margin_bottom(lbl, 4);
+    gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), lbl);
+    gtk_list_box_append(GTK_LIST_BOX(lbox), row);
+    /* return 0-based index of appended row */
+    int idx = 0;
+    GtkListBoxRow *r = gtk_list_box_get_row_at_index(GTK_LIST_BOX(lbox), 0);
+    while (r != NULL) {
+        idx++;
+        r = gtk_list_box_get_row_at_index(GTK_LIST_BOX(lbox), idx);
+    }
+    return (int64_t)(idx - 1);
+}
+
+int64_t nitty_gtk4_list_box_get_selected(int64_t lb) {
+    GtkListBoxRow *row = gtk_list_box_get_selected_row(
+        GTK_LIST_BOX((GtkWidget *)(uintptr_t)lb));
+    if (!row) return -1;
+    return (int64_t)gtk_list_box_row_get_index(row);
+}
+
+void nitty_gtk4_list_box_clear(int64_t lb) {
+    GtkWidget *lbox = (GtkWidget *)(uintptr_t)lb;
+    GtkListBoxRow *row;
+    while ((row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(lbox), 0)) != NULL) {
+        gtk_list_box_remove(GTK_LIST_BOX(lbox), GTK_WIDGET(row));
+    }
+}
+
+void nitty_gtk4_list_box_set_group_header(int64_t lb, int64_t row_idx,
+                                           const char *header) {
+    GtkListBoxRow *row = gtk_list_box_get_row_at_index(
+        GTK_LIST_BOX((GtkWidget *)(uintptr_t)lb), (int)row_idx);
+    if (!row) return;
+    GtkWidget *hdr = gtk_label_new(header);
+    gtk_label_set_xalign(GTK_LABEL(hdr), 0.0f);
+    /* Bold the group header */
+    PangoAttrList *attrs = pango_attr_list_new();
+    pango_attr_list_insert(attrs, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
+    gtk_label_set_attributes(GTK_LABEL(hdr), attrs);
+    pango_attr_list_unref(attrs);
+    gtk_list_box_row_set_header(row, hdr);
+}
+
+/* ── GtkEntry ────────────────────────────────────────────────────────────── */
+
+int64_t nitty_gtk4_entry_new(void) {
+    GtkWidget *e = gtk_entry_new();
+    return (int64_t)(uintptr_t)e;
+}
+
+const char *nitty_gtk4_entry_get_text(int64_t entry) {
+    GtkEntryBuffer *buf = gtk_entry_get_buffer(
+        GTK_ENTRY((GtkWidget *)(uintptr_t)entry));
+    return gtk_entry_buffer_get_text(buf);
+}
+
+void nitty_gtk4_entry_set_placeholder(int64_t entry, const char *text) {
+    gtk_entry_set_placeholder_text(GTK_ENTRY((GtkWidget *)(uintptr_t)entry), text);
+}
+
+/* ── GtkButton ───────────────────────────────────────────────────────────── */
+
+int64_t nitty_gtk4_button_new(const char *label) {
+    GtkWidget *btn = gtk_button_new_with_label(label);
+    return (int64_t)(uintptr_t)btn;
+}
+
+void nitty_gtk4_button_set_sensitive(int64_t btn, int32_t sensitive) {
+    gtk_widget_set_sensitive((GtkWidget *)(uintptr_t)btn, sensitive ? TRUE : FALSE);
+}
+
+/* ── GtkLabel ────────────────────────────────────────────────────────────── */
+
+int64_t nitty_gtk4_label_new(const char *text) {
+    GtkWidget *lbl = gtk_label_new(text);
+    return (int64_t)(uintptr_t)lbl;
+}
+
+void nitty_gtk4_label_set_text(int64_t label, const char *text) {
+    gtk_label_set_text(GTK_LABEL((GtkWidget *)(uintptr_t)label), text);
+}
+
+/* ── Connection Manager Composite Sidebar ───────────────────────────────── */
+
+/* Event queue — simple ring buffer for Nitpick polling */
+#define CM_EVENT_NONE        0
+#define CM_EVENT_CONNECT     1
+#define CM_EVENT_NEW         2
+#define CM_EVENT_EDIT        3
+#define CM_EVENT_DELETE      4
+#define CM_EVENT_IMPORT      5
+#define CM_EVENT_QUICK_CONN  6
+
+static int64_t g_cm_event_buf[16];
+static int     g_cm_event_head = 0;
+static int     g_cm_event_tail = 0;
+static int64_t g_cm_event_profile_id = -1;
+static GtkWidget *g_cm_widget   = NULL;
+static GtkWidget *g_cm_listbox  = NULL;
+static GtkWidget *g_cm_entry    = NULL;
+static GtkWidget *g_cm_paned    = NULL;
+
+static void cm_push_event(int64_t code) {
+    int next = (g_cm_event_tail + 1) % 16;
+    if (next != g_cm_event_head) {
+        g_cm_event_buf[g_cm_event_tail] = code;
+        g_cm_event_tail = next;
+    }
+}
+
+static void on_cm_connect_clicked(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    cm_push_event(CM_EVENT_CONNECT);
+}
+static void on_cm_new_clicked(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    cm_push_event(CM_EVENT_NEW);
+}
+static void on_cm_edit_clicked(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    cm_push_event(CM_EVENT_EDIT);
+}
+static void on_cm_delete_clicked(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    cm_push_event(CM_EVENT_DELETE);
+}
+static void on_cm_import_clicked(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    cm_push_event(CM_EVENT_IMPORT);
+}
+static void on_cm_entry_activate(GtkEntry *entry, gpointer data) {
+    (void)entry; (void)data;
+    cm_push_event(CM_EVENT_QUICK_CONN);
+}
+static void on_cm_row_activated(GtkListBox *lb, GtkListBoxRow *row, gpointer data) {
+    (void)lb; (void)data;
+    g_cm_event_profile_id = (int64_t)gtk_list_box_row_get_index(row);
+    cm_push_event(CM_EVENT_CONNECT);
+}
+
+int64_t nitty_gtk4_cm_create(void) {
+    /* Outer vertical box: quick-connect bar + scrolled list + button bar */
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_size_request(vbox, 240, -1);
+
+    /* Quick connect label + entry */
+    GtkWidget *qc_label = gtk_label_new("Quick Connect");
+    gtk_label_set_xalign(GTK_LABEL(qc_label), 0.0f);
+    gtk_widget_set_margin_start(qc_label, 8);
+    gtk_widget_set_margin_top(qc_label, 8);
+    gtk_box_append(GTK_BOX(vbox), qc_label);
+
+    GtkWidget *entry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "user@host:port");
+    gtk_widget_set_margin_start(entry, 4);
+    gtk_widget_set_margin_end(entry, 4);
+    gtk_widget_set_margin_bottom(entry, 4);
+    g_signal_connect(entry, "activate", G_CALLBACK(on_cm_entry_activate), NULL);
+    gtk_box_append(GTK_BOX(vbox), entry);
+    g_cm_entry = entry;
+
+    /* Separator */
+    gtk_box_append(GTK_BOX(vbox), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+
+    /* Profiles label */
+    GtkWidget *pl_label = gtk_label_new("Saved Profiles");
+    gtk_label_set_xalign(GTK_LABEL(pl_label), 0.0f);
+    gtk_widget_set_margin_start(pl_label, 8);
+    gtk_widget_set_margin_top(pl_label, 6);
+    gtk_box_append(GTK_BOX(vbox), pl_label);
+
+    /* Scrolled list box */
+    GtkWidget *sw = gtk_scrolled_window_new();
+    gtk_widget_set_vexpand(sw, TRUE);
+    GtkWidget *lb = gtk_list_box_new();
+    gtk_list_box_set_selection_mode(GTK_LIST_BOX(lb), GTK_SELECTION_SINGLE);
+    g_signal_connect(lb, "row-activated", G_CALLBACK(on_cm_row_activated), NULL);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw), lb);
+    gtk_box_append(GTK_BOX(vbox), sw);
+    g_cm_listbox = lb;
+
+    /* Button bar */
+    gtk_box_append(GTK_BOX(vbox), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+    GtkWidget *btn_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+    gtk_widget_set_margin_start(btn_bar, 4);
+    gtk_widget_set_margin_end(btn_bar, 4);
+    gtk_widget_set_margin_top(btn_bar, 4);
+    gtk_widget_set_margin_bottom(btn_bar, 4);
+
+    GtkWidget *btn_connect = gtk_button_new_with_label("Connect");
+    GtkWidget *btn_new     = gtk_button_new_with_label("New");
+    GtkWidget *btn_edit    = gtk_button_new_with_label("Edit");
+    GtkWidget *btn_del     = gtk_button_new_with_label("Delete");
+    GtkWidget *btn_import  = gtk_button_new_with_label("Import");
+
+    g_signal_connect(btn_connect, "clicked", G_CALLBACK(on_cm_connect_clicked), NULL);
+    g_signal_connect(btn_new,     "clicked", G_CALLBACK(on_cm_new_clicked),     NULL);
+    g_signal_connect(btn_edit,    "clicked", G_CALLBACK(on_cm_edit_clicked),    NULL);
+    g_signal_connect(btn_del,     "clicked", G_CALLBACK(on_cm_delete_clicked),  NULL);
+    g_signal_connect(btn_import,  "clicked", G_CALLBACK(on_cm_import_clicked),  NULL);
+
+    gtk_box_append(GTK_BOX(btn_bar), btn_connect);
+    gtk_box_append(GTK_BOX(btn_bar), btn_new);
+    gtk_box_append(GTK_BOX(btn_bar), btn_edit);
+    gtk_box_append(GTK_BOX(btn_bar), btn_del);
+    gtk_box_append(GTK_BOX(btn_bar), btn_import);
+    gtk_box_append(GTK_BOX(vbox), btn_bar);
+
+    g_cm_widget = vbox;
+    return (int64_t)(uintptr_t)vbox;
+}
+
+void nitty_gtk4_cm_set_visible(int64_t cm, int32_t visible) {
+    GtkWidget *w = (GtkWidget *)(uintptr_t)cm;
+    gtk_widget_set_visible(w, visible ? TRUE : FALSE);
+}
+
+int64_t nitty_gtk4_cm_list_box(int64_t cm) {
+    (void)cm;
+    return (int64_t)(uintptr_t)g_cm_listbox;
+}
+
+int64_t nitty_gtk4_cm_entry(int64_t cm) {
+    (void)cm;
+    return (int64_t)(uintptr_t)g_cm_entry;
+}
+
+int64_t nitty_gtk4_cm_event_poll(void) {
+    if (g_cm_event_head == g_cm_event_tail) return CM_EVENT_NONE;
+    int64_t ev = g_cm_event_buf[g_cm_event_head];
+    g_cm_event_head = (g_cm_event_head + 1) % 16;
+    return ev;
+}
+
+int64_t nitty_gtk4_cm_event_profile_id(void) {
+    return g_cm_event_profile_id;
+}
+
+/* ── Sidebar Attach ──────────────────────────────────────────────────────── */
+
+void nitty_gtk4_sidebar_attach(int64_t win, int64_t drawing_area, int64_t sidebar) {
+    GtkWindow  *window = GTK_WINDOW((GtkWidget *)(uintptr_t)win);
+    GtkWidget  *da     = (GtkWidget *)(uintptr_t)drawing_area;
+    GtkWidget  *sb     = (GtkWidget *)(uintptr_t)sidebar;
+
+    /* Remove existing child (the DrawingArea) from the window */
+    GtkWidget *old_child = gtk_window_get_child(window);
+    if (old_child) {
+        g_object_ref(da);  /* keep da alive while we re-parent */
+        gtk_window_set_child(window, NULL);
+    }
+
+    /* Create a horizontal GtkPaned: sidebar | DrawingArea */
+    GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_paned_set_start_child(GTK_PANED(paned), sb);
+    gtk_paned_set_end_child(GTK_PANED(paned), da);
+    gtk_paned_set_position(GTK_PANED(paned), 240);
+    /* Allow the DrawingArea (end child) to shrink and fill extra space */
+    gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
+    gtk_paned_set_resize_start_child(GTK_PANED(paned), FALSE);
+    gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
+
+    gtk_window_set_child(window, paned);
+    g_cm_paned = paned;
+
+    if (old_child) g_object_unref(da);
+}
+
+void nitty_gtk4_sidebar_set_visible(int32_t visible) {
+    if (!g_cm_widget) return;
+    gtk_widget_set_visible(g_cm_widget, visible ? TRUE : FALSE);
+    /* When hiding sidebar, collapse paned to 0 */
+    if (g_cm_paned) {
+        gtk_paned_set_position(GTK_PANED(g_cm_paned), visible ? 240 : 0);
+    }
+}
+
+/* ── Profile Editor Dialog ───────────────────────────────────────────────── */
+
+static char g_pe_name[512]     = "";
+static char g_pe_group[256]    = "";
+static char g_pe_host[512]     = "";
+static int64_t g_pe_port       = 22;
+static char g_pe_user[256]     = "";
+static char g_pe_auth[64]      = "";
+static char g_pe_key_path[1024]= "";
+
+typedef struct {
+    GMainLoop  *loop;
+    int         accepted;
+    GtkWidget  *w_name;
+    GtkWidget  *w_group;
+    GtkWidget  *w_host;
+    GtkWidget  *w_port;
+    GtkWidget  *w_user;
+    GtkWidget  *w_auth;
+    GtkWidget  *w_key_path;
+} PEState;
+
+static void on_pe_save(GtkButton *btn, gpointer data) {
+    (void)btn;
+    PEState *s = (PEState *)data;
+    s->accepted = 1;
+    g_main_loop_quit(s->loop);
+}
+static void on_pe_cancel(GtkButton *btn, gpointer data) {
+    (void)btn;
+    PEState *s = (PEState *)data;
+    s->accepted = 0;
+    g_main_loop_quit(s->loop);
+}
+
+int32_t nitty_gtk4_profile_editor_open(const char *name, const char *group,
+                                        const char *host, int64_t port,
+                                        const char *user, const char *auth_method,
+                                        const char *key_path) {
+    PEState state = {0};
+    state.loop     = g_main_loop_new(NULL, FALSE);
+    state.accepted = 0;
+
+    GtkWidget *dialog = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(dialog), (name && name[0]) ? "Edit Profile" : "New Profile");
+    gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 420, 340);
+
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(vbox, 16);
+    gtk_widget_set_margin_end(vbox, 16);
+    gtk_widget_set_margin_top(vbox, 16);
+    gtk_widget_set_margin_bottom(vbox, 16);
+    gtk_window_set_child(GTK_WINDOW(dialog), vbox);
+
+    /* Helper macro: add label + entry row */
+    #define PE_ROW(label_txt, entry_widget, init_val) \
+        gtk_box_append(GTK_BOX(vbox), gtk_label_new(label_txt)); \
+        entry_widget = gtk_entry_new(); \
+        if (init_val && init_val[0]) { \
+            gtk_entry_buffer_set_text(gtk_entry_get_buffer(GTK_ENTRY(entry_widget)), \
+                                      init_val, -1); \
+        } \
+        gtk_box_append(GTK_BOX(vbox), entry_widget);
+
+    PE_ROW("Profile Name",  state.w_name,     name);
+    PE_ROW("Group",         state.w_group,    group);
+    PE_ROW("Host / IP",     state.w_host,     host);
+
+    /* Port */
+    gtk_box_append(GTK_BOX(vbox), gtk_label_new("Port"));
+    state.w_port = gtk_entry_new();
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%lld", (long long)port);
+    gtk_entry_buffer_set_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_port)), port_str, -1);
+    gtk_box_append(GTK_BOX(vbox), state.w_port);
+
+    PE_ROW("Username",      state.w_user,     user);
+    PE_ROW("Auth Method",   state.w_auth,     auth_method);   /* auto/agent/pubkey/password */
+    PE_ROW("Key File Path", state.w_key_path, key_path);
+
+    #undef PE_ROW
+
+    /* Button row */
+    GtkWidget *btn_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_halign(btn_row, GTK_ALIGN_END);
+    GtkWidget *btn_cancel = gtk_button_new_with_label("Cancel");
+    GtkWidget *btn_save   = gtk_button_new_with_label("Save");
+    g_signal_connect(btn_cancel, "clicked", G_CALLBACK(on_pe_cancel), &state);
+    g_signal_connect(btn_save,   "clicked", G_CALLBACK(on_pe_save),   &state);
+    gtk_box_append(GTK_BOX(btn_row), btn_cancel);
+    gtk_box_append(GTK_BOX(btn_row), btn_save);
+    gtk_box_append(GTK_BOX(vbox), btn_row);
+
+    gtk_widget_set_visible(dialog, TRUE);
+    g_main_loop_run(state.loop);
+
+    if (state.accepted) {
+        snprintf(g_pe_name,     sizeof(g_pe_name),
+                 "%s", gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_name))));
+        snprintf(g_pe_group,    sizeof(g_pe_group),
+                 "%s", gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_group))));
+        snprintf(g_pe_host,     sizeof(g_pe_host),
+                 "%s", gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_host))));
+        const char *ps = gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_port)));
+        g_pe_port = (int64_t)atoll(ps);
+        if (g_pe_port <= 0) g_pe_port = 22;
+        snprintf(g_pe_user,     sizeof(g_pe_user),
+                 "%s", gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_user))));
+        snprintf(g_pe_auth,     sizeof(g_pe_auth),
+                 "%s", gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_auth))));
+        snprintf(g_pe_key_path, sizeof(g_pe_key_path),
+                 "%s", gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_key_path))));
+    }
+
+    gtk_window_destroy(GTK_WINDOW(dialog));
+    g_main_loop_unref(state.loop);
+    return (int32_t)state.accepted;
+}
+
+const char *nitty_gtk4_profile_editor_get_name(void)     { return g_pe_name; }
+const char *nitty_gtk4_profile_editor_get_group(void)    { return g_pe_group; }
+const char *nitty_gtk4_profile_editor_get_host(void)     { return g_pe_host; }
+int64_t     nitty_gtk4_profile_editor_get_port(void)     { return g_pe_port; }
+const char *nitty_gtk4_profile_editor_get_user(void)     { return g_pe_user; }
+const char *nitty_gtk4_profile_editor_get_auth(void)     { return g_pe_auth; }
+const char *nitty_gtk4_profile_editor_get_key_path(void) { return g_pe_key_path; }

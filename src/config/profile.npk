@@ -1,10 +1,13 @@
-// src/config/profile.npk — Connection profile data model (v0.6.1)
+// src/config/profile.npk — Connection profile data model (v0.8.3)
 //
 // Profiles are named, reusable connection configurations. Each profile
 // specifies a connection type and per-profile overrides for the shell,
 // working directory, appearance, and tab title.
 //
-// Storage: flat parallel arrays, capacity PROF_MAX=8 profiles.
+// v0.8.3: Bumped to 64 profiles, added SSH key_path/pass/keepalive,
+//         added recent connections ring buffer, wired SSH TOML serialization.
+//
+// Storage: flat parallel arrays, capacity PROF_MAX=64 profiles.
 //
 // TOML serialization uses a flat dotted-key scheme:
 //   [profiles]
@@ -14,6 +17,13 @@
 //   type = "local"
 //   shell = ""
 //   cwd   = ""
+//   ssh_host = ""
+//   ssh_port = 22
+//   ssh_user = ""
+//   ssh_auth = ""
+//   ssh_key_path = ""
+//   group = ""
+//   keepalive = 30
 //   ...
 //
 // Inheritance is iterative (max depth 5). No recursion.
@@ -21,74 +31,72 @@
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/src/nitpick_toml.npk".*;
 
-// ── Connection type constants ─────────────────────────────────────────────────
+// ── Connection type constants ──────────────────────────────────────────────────
 
-pub func:PROF_TYPE_LOCAL   = int64() { pass(0i64); };   // local shell
-pub func:PROF_TYPE_SSH     = int64() { pass(1i64); };   // SSH (placeholder v0.8.x)
-pub func:PROF_TYPE_SERIAL  = int64() { pass(2i64); };   // serial (placeholder v0.9.x)
-pub func:PROF_TYPE_TELNET  = int64() { pass(3i64); };   // telnet (placeholder v0.9.x)
-pub func:PROF_MAX          = int64() { pass(8i64); };   // max profiles
+pub fixed int64:PROF_TYPE_LOCAL   = 0i64;   // local shell
+pub fixed int64:PROF_TYPE_SSH     = 1i64;   // SSH
+pub fixed int64:PROF_TYPE_SERIAL  = 2i64;   // serial (placeholder v0.9.x)
+pub fixed int64:PROF_TYPE_TELNET  = 3i64;   // telnet (placeholder v0.9.x)
+pub fixed int64:PROF_MAX          = 64i64;  // max profiles
+pub fixed int64:PROF_MAX_RECENT   = 20i64;  // max recent connections tracked
+pub fixed int64:PROF_ENV_PER_SLOT = 8i64;   // env vars per profile slot
 
-// ── Profile table (parallel arrays, 8 slots) ──────────────────────────────────
+// ── Profile table (parallel arrays, 64 slots) ─────────────────────────────────
 
 int64:g_prof_count = 0i64;
 
 // Core identity
-string[8]:g_prof_name       = ["", "", "", "", "", "", "", ""];
-int64[8]:g_prof_type        = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
-int64[8]:g_prof_is_default  = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
-string[8]:g_prof_inherits   = ["", "", "", "", "", "", "", ""];
-string[8]:g_prof_group      = ["", "", "", "", "", "", "", ""];
+string[64]:g_prof_name;
+int64[64]:g_prof_type;
+int64[64]:g_prof_is_default;
+string[64]:g_prof_inherits;
+string[64]:g_prof_group;
 
 // LocalShell params
-string[8]:g_prof_shell_path  = ["", "", "", "", "", "", "", ""];
-string[8]:g_prof_working_dir = ["", "", "", "", "", "", "", ""];
-string[8]:g_prof_startup_cmd = ["", "", "", "", "", "", "", ""];
-int64[8]:g_prof_login_shell  = [1i64, 1i64, 1i64, 1i64, 1i64, 1i64, 1i64, 1i64];
+string[64]:g_prof_shell_path;
+string[64]:g_prof_working_dir;
+string[64]:g_prof_startup_cmd;
+int64[64]:g_prof_login_shell;
 
-// SSH params (placeholder — v0.8.x fills these)
-string[8]:g_prof_ssh_host   = ["", "", "", "", "", "", "", ""];
-int64[8]:g_prof_ssh_port    = [22i64, 22i64, 22i64, 22i64, 22i64, 22i64, 22i64, 22i64];
-string[8]:g_prof_ssh_user   = ["", "", "", "", "", "", "", ""];
-string[8]:g_prof_ssh_auth   = ["", "", "", "", "", "", "", ""];
+// SSH params
+string[64]:g_prof_ssh_host;
+int64[64]:g_prof_ssh_port;
+string[64]:g_prof_ssh_user;
+string[64]:g_prof_ssh_auth;       // "agent", "pubkey", "kbdint", "password", ""=auto
+string[64]:g_prof_ssh_key_path;   // path to private key file (optional)
+string[64]:g_prof_ssh_pass;       // stored password (optional, cleartext)
+int64[64]:g_prof_keepalive;       // keepalive interval seconds (0=disable, default 30)
 
 // Serial params (placeholder — v0.9.x fills these)
-string[8]:g_prof_serial_dev  = ["", "", "", "", "", "", "", ""];
-int64[8]:g_prof_serial_baud  = [9600i64, 9600i64, 9600i64, 9600i64,
-                                 9600i64, 9600i64, 9600i64, 9600i64];
+string[64]:g_prof_serial_dev;
+int64[64]:g_prof_serial_baud;
 
 // Telnet params (placeholder)
-string[8]:g_prof_telnet_host = ["", "", "", "", "", "", "", ""];
-int64[8]:g_prof_telnet_port  = [23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64];
+string[64]:g_prof_telnet_host;
+int64[64]:g_prof_telnet_port;
 
 // Appearance overrides (empty/0 = use global config)
-string[8]:g_prof_font_family   = ["", "", "", "", "", "", "", ""];
-int64[8]:g_prof_font_size      = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
-string[8]:g_prof_color_scheme  = ["", "", "", "", "", "", "", ""];
-string[8]:g_prof_cursor_style  = ["", "", "", "", "", "", "", ""];
-string[8]:g_prof_tab_title     = ["", "", "", "", "", "", "", ""];
+string[64]:g_prof_font_family;
+int64[64]:g_prof_font_size;
+string[64]:g_prof_color_scheme;
+string[64]:g_prof_cursor_style;
+string[64]:g_prof_tab_title;
 
-// Env vars: 8 vars per profile → 64-element flat arrays
+// Env vars: 8 vars per profile → 512-element flat arrays
 // Access: slot i, var j → index (i * 8 + j)
-string[64]:g_prof_env_key    = ["", "", "", "", "", "", "", "",
-                                 "", "", "", "", "", "", "", "",
-                                 "", "", "", "", "", "", "", "",
-                                 "", "", "", "", "", "", "", "",
-                                 "", "", "", "", "", "", "", "",
-                                 "", "", "", "", "", "", "", "",
-                                 "", "", "", "", "", "", "", "",
-                                 "", "", "", "", "", "", "", ""];
-string[64]:g_prof_env_val    = ["", "", "", "", "", "", "", "",
-                                 "", "", "", "", "", "", "", "",
-                                 "", "", "", "", "", "", "", "",
-                                 "", "", "", "", "", "", "", "",
-                                 "", "", "", "", "", "", "", "",
-                                 "", "", "", "", "", "", "", "",
-                                 "", "", "", "", "", "", "", "",
-                                 "", "", "", "", "", "", "", ""];
-int64[8]:g_prof_env_count    = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+string[512]:g_prof_env_key;
+string[512]:g_prof_env_val;
+int64[64]:g_prof_env_count;
 
-// ── Inheritance resolution scratch arrays ─────────────────────────────────────
+// ── Recent connections ring buffer ─────────────────────────────────────────────
+// Stores profile slot indices of recently connected profiles.
+// Ring buffer: head points to next write position.
+
+int64[20]:g_prof_recent;           // ring buffer of slot indices (-1 = empty)
+int64:g_prof_recent_count = 0i64;  // how many entries are valid (0..20)
+int64:g_prof_recent_head  = 0i64;  // next write position (0..19)
+
+// ── Inheritance resolution scratch ────────────────────────────────────────────
 // Filled by profile_resolve(slot). Valid until next call to profile_resolve.
 
 string:g_prof_res_shell_path  = "";
@@ -101,38 +109,41 @@ string:g_prof_res_color_scheme= "";
 string:g_prof_res_cursor_style= "";
 string:g_prof_res_tab_title   = "";
 
-// Visited-flag array for cycle detection (indexed by slot)
-int64[8]:g_prof_visited = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+// Visited-flag array for cycle detection (64 slots)
+int64[64]:g_prof_visited;
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 func:_prof_clear_slot = NIL(int64:i) {
-    g_prof_name[i]        = "";
-    g_prof_type[i]        = 0i64;
-    g_prof_is_default[i]  = 0i64;
-    g_prof_inherits[i]    = "";
-    g_prof_group[i]       = "";
-    g_prof_shell_path[i]  = "";
-    g_prof_working_dir[i] = "";
-    g_prof_startup_cmd[i] = "";
-    g_prof_login_shell[i] = 1i64;
-    g_prof_ssh_host[i]    = "";
-    g_prof_ssh_port[i]    = 22i64;
-    g_prof_ssh_user[i]    = "";
-    g_prof_ssh_auth[i]    = "";
-    g_prof_serial_dev[i]  = "";
-    g_prof_serial_baud[i] = 9600i64;
-    g_prof_telnet_host[i] = "";
-    g_prof_telnet_port[i] = 23i64;
+    g_prof_name[i]         = "";
+    g_prof_type[i]         = PROF_TYPE_LOCAL;
+    g_prof_is_default[i]   = 0i64;
+    g_prof_inherits[i]     = "";
+    g_prof_group[i]        = "";
+    g_prof_shell_path[i]   = "";
+    g_prof_working_dir[i]  = "";
+    g_prof_startup_cmd[i]  = "";
+    g_prof_login_shell[i]  = 1i64;
+    g_prof_ssh_host[i]     = "";
+    g_prof_ssh_port[i]     = 22i64;
+    g_prof_ssh_user[i]     = "";
+    g_prof_ssh_auth[i]     = "";
+    g_prof_ssh_key_path[i] = "";
+    g_prof_ssh_pass[i]     = "";
+    g_prof_keepalive[i]    = 30i64;
+    g_prof_serial_dev[i]   = "";
+    g_prof_serial_baud[i]  = 9600i64;
+    g_prof_telnet_host[i]  = "";
+    g_prof_telnet_port[i]  = 23i64;
     g_prof_font_family[i]  = "";
     g_prof_font_size[i]    = 0i64;
     g_prof_color_scheme[i] = "";
     g_prof_cursor_style[i] = "";
     g_prof_tab_title[i]    = "";
     g_prof_env_count[i]    = 0i64;
-    int64:base = i * 8i64;
+    int64:base = i * PROF_ENV_PER_SLOT;
     int64:j = 0i64;
-    while (j < 8i64) {
+    while (j < PROF_ENV_PER_SLOT) {
         g_prof_env_key[base + j] = "";
         g_prof_env_val[base + j] = "";
         j = j + 1i64;
@@ -142,20 +153,46 @@ func:_prof_clear_slot = NIL(int64:i) {
 
 /// Convert type string ("local"/"ssh"/"serial"/"telnet") to int64 constant.
 func:_type_from_str = int64(string:s) {
-    if (s == "local")   { pass(0i64); }
-    if (s == "ssh")     { pass(1i64); }
-    if (s == "serial")  { pass(2i64); }
-    if (s == "telnet")  { pass(3i64); }
-    pass(0i64);  // default to local
+    if (s == "local")   { pass(PROF_TYPE_LOCAL); }
+    if (s == "ssh")     { pass(PROF_TYPE_SSH); }
+    if (s == "serial")  { pass(PROF_TYPE_SERIAL); }
+    if (s == "telnet")  { pass(PROF_TYPE_TELNET); }
+    pass(PROF_TYPE_LOCAL);
 };
 
 /// Convert int64 type constant to string.
 func:_type_to_str = string(int64:t) {
-    if (t == 0i64) { pass("local"); }
-    if (t == 1i64) { pass("ssh"); }
-    if (t == 2i64) { pass("serial"); }
-    if (t == 3i64) { pass("telnet"); }
+    if (t == PROF_TYPE_LOCAL)  { pass("local"); }
+    if (t == PROF_TYPE_SSH)    { pass("ssh"); }
+    if (t == PROF_TYPE_SERIAL) { pass("serial"); }
+    if (t == PROF_TYPE_TELNET) { pass("telnet"); }
     pass("local");
+};
+
+/// Convert int64 (0-63) to decimal string for building TOML key paths.
+func:_i64_to_str = string(int64:n) {
+    // Tens digit (0..5 for n < 64)
+    int64:tens = n / 10i64;
+    int64:ones = n - (tens * 10i64);
+    string:s_ones = "0";
+    if (ones == 1i64) { s_ones = "1"; }
+    if (ones == 2i64) { s_ones = "2"; }
+    if (ones == 3i64) { s_ones = "3"; }
+    if (ones == 4i64) { s_ones = "4"; }
+    if (ones == 5i64) { s_ones = "5"; }
+    if (ones == 6i64) { s_ones = "6"; }
+    if (ones == 7i64) { s_ones = "7"; }
+    if (ones == 8i64) { s_ones = "8"; }
+    if (ones == 9i64) { s_ones = "9"; }
+    if (tens == 0i64) { pass(s_ones); }
+    string:s_tens = "0";
+    if (tens == 1i64) { s_tens = "1"; }
+    if (tens == 2i64) { s_tens = "2"; }
+    if (tens == 3i64) { s_tens = "3"; }
+    if (tens == 4i64) { s_tens = "4"; }
+    if (tens == 5i64) { s_tens = "5"; }
+    if (tens == 6i64) { s_tens = "6"; }
+    pass(string_concat(s_tens, s_ones));
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -170,12 +207,21 @@ pub func:profiles_init = NIL() {
     // Slot 0: built-in "Default" LocalShell profile
     drop(_prof_clear_slot(0i64));
     g_prof_name[0i64]       = "Default";
-    g_prof_type[0i64]       = 0i64;   // PROF_TYPE_LOCAL
+    g_prof_type[0i64]       = PROF_TYPE_LOCAL;
     g_prof_is_default[0i64] = 1i64;
     g_prof_inherits[0i64]   = "";
     g_prof_group[0i64]      = "";
     g_prof_login_shell[0i64]= 1i64;
     g_prof_count = 1i64;
+
+    // Init recent ring buffer
+    int64:ri = 0i64;
+    while (ri < PROF_MAX_RECENT) {
+        g_prof_recent[ri] = -1i64;
+        ri = ri + 1i64;
+    }
+    g_prof_recent_count = 0i64;
+    g_prof_recent_head  = 0i64;
     pass(NIL);
 };
 
@@ -184,7 +230,7 @@ pub func:profile_add = int64(string:name, int64:ptype, int64:is_def,
                               string:inherits, string:grp,
                               string:shell_path, string:working_dir,
                               string:startup_cmd, int64:login_shell) {
-    if (g_prof_count >= 8i64) { pass(-1i64); }
+    if (g_prof_count >= PROF_MAX) { pass(-1i64); }
     int64:slot = g_prof_count;
     drop(_prof_clear_slot(slot));
     g_prof_name[slot]        = name;
@@ -200,6 +246,20 @@ pub func:profile_add = int64(string:name, int64:ptype, int64:is_def,
     pass(slot);
 };
 
+/// Set SSH connection fields on an existing profile slot.
+pub func:profile_set_ssh = NIL(int64:slot, string:host, int64:port,
+                                string:user, string:auth_method,
+                                string:key_path, int64:keepalive) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(NIL); }
+    g_prof_ssh_host[slot]     = host;
+    g_prof_ssh_port[slot]     = port;
+    g_prof_ssh_user[slot]     = user;
+    g_prof_ssh_auth[slot]     = auth_method;
+    g_prof_ssh_key_path[slot] = key_path;
+    g_prof_keepalive[slot]    = keepalive;
+    pass(NIL);
+};
+
 /// Find a profile by name. Returns slot index, or -1 if not found.
 pub func:profile_find_by_name = int64(string:name) {
     int64:i = 0i64;
@@ -208,6 +268,21 @@ pub func:profile_find_by_name = int64(string:name) {
         i = i + 1i64;
     }
     pass(-1i64);
+};
+
+/// Find profiles belonging to a group. Writes matching slot indices into out[].
+/// Returns count found (up to max).
+pub func:profile_find_by_group = int64(string:grp, int64[64]:out, int64:max) {
+    int64:found = 0i64;
+    int64:i = 0i64;
+    while (i < g_prof_count && found < max) {
+        if (g_prof_group[i] == grp) {
+            out[found] = i;
+            found = found + 1i64;
+        }
+        i = i + 1i64;
+    }
+    pass(found);
 };
 
 /// Return the slot index of the default profile (is_default==1), or 0.
@@ -220,6 +295,59 @@ pub func:profile_get_default_idx = int64() {
     pass(0i64);
 };
 
+// ── Recent connections ring buffer ────────────────────────────────────────────
+
+/// Push a profile slot index to the front of the recent list.
+/// Duplicates are moved to front (removed from old position first).
+pub func:prof_add_recent = NIL(int64:slot) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(NIL); }
+
+    // Remove existing entry for this slot if present
+    int64:ri = 0i64;
+    int64:count = g_prof_recent_count;
+    while (ri < count) {
+        int64:pos = (g_prof_recent_head - 1i64 - ri + PROF_MAX_RECENT) % PROF_MAX_RECENT;
+        if (g_prof_recent[pos] == slot) {
+            // Shift entries to fill the gap (compact toward head)
+            int64:fi = ri;
+            while (fi > 0i64) {
+                int64:this_p = (g_prof_recent_head - 1i64 - fi + PROF_MAX_RECENT) % PROF_MAX_RECENT;
+                int64:prev_p = (g_prof_recent_head - fi + PROF_MAX_RECENT) % PROF_MAX_RECENT;
+                g_prof_recent[this_p] = g_prof_recent[prev_p];
+                fi = fi - 1i64;
+            }
+            // Move head back one (removed one entry)
+            g_prof_recent_head = (g_prof_recent_head - 1i64 + PROF_MAX_RECENT) % PROF_MAX_RECENT;
+            if (g_prof_recent_count > 0i64) {
+                g_prof_recent_count = g_prof_recent_count - 1i64;
+            }
+            ri = count + 1i64; // break
+        }
+        if (ri < count + 1i64) { ri = ri + 1i64; }
+    }
+
+    // Write new entry at head
+    g_prof_recent[g_prof_recent_head] = slot;
+    g_prof_recent_head = (g_prof_recent_head + 1i64) % PROF_MAX_RECENT;
+    if (g_prof_recent_count < PROF_MAX_RECENT) {
+        g_prof_recent_count = g_prof_recent_count + 1i64;
+    }
+    pass(NIL);
+};
+
+/// Get the i-th most recent profile slot (0 = most recent). Returns -1 if none.
+pub func:prof_get_recent = int64(int64:i) {
+    if (i < 0i64 || i >= g_prof_recent_count) { pass(-1i64); }
+    // Most recent is at head-1, second at head-2, etc.
+    int64:pos = (g_prof_recent_head - 1i64 - i + PROF_MAX_RECENT) % PROF_MAX_RECENT;
+    pass(g_prof_recent[pos]);
+};
+
+/// Count of recent entries (0..PROF_MAX_RECENT).
+pub func:prof_recent_count = int64() { pass(g_prof_recent_count); };
+
+// ── Resolve inheritance chain ──────────────────────────────────────────────────
+
 /// Resolve a profile's effective fields by walking the inheritance chain.
 /// Fills g_prof_res_* scratch arrays. Iterative: max 5 hops, cycle detection.
 /// Returns 1 on success, 0 if a cycle was detected.
@@ -229,7 +357,7 @@ pub func:profile_resolve = int32(int64:start_slot) {
 
     // Clear visited flags and scratch
     int64:vi = 0i64;
-    while (vi < 8i64) { g_prof_visited[vi] = 0i64; vi = vi + 1i64; }
+    while (vi < PROF_MAX) { g_prof_visited[vi] = 0i64; vi = vi + 1i64; }
     g_prof_res_shell_path   = "";
     g_prof_res_working_dir  = "";
     g_prof_res_startup_cmd  = "";
@@ -241,34 +369,28 @@ pub func:profile_resolve = int32(int64:start_slot) {
     g_prof_res_tab_title    = "";
 
     // Walk chain: collect values from each slot (child wins, parent fills gaps)
-    // We walk from the start slot upward, building a chain of up to 6 slots
-    // (start + 5 parents). Store the chain in an array first.
     int64[8]:chain    = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
     int64:chain_len   = 0i64;
     int64:cur         = start_slot;
     int64:depth       = 0i64;
 
     while (depth < 6i64) {
-        if (cur < 0i64)              { depth = 99i64; }  // break
-        if (cur >= g_prof_count)     { depth = 99i64; }  // break
-        if (g_prof_visited[cur] == 1i64) {
-            // Cycle detected — zero out scratch and signal error
-            pass(0i32);
-        }
+        if (cur < 0i64)              { depth = 99i64; }
+        if (cur >= g_prof_count)     { depth = 99i64; }
+        if (g_prof_visited[cur] == 1i64) { pass(0i32); }
         if (depth < 6i64) {
             g_prof_visited[cur] = 1i64;
             chain[chain_len] = cur;
             chain_len = chain_len + 1i64;
 
-            // Follow inherits
             string:parent_name = g_prof_inherits[cur];
             if (parent_name == "") {
-                depth = 99i64;  // no more parents → break
+                depth = 99i64;
             }
             if (depth < 99i64) {
                 int64:parent_slot = raw profile_find_by_name(parent_name);
                 if (parent_slot < 0i64) {
-                    depth = 99i64;  // parent not found → stop
+                    depth = 99i64;
                 }
                 if (depth < 99i64) {
                     cur = parent_slot;
@@ -278,8 +400,7 @@ pub func:profile_resolve = int32(int64:start_slot) {
         }
     }
 
-    // Now fill scratch arrays: walk chain from END to START (parent → child).
-    // Child value wins when non-empty/non-zero.
+    // Fill scratch arrays: walk chain from END to START (parent → child).
     int64:ci = chain_len - 1i64;
     while (ci >= 0i64) {
         int64:s = chain[ci];
@@ -293,7 +414,6 @@ pub func:profile_resolve = int32(int64:start_slot) {
         if (string_length(g_prof_startup_cmd[s]) > 0i64) {
             g_prof_res_startup_cmd = g_prof_startup_cmd[s];
         }
-        // login_shell: child wins if it is 0 (explicitly disabled)
         if (g_prof_login_shell[s] == 0i64) { g_prof_res_login_shell = 0i64; }
         if (g_prof_login_shell[s] == 1i64) { g_prof_res_login_shell = 1i64; }
 
@@ -337,11 +457,18 @@ pub func:profile_get_name        = string(int64:i) { pass(g_prof_name[i]); };
 pub func:profile_get_type        = int64(int64:i)  { pass(g_prof_type[i]); };
 pub func:profile_get_is_default  = int64(int64:i)  { pass(g_prof_is_default[i]); };
 pub func:profile_get_inherits    = string(int64:i) { pass(g_prof_inherits[i]); };
+pub func:profile_get_group       = string(int64:i) { pass(g_prof_group[i]); };
 pub func:profile_get_shell_path  = string(int64:i) { pass(g_prof_shell_path[i]); };
 pub func:profile_get_working_dir = string(int64:i) { pass(g_prof_working_dir[i]); };
 pub func:profile_get_tab_title   = string(int64:i) { pass(g_prof_tab_title[i]); };
 pub func:profile_get_font_family = string(int64:i) { pass(g_prof_font_family[i]); };
 pub func:profile_get_font_size   = int64(int64:i)  { pass(g_prof_font_size[i]); };
+pub func:profile_get_ssh_host    = string(int64:i) { pass(g_prof_ssh_host[i]); };
+pub func:profile_get_ssh_port    = int64(int64:i)  { pass(g_prof_ssh_port[i]); };
+pub func:profile_get_ssh_user    = string(int64:i) { pass(g_prof_ssh_user[i]); };
+pub func:profile_get_ssh_auth    = string(int64:i) { pass(g_prof_ssh_auth[i]); };
+pub func:profile_get_ssh_key_path= string(int64:i) { pass(g_prof_ssh_key_path[i]); };
+pub func:profile_get_keepalive   = int64(int64:i)  { pass(g_prof_keepalive[i]); };
 
 // ── TOML serialization ───────────────────────────────────────────────────────
 //
@@ -351,33 +478,30 @@ pub func:profile_get_font_size   = int64(int64:i)  { pass(g_prof_font_size[i]); 
 //   profile.0.type = "local"
 //   profile.0.shell = ""
 //   profile.0.cwd = ""
-//   profile.0.startup = ""
-//   profile.0.title = ""
-//   profile.0.default = 1
-//   profile.0.inherits = ""
+//   profile.0.ssh_host = ""
+//   profile.0.ssh_port = 22
+//   profile.0.ssh_user = ""
+//   profile.0.ssh_auth = ""
+//   profile.0.ssh_key_path = ""
+//   profile.0.keepalive = 30
 //   profile.0.group = ""
-//   profile.0.font_family = ""
-//   profile.0.font_size = 0
-//   profile.0.color_scheme = ""
-//   profile.0.cursor_style = ""
+//   ...
 
 /// Parse profiles from the currently-loaded Toml document.
 /// Only loads profiles if "profiles.count" key exists and is > 0.
 pub func:profiles_load_toml = NIL() {
-    // Read count
     int32:has_count = raw Toml.has_key("profiles.count");
-    if (has_count == 0i32) { pass(NIL); }  // no profiles in TOML → keep defaults
+    if (has_count == 0i32) { pass(NIL); }
 
     int64:toml_n = raw Toml.get_int("profiles.count");
     if (toml_n <= 0i64) { pass(NIL); }
-    if (toml_n > 8i64) { toml_n = 8i64; }  // cap
+    if (toml_n > PROF_MAX) { toml_n = PROF_MAX; }
 
     // Reset profile store
     g_prof_count = 0i64;
     int64:i = 0i64;
     while (i < toml_n) {
-        if (g_prof_count < 8i64) {
-            // Build the key prefix: "profile.N."
+        if (g_prof_count < PROF_MAX) {
             string:prefix = string_concat("profile.", string_concat(
                 raw _i64_to_str(i), "."));
 
@@ -393,7 +517,6 @@ pub func:profiles_load_toml = NIL() {
             string:p_shell     = raw Toml.get_string(string_concat(prefix, "shell"));
             string:p_cwd       = raw Toml.get_string(string_concat(prefix, "cwd"));
             string:p_startup   = raw Toml.get_string(string_concat(prefix, "startup"));
-            // login_shell: TOML returns 0 for missing keys; default is 1
             int64:p_login = 1i64;
             int32:has_ls = raw Toml.has_key(string_concat(prefix, "login_shell"));
             if (has_ls == 1i32) {
@@ -405,27 +528,42 @@ pub func:profiles_load_toml = NIL() {
             string:p_scheme    = raw Toml.get_string(string_concat(prefix, "color_scheme"));
             string:p_cursor    = raw Toml.get_string(string_concat(prefix, "cursor_style"));
 
+            // SSH fields (v0.8.3)
+            string:p_ssh_host  = raw Toml.get_string(string_concat(prefix, "ssh_host"));
+            int64:p_ssh_port   = raw Toml.get_int(string_concat(prefix, "ssh_port"));
+            if (p_ssh_port <= 0i64) { p_ssh_port = 22i64; }
+            string:p_ssh_user  = raw Toml.get_string(string_concat(prefix, "ssh_user"));
+            string:p_ssh_auth  = raw Toml.get_string(string_concat(prefix, "ssh_auth"));
+            string:p_key_path  = raw Toml.get_string(string_concat(prefix, "ssh_key_path"));
+            int64:p_keepalive  = raw Toml.get_int(string_concat(prefix, "keepalive"));
+            if (p_keepalive <= 0i64) { p_keepalive = 30i64; }
+
             int64:slot = g_prof_count;
             drop(_prof_clear_slot(slot));
-            g_prof_name[slot]        = p_name;
-            g_prof_type[slot]        = p_type;
-            g_prof_is_default[slot]  = p_is_default;
-            g_prof_inherits[slot]    = p_inherits;
-            g_prof_group[slot]       = p_grp;
-            g_prof_shell_path[slot]  = p_shell;
-            g_prof_working_dir[slot] = p_cwd;
-            g_prof_startup_cmd[slot] = p_startup;
-            g_prof_login_shell[slot] = p_login;
-            g_prof_tab_title[slot]   = p_title;
-            g_prof_font_family[slot] = p_font_fam;
-            g_prof_font_size[slot]   = p_font_sz;
-            g_prof_color_scheme[slot]= p_scheme;
-            g_prof_cursor_style[slot]= p_cursor;
+            g_prof_name[slot]         = p_name;
+            g_prof_type[slot]         = p_type;
+            g_prof_is_default[slot]   = p_is_default;
+            g_prof_inherits[slot]     = p_inherits;
+            g_prof_group[slot]        = p_grp;
+            g_prof_shell_path[slot]   = p_shell;
+            g_prof_working_dir[slot]  = p_cwd;
+            g_prof_startup_cmd[slot]  = p_startup;
+            g_prof_login_shell[slot]  = p_login;
+            g_prof_tab_title[slot]    = p_title;
+            g_prof_font_family[slot]  = p_font_fam;
+            g_prof_font_size[slot]    = p_font_sz;
+            g_prof_color_scheme[slot] = p_scheme;
+            g_prof_cursor_style[slot] = p_cursor;
+            g_prof_ssh_host[slot]     = p_ssh_host;
+            g_prof_ssh_port[slot]     = p_ssh_port;
+            g_prof_ssh_user[slot]     = p_ssh_user;
+            g_prof_ssh_auth[slot]     = p_ssh_auth;
+            g_prof_ssh_key_path[slot] = p_key_path;
+            g_prof_keepalive[slot]    = p_keepalive;
             g_prof_count = g_prof_count + 1i64;
         }
         i = i + 1i64;
     }
-    // Ensure at least one profile exists (seed default if load resulted in 0)
     if (g_prof_count == 0i64) { drop(profiles_init()); }
     pass(NIL);
 };
@@ -437,37 +575,28 @@ pub func:profiles_save_toml = NIL() {
     while (i < g_prof_count) {
         string:prefix = string_concat("profile.", string_concat(
             raw _i64_to_str(i), "."));
-        drop(raw Toml.set_string(string_concat(prefix, "name"),    g_prof_name[i]));
-        drop(raw Toml.set_string(string_concat(prefix, "type"),    raw _type_to_str(g_prof_type[i])));
-        drop(raw Toml.set_int(string_concat(prefix, "default"),    g_prof_is_default[i]));
-        drop(raw Toml.set_string(string_concat(prefix, "inherits"),g_prof_inherits[i]));
-        drop(raw Toml.set_string(string_concat(prefix, "group"),   g_prof_group[i]));
-        drop(raw Toml.set_string(string_concat(prefix, "shell"),   g_prof_shell_path[i]));
-        drop(raw Toml.set_string(string_concat(prefix, "cwd"),     g_prof_working_dir[i]));
-        drop(raw Toml.set_string(string_concat(prefix, "startup"), g_prof_startup_cmd[i]));
-        drop(raw Toml.set_int(string_concat(prefix, "login_shell"),g_prof_login_shell[i]));
-        drop(raw Toml.set_string(string_concat(prefix, "title"),   g_prof_tab_title[i]));
-        drop(raw Toml.set_string(string_concat(prefix, "font_family"), g_prof_font_family[i]));
-        drop(raw Toml.set_int(string_concat(prefix, "font_size"),  g_prof_font_size[i]));
+        drop(raw Toml.set_string(string_concat(prefix, "name"),         g_prof_name[i]));
+        drop(raw Toml.set_string(string_concat(prefix, "type"),         raw _type_to_str(g_prof_type[i])));
+        drop(raw Toml.set_int(string_concat(prefix, "default"),         g_prof_is_default[i]));
+        drop(raw Toml.set_string(string_concat(prefix, "inherits"),     g_prof_inherits[i]));
+        drop(raw Toml.set_string(string_concat(prefix, "group"),        g_prof_group[i]));
+        drop(raw Toml.set_string(string_concat(prefix, "shell"),        g_prof_shell_path[i]));
+        drop(raw Toml.set_string(string_concat(prefix, "cwd"),          g_prof_working_dir[i]));
+        drop(raw Toml.set_string(string_concat(prefix, "startup"),      g_prof_startup_cmd[i]));
+        drop(raw Toml.set_int(string_concat(prefix, "login_shell"),     g_prof_login_shell[i]));
+        drop(raw Toml.set_string(string_concat(prefix, "title"),        g_prof_tab_title[i]));
+        drop(raw Toml.set_string(string_concat(prefix, "font_family"),  g_prof_font_family[i]));
+        drop(raw Toml.set_int(string_concat(prefix, "font_size"),       g_prof_font_size[i]));
         drop(raw Toml.set_string(string_concat(prefix, "color_scheme"), g_prof_color_scheme[i]));
         drop(raw Toml.set_string(string_concat(prefix, "cursor_style"), g_prof_cursor_style[i]));
+        // SSH fields (v0.8.3)
+        drop(raw Toml.set_string(string_concat(prefix, "ssh_host"),     g_prof_ssh_host[i]));
+        drop(raw Toml.set_int(string_concat(prefix, "ssh_port"),        g_prof_ssh_port[i]));
+        drop(raw Toml.set_string(string_concat(prefix, "ssh_user"),     g_prof_ssh_user[i]));
+        drop(raw Toml.set_string(string_concat(prefix, "ssh_auth"),     g_prof_ssh_auth[i]));
+        drop(raw Toml.set_string(string_concat(prefix, "ssh_key_path"), g_prof_ssh_key_path[i]));
+        drop(raw Toml.set_int(string_concat(prefix, "keepalive"),       g_prof_keepalive[i]));
         i = i + 1i64;
     }
     pass(NIL);
-};
-
-// ── Internal: int64 to decimal string ────────────────────────────────────────
-// Used only for building TOML key paths ("profile.0.", "profile.1.", etc.)
-// We only need 0-7 for PROF_MAX=8.
-
-func:_i64_to_str = string(int64:n) {
-    if (n == 0i64) { pass("0"); }
-    if (n == 1i64) { pass("1"); }
-    if (n == 2i64) { pass("2"); }
-    if (n == 3i64) { pass("3"); }
-    if (n == 4i64) { pass("4"); }
-    if (n == 5i64) { pass("5"); }
-    if (n == 6i64) { pass("6"); }
-    if (n == 7i64) { pass("7"); }
-    pass("0");
 };

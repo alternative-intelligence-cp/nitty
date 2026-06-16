@@ -1,0 +1,162 @@
+// tests/config/test_connection_manager.npk — Connection Manager unit tests (v0.8.3)
+//
+// Tests: profile store init, add, find, SSH fields, recent ring, SSH config parser.
+// Pattern: follows test_config.npk harness (main=int32, exit 0/1, int64 counters).
+
+use "../../src/config/profile.npk".*;
+use "../../src/ssh/ssh_config_parser.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        println(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    println(string_concat("  FAIL: ", string_concat(name, string_concat(
+        " expected=", string_concat(string_from_int(expected),
+        string_concat(" got=", string_from_int(got)))))));
+    pass(NIL);
+};
+
+func:check_str = NIL(string:name, string:expected, string:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        println(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    println(string_concat("  FAIL: ", string_concat(name, string_concat(
+        " expected=\"", string_concat(expected, string_concat("\" got=\"",
+        string_concat(got, "\"")))))));
+    pass(NIL);
+};
+
+func:main = int32() {
+    println("=== test_connection_manager: Profile Store & SSH Config Parser ===");
+
+    // ── T01: profiles_init seeds Default profile ─────────────────────────────
+    println("T01: profiles_init");
+    drop(profiles_init());
+    int64:cnt = raw profile_count();
+    if (cnt >= 1i64) { drop(check("T01: count >= 1", 1i64, 1i64)); }
+    if (cnt < 1i64)  { drop(check("T01: count >= 1", 1i64, 0i64)); }
+    drop(check_str("T01: slot 0 name = Default", "Default", raw profile_get_name(0i64)));
+    drop(check("T01: slot 0 type = local", PROF_TYPE_LOCAL, raw profile_get_type(0i64)));
+
+    // ── T02: profile_add ─────────────────────────────────────────────────────
+    println("T02: profile_add");
+    int64:slot = raw profile_add(
+        "Prod SSH", PROF_TYPE_SSH, 0i64, "", "Production",
+        "", "", "", 1i64);
+    if (slot >= 0i64) { drop(check("T02: slot >= 0", 1i64, 1i64)); }
+    if (slot < 0i64)  { drop(check("T02: slot >= 0", 1i64, 0i64)); }
+    drop(check_str("T02: name = Prod SSH", "Prod SSH", raw profile_get_name(slot)));
+    drop(check("T02: type = SSH", PROF_TYPE_SSH, raw profile_get_type(slot)));
+    drop(check_str("T02: group = Production", "Production", raw profile_get_group(slot)));
+
+    // ── T03: profile_set_ssh / getters ──────────────────────────────────────
+    println("T03: profile_set_ssh field round-trip");
+    drop(profile_set_ssh(slot, "prod.example.com", 2222i64, "deploy", "pubkey", "~/.ssh/id_ed25519", 60i64));
+    drop(check_str("T03: ssh_host", "prod.example.com", raw profile_get_ssh_host(slot)));
+    drop(check("T03: ssh_port", 2222i64, raw profile_get_ssh_port(slot)));
+    drop(check_str("T03: ssh_user", "deploy", raw profile_get_ssh_user(slot)));
+    drop(check_str("T03: ssh_auth", "pubkey", raw profile_get_ssh_auth(slot)));
+    drop(check_str("T03: ssh_key_path", "~/.ssh/id_ed25519", raw profile_get_ssh_key_path(slot)));
+    drop(check("T03: keepalive", 60i64, raw profile_get_keepalive(slot)));
+
+    // ── T04: profile_find_by_name ────────────────────────────────────────────
+    println("T04: profile_find_by_name");
+    int64:found = raw profile_find_by_name("Prod SSH");
+    drop(check("T04: found slot matches", slot, found));
+    int64:not_found = raw profile_find_by_name("Does Not Exist");
+    drop(check("T04: missing = -1", -1i64, not_found));
+
+    // ── T05: profile_find_by_group ───────────────────────────────────────────
+    println("T05: profile_find_by_group");
+    int64:slot2 = raw profile_add(
+        "Staging SSH", PROF_TYPE_SSH, 0i64, "", "Production",
+        "", "", "", 1i64);
+    drop(profile_set_ssh(slot2, "stage.example.com", 22i64, "deploy", "", "", 30i64));
+    int64[64]:grp_results = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+    int64:grp_count = raw profile_find_by_group("Production", grp_results, 64i64);
+    drop(check("T05: group found 2", 2i64, grp_count));
+
+    // ── T06: profile count ───────────────────────────────────────────────────
+    println("T06: profile_count");
+    int64:total = raw profile_count();
+    if (total >= 3i64) { drop(check("T06: count >= 3", 1i64, 1i64)); }
+    if (total < 3i64)  { drop(check("T06: count >= 3", 1i64, 0i64)); }
+
+    // ── T07: recent ring buffer ──────────────────────────────────────────────
+    println("T07: recent ring buffer");
+    drop(prof_add_recent(slot));
+    drop(check("T07: recent count = 1", 1i64, raw prof_recent_count()));
+    drop(check("T07: recent[0] = slot", slot, raw prof_get_recent(0i64)));
+
+    drop(prof_add_recent(slot2));
+    drop(check("T07: recent count = 2", 2i64, raw prof_recent_count()));
+    drop(check("T07: recent[0] = slot2 (most recent)", slot2, raw prof_get_recent(0i64)));
+    drop(check("T07: recent[1] = slot", slot, raw prof_get_recent(1i64)));
+
+    // Dedup: adding slot again should move it to front, count stays 2
+    drop(prof_add_recent(slot));
+    drop(check("T07: count still 2 after dedup", 2i64, raw prof_recent_count()));
+    drop(check("T07: recent[0] = slot (moved to front)", slot, raw prof_get_recent(0i64)));
+    drop(check("T07: recent[1] = slot2", slot2, raw prof_get_recent(1i64)));
+
+    // ── T08: SSH config parser ───────────────────────────────────────────────
+    println("T08: SSH config parser");
+    string:test_config = "# Test SSH Config\nHost web01\n    HostName 192.168.1.10\n    Port 2222\n    User admin\n    IdentityFile ~/.ssh/web_key\n\nHost db-server\n    HostName 10.0.0.5\n    User postgres\n\nHost *\n    IdentityFile ~/.ssh/id_rsa\n";
+    string:tmp_path = "/tmp/test_nitty_ssh_config";
+    drop(fs_write_file(tmp_path, test_config));
+
+    int64:n = raw scp_parse(tmp_path);
+    drop(check("T08: parsed 3 entries", 3i64, n));
+    drop(check_str("T08: entry 0 pattern = web01", "web01", raw scp_get_host_pattern(0i64)));
+    drop(check_str("T08: entry 0 hostname", "192.168.1.10", raw scp_get_hostname(0i64)));
+    drop(check("T08: entry 0 port = 2222", 2222i64, raw scp_get_port(0i64)));
+    drop(check_str("T08: entry 0 user = admin", "admin", raw scp_get_user(0i64)));
+    drop(check("T08: entry 0 is_wildcard = 0", 0i64, raw scp_is_wildcard(0i64)));
+    drop(check_str("T08: entry 1 pattern = db-server", "db-server", raw scp_get_host_pattern(1i64)));
+    drop(check("T08: entry 1 port default = 22", 22i64, raw scp_get_port(1i64)));
+    drop(check_str("T08: entry 1 user = postgres", "postgres", raw scp_get_user(1i64)));
+    drop(check("T08: entry 1 is_wildcard = 0", 0i64, raw scp_is_wildcard(1i64)));
+    drop(check_str("T08: entry 2 pattern = *", "*", raw scp_get_host_pattern(2i64)));
+    drop(check("T08: entry 2 is_wildcard = 1", 1i64, raw scp_is_wildcard(2i64)));
+
+    // ── T09: scp_import_to_profiles ─────────────────────────────────────────
+    println("T09: scp_import_to_profiles");
+    int64:before_count = raw profile_count();
+    int64:imported = raw scp_import_to_profiles();
+    drop(check("T09: imported 2 (non-wildcard)", 2i64, imported));
+    int64:after_count = raw profile_count();
+    drop(check("T09: count grew by 2", before_count + 2i64, after_count));
+
+    // Verify one imported profile
+    int64:web_slot = raw profile_find_by_name("web01");
+    if (web_slot >= 0i64) { drop(check("T09: web01 found", 1i64, 1i64)); }
+    if (web_slot < 0i64)  { drop(check("T09: web01 found", 1i64, 0i64)); }
+    if (web_slot >= 0i64) {
+        drop(check_str("T09: web01 host", "192.168.1.10", raw profile_get_ssh_host(web_slot)));
+        drop(check("T09: web01 port", 2222i64, raw profile_get_ssh_port(web_slot)));
+        drop(check_str("T09: web01 user", "admin", raw profile_get_ssh_user(web_slot)));
+    }
+
+    // Dedup check: importing again should add 0 new profiles
+    int64:imported2 = raw scp_import_to_profiles();
+    drop(check("T09: dedup = 0 on re-import", 0i64, imported2));
+
+    // ── Results ──────────────────────────────────────────────────────────────
+    println("=== Results ===");
+    if (g_fail > 0i64) {
+        println(string_concat(string_from_int(g_fail), " test(s) FAILED."));
+        exit 1i32;
+    }
+    println("All connection manager tests passed.");
+    exit 0i32;
+};
