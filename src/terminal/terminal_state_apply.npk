@@ -350,6 +350,7 @@ func:ts_apply_dec_mode = NIL(int64:idx, int64:enabled) {
     if (idx == 1003i64) { drop(ts_set_mode_mouse_all(enabled));      pass(NIL); }
     if (idx == 1004i64) { drop(ts_set_mode_focus_events(enabled));   pass(NIL); }
     if (idx == 1006i64) { drop(ts_set_mode_mouse_sgr(enabled));      pass(NIL); }
+    if (idx == 1047i64) { drop(ts_switch_screen_1047(enabled));      pass(NIL); }  // v0.7.5
     if (idx == 1049i64) { drop(ts_switch_screen_1049(enabled));      pass(NIL); }
     if (idx == 2004i64) { drop(ts_set_mode_bracketed_paste(enabled)); pass(NIL); }
     pass(NIL);
@@ -384,11 +385,29 @@ func:ts_switch_screen_1049 = NIL(int64:to_alt) {
         drop(ts_set_cursor_row(0i64));
         drop(ts_set_cursor_col(0i64));
         drop(ts_set_pending_wrap(0i64));
+        // v0.7.5: request viewport snap to bottom (handled in tw_on_draw)
+        drop(ts_set_pending_snap(1i64));
         pass(NIL);
     }
     drop(ts_set_mode_alt_screen_full(0i64));
     drop(grid_set_active(0i64));
     drop(ts_restore_cursor());
+    pass(NIL);
+};
+
+// v0.7.5: DECSET 1047 — alt screen with clear on enter, no cursor save/restore
+func:ts_switch_screen_1047 = NIL(int64:to_alt) {
+    int64:rows = raw ts_get_rows();
+    int64:cols = raw ts_get_cols();
+    if (to_alt != 0i64) {
+        drop(ts_set_mode_alt_screen_1047(1i64));
+        drop(grid_set_active(1i64));
+        drop(grid_clear_region(0i64, 0i64, rows - 1i64, cols - 1i64));
+        drop(ts_set_pending_snap(1i64));
+        pass(NIL);
+    }
+    drop(ts_set_mode_alt_screen_1047(0i64));
+    drop(grid_set_active(0i64));
     pass(NIL);
 };
 

@@ -40,6 +40,9 @@ use "../config/theme.npk".*;        // v0.6.4: theme engine
 use "../config/watcher.npk".*;      // v0.6.5: config hot-reload
 use "../gui/window_features.npk".*;  // v0.7.3: opacity, fullscreen, always-on-top, title
 use "../config/window_state.npk".*;  // v0.7.3: window size/state persistence
+use "../terminal/bell.npk".*;        // v0.7.4: bell handler
+use "../terminal/activity.npk".*;    // v0.7.4: activity monitor
+use "../terminal/process_monitor.npk".*; // v0.7.4: process completion
 
 // fd 1 = stdout
 int64:STDOUT = 1i64;
@@ -73,7 +76,11 @@ pub func:app_init = NIL() {
     // v0.6.4: Apply theme from config before renderer_init() in app_run()
     drop(theme_apply(raw cfg_theme()));
     drop(tb_apply_theme());                           // v0.6.4: sync tab bar colors to theme
-    drop(write_stdout("Nitty v0.7.3 initializing...\n"));
+    // v0.7.4: Initialize bell, activity, and process completion monitors
+    drop(bell_init(raw cfg_bell_mode(), raw cfg_bell_notify()));
+    drop(activity_init(raw cfg_activity_silence_threshold(), raw cfg_activity_notification()));
+    drop(process_monitor_init(raw cfg_process_min_duration(), raw cfg_process_completion_notification()));
+    drop(write_stdout("Nitty v0.7.4 initializing...\n"));
     pass(NIL);
 };
 
@@ -262,5 +269,5 @@ pub func:app_shutdown = NIL() {
 };
 
 pub func:app_version = string() {
-    pass("0.7.3");
+    pass("0.7.5");
 };

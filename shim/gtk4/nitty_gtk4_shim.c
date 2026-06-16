@@ -1417,6 +1417,29 @@ const char *nitty_gtk4_get_proc_cwd(int64_t pid)
     return s_cwd_buf;
 }
 
+const char *nitty_gtk4_get_proc_comm(int64_t pid)
+{
+    static char s_comm_buf[32];
+    s_comm_buf[0] = '\0';
+
+    if (pid <= 0) return s_comm_buf;
+
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%lld/comm", (long long)pid);
+
+    FILE *f = fopen(path, "r");
+    if (!f) return s_comm_buf;
+
+    size_t n = fread(s_comm_buf, 1, sizeof(s_comm_buf) - 1, f);
+    fclose(f);
+    s_comm_buf[n] = '\0';
+    /* Strip trailing newline */
+    while (n > 0 && (s_comm_buf[n-1] == '\n' || s_comm_buf[n-1] == '\r')) {
+        s_comm_buf[--n] = '\0';
+    }
+    return s_comm_buf;
+}
+
 /* Spawn PTY + shell at an explicit `path` directory.
  * Falls back to $HOME if path is NULL, empty, or non-existent.
  * Returns (master_fd * 1000000 + child_pid), or -1 on failure. */
@@ -2954,4 +2977,122 @@ void nitty_gtk4_window_set_keep_above(int64_t win_ptr, int64_t keep_above)
     /* Wayland: gtk-layer-shell would be needed; skip silently */
     (void)keep_above;
 #endif
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.7.4: Bell and process completion notifications
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Audible bell ───────────────────────────────────────────────────────── */
+
+void nitty_gtk4_display_beep(void)
+{
+    GdkDisplay *display = gdk_display_get_default();
+    if (display != NULL) gdk_display_beep(display);
+}
+
+/* ── Process completion notifications ──────────────────────────────────── */
+
+/* Per-slot shell start times (monotonic ms, set when pid is registered) */
+static int64_t g_proc_start_ms[16]    = {0};
+static int64_t g_proc_min_notify_ms   = 10000;    /* default: 10 s */
+static char    g_proc_notify_msg[512] = "";        /* pending notification */
+static int     g_proc_notify_pending  = 0;
+
+/* Helper: current monotonic time in ms */
+static int64_t _proc_now_ms(void)
+{
+    return (int64_t)(g_get_monotonic_time() / 1000LL);
+}
+
+/* Helper: read /proc/<pid>/comm into buf */
+static void _proc_comm(int64_t pid, char *buf, int bufsz)
+{
+    buf[0] = '\0';
+    if (pid <= 0) return;
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%lld/comm", (long long)pid);
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    size_t n = fread(buf, 1, (size_t)(bufsz - 1), f);
+    fclose(f);
+    buf[n] = '\0';
+    /* Strip trailing newline */
+    while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r')) { buf[--n] = '\0'; }
+}
+
+void nitty_gtk4_proc_set_min_ms(int64_t ms)
+{
+    g_proc_min_notify_ms = ms;
+}
+
+/* Register a new shell PID for a tab slot (call after spawning).
+ * Records the start time so we can compute duration on exit. */
+void nitty_gtk4_proc_register(int32_t slot, int64_t pid)
+{
+    if (slot < 0 || slot >= 16) return;
+    g_proc_start_ms[slot] = _proc_now_ms();
+    /* Also update g_tab_pids so the existing completion poller tracks it */
+    g_tab_pids[slot] = pid;
+}
+
+int32_t nitty_gtk4_proc_notify_poll(void)
+{
+    if (g_proc_notify_pending) {
+        g_proc_notify_pending = 0;
+        return 1;
+    }
+
+    /* Check each background tab for shell exit with sufficient runtime */
+    for (int i = 0; i < 16; i++) {
+        int64_t pid = g_tab_pids[i];
+        if (pid <= 0) continue;
+        /* Only notify for background tabs (not the active PTY) */
+        if (pid == g_terminal_child_pid) continue;
+
+        int status;
+        pid_t r = waitpid((pid_t)pid, &status, WNOHANG);
+        if (r != (pid_t)pid) continue;
+
+        /* Shell exited — compute runtime */
+        int64_t start = g_proc_start_ms[i];
+        int64_t runtime_ms = (start > 0) ? (_proc_now_ms() - start) : 0;
+        g_tab_pids[i] = -1;
+        g_proc_start_ms[i] = 0;
+
+        if (g_proc_min_notify_ms > 0 && runtime_ms < g_proc_min_notify_ms) {
+            continue; /* Too short — skip notification */
+        }
+
+        /* Build message: "Process 'name' completed (tab N, Xm Ys)" */
+        char comm[32] = "";
+        _proc_comm(pid, comm, sizeof(comm));
+        long long secs = (long long)(runtime_ms / 1000);
+        long long mins = secs / 60;
+        secs = secs % 60;
+        if (mins > 0) {
+            snprintf(g_proc_notify_msg, sizeof(g_proc_notify_msg),
+                     "Process '%s' completed (tab %d, %lldm %llds)",
+                     comm[0] ? comm : "shell", i + 1, mins, secs);
+        } else {
+            snprintf(g_proc_notify_msg, sizeof(g_proc_notify_msg),
+                     "Process '%s' completed (tab %d, %llds)",
+                     comm[0] ? comm : "shell", i + 1, secs);
+        }
+        g_proc_notify_pending = 1;
+        return 1;
+    }
+    return 0;
+}
+
+void nitty_gtk4_proc_notify_get(char *buf, int32_t bufsz)
+{
+    if (!buf || bufsz <= 0) return;
+    strncpy(buf, g_proc_notify_msg, (size_t)(bufsz - 1));
+    buf[bufsz - 1] = '\0';
+    g_proc_notify_msg[0] = '\0';
+}
+const char *nitty_gtk4_proc_notify_msg(void)
+{
+    return g_proc_notify_msg;
 }

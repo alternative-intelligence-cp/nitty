@@ -74,6 +74,9 @@ use "renderer.npk".*;               // v0.7.2: renderer_set_hover_link_id
 use "window_features.npk".*;         // v0.7.3: opacity, fullscreen, always-on-top, title
 use "../config/config.npk".*;        // v0.7.3: cfg_win_* getters
 use "../config/window_state.npk".*;  // v0.7.3: WinState type for saved state
+use "../terminal/bell.npk".*;        // v0.7.4: bell dispatch
+use "../terminal/activity.npk".*;    // v0.7.4: background tab activity monitor
+use "../terminal/process_monitor.npk".*; // v0.7.4: process completion notifications
 
 // ═══════════════════════════════════════════════════════════════════════
 // Module state
@@ -94,6 +97,8 @@ int64:g_tw_last_save_time = 0i64;
 int64:g_tw_quake_setup_done = 0i64;
 // v0.7.3: 1 after window features (opacity/decoration/icon/always-on-top/state) applied
 int64:g_tw_winfeatures_done = 0i64;
+// v0.7.4: monotonic timestamp (seconds) of last process-completion poll
+int64:g_tw_last_pm_time = 0i64;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Initialization
@@ -130,8 +135,13 @@ pub func:tw_get_cols = int64() { pass(g_tw_cols); };
 func:_tw_update_win_title = NIL() {
     int64:wt_win = raw nitty_gtk4_get_main_window();
     if (wt_win == 0i64) { pass(NIL); }
-    string:t = raw tm_get_title_at(raw tm_get_active_index());
+    int64:wt_slot = raw tm_get_active_index();
+    string:t = raw tm_get_title_at(wt_slot);
     drop(wf_update_title(wt_win, t));
+    // v0.7.4: Clear bell + activity indicators when tab becomes active
+    drop(tab_clear_bell(wt_slot));
+    drop(tab_clear_activity(wt_slot));
+    drop(activity_clear(wt_slot));
     pass(NIL);
 };
 
@@ -216,7 +226,18 @@ func:dispatch_action = NIL(string:action, int64:rows, int64:cols) {
         },
         // Search
         ("edit.search") { drop(sb_toggle()); },  // v0.7.0
-        ("edit.clear")  { drop(nitty_gtk4_show_notification("Clear: coming in v0.7.x")); },
+        ("edit.clear")  {
+            // v0.7.5: Clear screen + cursor home via CSI 2J + CSI H
+            // ESC [ 2 J  — erase entire display
+            drop(nitty_gtk4_pty_write_byte(0x1Bi64));
+            drop(nitty_gtk4_pty_write_byte(0x5Bi64));
+            drop(nitty_gtk4_pty_write_byte(0x32i64));
+            drop(nitty_gtk4_pty_write_byte(0x4Ai64));
+            // ESC [ H    — cursor home (row 1, col 1)
+            drop(nitty_gtk4_pty_write_byte(0x1Bi64));
+            drop(nitty_gtk4_pty_write_byte(0x5Bi64));
+            drop(nitty_gtk4_pty_write_byte(0x48i64));
+        },
         // View
         ("view.fullscreen") {
             int64:wf_win = nitty_gtk4_get_main_window();
@@ -314,6 +335,14 @@ pub func:tw_on_draw = NIL() {
             }
         }
         g_tw_last_focused = cur_focused;
+    }
+
+    // v0.7.5 Step 0a2: Viewport snap on alt screen enter (smcup)
+    // When a program enters the alternate screen while the user is scrolled
+    // back in history, snap to the bottom so the alt screen renders cleanly.
+    if (raw ts_get_pending_snap() != 0i64) {
+        drop(ts_set_pending_snap(0i64));
+        drop(viewport_scroll_to_bottom());
     }
 
     // v0.3.4 Step 0b: Poll scroll keyboard shortcuts
@@ -971,6 +1000,8 @@ pub func:tw_on_draw = NIL() {
 
     // Step 1: Drain PTY byte queue through Nitpick pipeline
     int64:available = nitty_gtk4_pty_bytes_available();
+    // Save pre-drain count to detect whether any bytes arrived this frame
+    int64:available_start = available;
     // v0.3.4: new output → auto-scroll to bottom (user returns to live view)
     if (available > 0i64) {
         if (raw viewport_is_at_bottom() == 0i64) {
@@ -983,6 +1014,23 @@ pub func:tw_on_draw = NIL() {
             drop(pipeline_feed(b));
         }
         available = available - 1i64;
+    }
+
+    // v0.7.4: Bell — consume ts_bell_pending after PTY drain
+    int64:bel_p    = raw ts_get_bell_pending();
+    int64:bel_now  = nitty_gtk4_get_monotonic_ms();
+    int64:bel_slot = raw tm_get_active_index();
+    if (bel_p != 0i64) {
+        drop(ts_set_bell_pending(0i64));
+        drop(bell_handle(bel_slot, 1i64, bel_now));
+        drop(tw_queue_redraw());
+    }
+
+    // v0.7.4: Activity — mark background tabs when they receive output
+    int64:a_now  = nitty_gtk4_get_monotonic_ms();
+    int64:a_slot = raw tm_get_active_index();
+    if (available_start > 0i64) {
+        drop(activity_on_output(a_slot, 1i64, a_now));
     }
 
     // Step 2: Sync terminal state to C render grid
@@ -1015,6 +1063,13 @@ pub func:tw_on_draw = NIL() {
     if (elapsed >= 30i64) {
         drop(session_save());
         g_tw_last_save_time = now_s;
+    }
+
+    // v0.7.4: Process completion poll every 2 seconds
+    int64:pm_elapsed = now_s - g_tw_last_pm_time;
+    if (pm_elapsed >= 2i64) {
+        drop(process_monitor_poll());
+        g_tw_last_pm_time = now_s;
     }
 
     pass(NIL);

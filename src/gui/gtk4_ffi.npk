@@ -626,5 +626,24 @@ extern "nitty_gtk4_shim" {
     // Always-on-top via _NET_WM_STATE_ABOVE (X11 only, no-op on Wayland).
     // keep_above=1 to raise, 0 to restore normal stacking.
     func:nitty_gtk4_window_set_keep_above = NIL(int64:win_ptr, int64:keep_above);
+
+    // ── v0.7.4: Bell and process completion notifications ─────────────────
+    // Audible system bell via gdk_display_beep().
+    func:nitty_gtk4_display_beep = NIL();
+
+    // Set minimum process runtime (ms) before a completion notification fires.
+    func:nitty_gtk4_proc_set_min_ms = NIL(int64:ms);
+
+    // Poll for a pending process-completion notification; returns 1 if pending, 0 otherwise.
+    func:nitty_gtk4_proc_notify_poll = int64();
+
+    // Return the static process-completion message string (after poll returns 1).
+    func:nitty_gtk4_proc_notify_msg = string();
+
+    // Register a tab slot + PID for process completion tracking.
+    func:nitty_gtk4_proc_register = NIL(int32:slot, int64:pid);
+
+    // Read process name from /proc/<pid>/comm (shim-side, no fs dependency).
+    func:nitty_gtk4_get_proc_comm = string(int64:pid);
 }
 

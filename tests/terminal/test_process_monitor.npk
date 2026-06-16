@@ -1,0 +1,73 @@
+// tests/terminal/test_process_monitor.npk — Unit tests for process_monitor.npk (v0.7.4)
+
+use "../../src/terminal/process_monitor.npk".*;
+
+int64:STDOUT = 1i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        drop(write_stdout(string_concat("[PASS] ", string_concat(name, "\n"))));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    drop(write_stdout(string_concat("[FAIL] ", string_concat(name,
+        string_concat(" expected=", string_concat(string_from_int(expected),
+        string_concat(" got=", string_concat(string_from_int(got), "\n"))))))));
+    pass(NIL);
+};
+
+func:check_nonempty = NIL(string:name, string:got) {
+    int64:len = string_length(got);
+    if (len > 0i64) {
+        g_pass = g_pass + 1i64;
+        drop(write_stdout(string_concat("[PASS] ", string_concat(name,
+            string_concat(" (got: ", string_concat(got, ")\n"))))));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    drop(write_stdout(string_concat("[FAIL] ", string_concat(name, " (empty string)\n"))));
+    pass(NIL);
+};
+
+func:main = int32() {
+    // T01: process_get_comm(1) returns non-empty string
+    // PID 1 = init/systemd on all Linux systems
+    string:comm1 = raw process_get_comm(1i64);
+    drop(check_nonempty("T01 process_get_comm(1) non-empty", comm1));
+
+    // T02: process_get_comm(-1) returns "" (invalid PID)
+    string:comm_neg = raw process_get_comm(-1i64);
+    drop(check("T02 process_get_comm(-1) = empty", 0i64, string_length(comm_neg)));
+
+    // T03: process_monitor_init sets module state
+    drop(process_monitor_init(0i64, 1i64));
+    // After init with min_ms=0, poll should still work without crashing
+    drop(process_monitor_poll());
+    drop(check("T03 process_monitor_poll after init (no crash)", 1i64, 1i64));
+
+    // T04: process_monitor_init with notify=0 — poll is effectively disabled
+    drop(process_monitor_init(10000i64, 0i64));
+    drop(process_monitor_poll());
+    drop(check("T04 poll with notify=0 does not crash", 1i64, 1i64));
+
+    // T05: process_get_comm(0) returns "" (PID 0 = kernel swapper, not accessible)
+    string:comm0 = raw process_get_comm(0i64);
+    drop(check("T05 process_get_comm(0) = empty", 0i64, string_length(comm0)));
+
+    // Report
+    drop(write_stdout(string_concat("Result: ", string_concat(
+        string_from_int(g_pass), string_concat(" passed, ",
+        string_concat(string_from_int(g_fail), " failed\n"))))));
+    if (g_fail != 0i64) { exit 1i32; }
+    exit 0i32;
+};

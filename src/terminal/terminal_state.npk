@@ -95,12 +95,16 @@ int64:ts_mode_mouse_drag     = 0i64;   // drag
 int64:ts_mode_mouse_all      = 0i64;   // all mouse
 int64:ts_mode_mouse_sgr      = 0i64;   // SGR encoding
 int64:ts_mode_alt_screen_full = 0i64;  // DECSET 1049 (save+alt+clear)
+int64:ts_mode_alt_screen_1047 = 0i64; // DECSET 1047 (alt screen, clear on enter, no cursor save)
 int64:ts_mode_bracketed_paste = 0i64;  // bracketed paste
 
 // ANSI Standard Modes
 int64:ts_mode_insert         = 0i64;   // IRM (mode 4)
 int64:ts_mode_newline        = 0i64;   // LNM (mode 20)
 int64:ts_mode_focus_events   = 0i64;   // DECSET 1004 — focus in/out reporting
+
+// v0.7.5: Set by ts_switch_screen_1049(1) so tw_on_draw() can snap viewport to bottom.
+int64:ts_pending_snap_to_bottom = 0i64;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Character Sets (G0–G3)
@@ -262,8 +266,10 @@ func:ts_reset_modes = NIL() {
     ts_mode_mouse_drag     = 0i64;
     ts_mode_mouse_all      = 0i64;
     ts_mode_mouse_sgr      = 0i64;
-    ts_mode_alt_screen_full = 0i64;
-    ts_mode_bracketed_paste = 0i64;
+    ts_mode_alt_screen_full  = 0i64;
+    ts_mode_alt_screen_1047  = 0i64;
+    ts_mode_bracketed_paste  = 0i64;
+    ts_pending_snap_to_bottom = 0i64;
     ts_mode_insert         = 0i64;
     ts_mode_newline        = 0i64;
     pass(NIL);
@@ -383,7 +389,8 @@ pub func:ts_resize = NIL(int64:new_rows, int64:new_cols) {
     // Return to active
     if (ts_mode_alt_screen != 0i64) { drop(grid_set_active(1i64)); }
     if (ts_mode_alt_screen == 0i64) { drop(grid_set_active(0i64)); }
-    if (ts_mode_alt_screen_full != 0i64) { drop(grid_set_active(1i64)); }
+    if (ts_mode_alt_screen_full  != 0i64) { drop(grid_set_active(1i64)); }
+    if (ts_mode_alt_screen_1047  != 0i64) { drop(grid_set_active(1i64)); }
 
     ts_rows = nr;
     ts_cols = nc;
@@ -550,6 +557,8 @@ pub func:ts_get_mode_cursor_visible  = int64() { pass(ts_mode_cursor_visible); }
 pub func:ts_get_mode_reverse_video   = int64() { pass(ts_mode_reverse_video); };
 pub func:ts_get_mode_alt_screen      = int64() { pass(ts_mode_alt_screen); };
 pub func:ts_get_mode_alt_screen_full = int64() { pass(ts_mode_alt_screen_full); };
+pub func:ts_get_mode_alt_screen_1047 = int64() { pass(ts_mode_alt_screen_1047); };
+pub func:ts_get_pending_snap         = int64() { pass(ts_pending_snap_to_bottom); };
 pub func:ts_get_mode_mouse_button    = int64() { pass(ts_mode_mouse_button); };
 pub func:ts_get_mode_mouse_sgr       = int64() { pass(ts_mode_mouse_sgr); };
 pub func:ts_get_mode_bracketed_paste = int64() { pass(ts_mode_bracketed_paste); };
@@ -588,8 +597,10 @@ pub func:ts_set_mode_mouse_button    = NIL(int64:v) { ts_mode_mouse_button    = 
 pub func:ts_set_mode_mouse_drag      = NIL(int64:v) { ts_mode_mouse_drag      = v; pass(NIL); };
 pub func:ts_set_mode_mouse_all       = NIL(int64:v) { ts_mode_mouse_all       = v; pass(NIL); };
 pub func:ts_set_mode_mouse_sgr       = NIL(int64:v) { ts_mode_mouse_sgr       = v; pass(NIL); };
-pub func:ts_set_mode_alt_screen_full = NIL(int64:v) { ts_mode_alt_screen_full = v; pass(NIL); };
-pub func:ts_set_mode_bracketed_paste = NIL(int64:v) { ts_mode_bracketed_paste = v; pass(NIL); };
+pub func:ts_set_mode_alt_screen_full = NIL(int64:v) { ts_mode_alt_screen_full  = v; pass(NIL); };
+pub func:ts_set_mode_alt_screen_1047 = NIL(int64:v) { ts_mode_alt_screen_1047  = v; pass(NIL); };
+pub func:ts_set_pending_snap         = NIL(int64:v) { ts_pending_snap_to_bottom = v; pass(NIL); };
+pub func:ts_set_mode_bracketed_paste = NIL(int64:v) { ts_mode_bracketed_paste   = v; pass(NIL); };
 pub func:ts_set_mode_insert          = NIL(int64:v) { ts_mode_insert          = v; pass(NIL); };
 pub func:ts_set_mode_newline         = NIL(int64:v) { ts_mode_newline         = v; pass(NIL); };
 pub func:ts_set_mode_focus_events    = NIL(int64:v) { ts_mode_focus_events    = v; pass(NIL); };

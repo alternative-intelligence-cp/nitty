@@ -1,0 +1,103 @@
+// src/terminal/activity.npk — Background tab activity monitoring for Nitty v0.7.4
+//
+// Detects when a background tab produces output after a period of silence
+// (silence_ms) and marks it as having activity (amber dot in tab bar).
+//
+// Activity events are silently dropped for the active tab — only background
+// tabs trigger the indicator.  The silence threshold prevents every keystroke
+// echo from triggering a notification.
+//
+// Public API:
+//   activity_init(silence_ms: int64, notify: int64)
+//   activity_on_output(tab_slot: int64, is_active: int64, now_ms: int64)
+//   activity_clear(tab_slot: int64)
+
+use "../gui/gtk4_ffi.npk".*;
+use "../core/tab.npk".*;
+use "../core/tab_manager.npk".*;
+
+// ── Module state ──────────────────────────────────────────────────────────────
+
+// Minimum silence (ms) before output counts as activity notification trigger
+int64:g_act_silence_ms  = 5000i64;
+// 1 = show desktop notification on activity event
+int64:g_act_notify      = 0i64;
+// Last output time per tab slot (0 = never seen output in this slot)
+int64[16]:g_act_last_ms;
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+// Send activity notification for a tab slot.
+func:_act_notify = NIL(int64:tab_slot) {
+    string:an_title = tm_get_title_at(tab_slot);
+    string:an_msg   = string_concat("⚡ Activity in: ", an_title);
+    drop(nitty_gtk4_show_notification(an_msg));
+    pass(NIL);
+};
+
+// ── Public functions ──────────────────────────────────────────────────────────
+
+/// Initialize the activity monitor.
+/// silence_ms : how long (ms) a tab must be silent before output triggers activity
+/// notify     : 1 to show toast notification on activity, 0 to suppress
+pub func:activity_init = NIL(int64:silence_ms, int64:notify) {
+    g_act_silence_ms = silence_ms;
+    g_act_notify     = notify;
+    // Zero out the last-output timestamps
+    int64:i = 0i64;
+    while (i < 16i64) {
+        g_act_last_ms[i] = 0i64;
+        i = i + 1i64;
+    }
+    pass(NIL);
+};
+
+/// Called whenever a tab produces PTY output.
+/// tab_slot  : which tab received output
+/// is_active : 1 if this tab is currently focused
+/// now_ms    : current monotonic time in ms
+pub func:activity_on_output = NIL(int64:tab_slot, int64:is_active, int64:now_ms) {
+    // Hoist all locals before the first early-exit check
+    int64:ao_prev  = 0i64;
+    int64:ao_delta = 0i64;
+    int64:ao_fire  = 0i64;  // 1 = should fire activity event
+
+    if (tab_slot < 0i64)   { pass(NIL); }
+    if (tab_slot >= 16i64) { pass(NIL); }
+
+    ao_prev  = g_act_last_ms[tab_slot];
+    g_act_last_ms[tab_slot] = now_ms;
+
+    // Active tab: just update timestamp, no notification
+    if (is_active == 1i64) { pass(NIL); }
+
+    // Background tab: check silence threshold
+    if (ao_prev == 0i64) {
+        // First output ever — not a wake-from-silence event
+        pass(NIL);
+    }
+
+    ao_delta = now_ms - ao_prev;
+    if (ao_delta >= g_act_silence_ms) {
+        ao_fire = 1i64;
+    }
+
+    if (ao_fire == 1i64) {
+        drop(tab_mark_activity(tab_slot));
+        if (g_act_notify == 1i64) {
+            drop(_act_notify(tab_slot));
+        }
+    }
+
+    pass(NIL);
+};
+
+/// Clear the activity timestamp for a tab slot (call when tab becomes active).
+/// Resets the silence clock so the next output doesn't trigger instantly.
+pub func:activity_clear = NIL(int64:tab_slot) {
+    if (tab_slot < 0i64)   { pass(NIL); }
+    if (tab_slot >= 16i64) { pass(NIL); }
+    // Reset to 0 so silence starts fresh when tab next becomes background
+    g_act_last_ms[tab_slot] = 0i64;
+    pass(NIL);
+};

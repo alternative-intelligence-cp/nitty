@@ -1,0 +1,61 @@
+// src/terminal/process_monitor.npk — Process completion notifications for Nitty v0.7.4
+//
+// Monitors background tab shells for process exit events using the existing
+// nitty_gtk4_proc_notify_poll() shim function (which uses waitpid internally).
+//
+// When a background shell exits after running for at least process_min_duration
+// milliseconds, a toast notification is shown.
+//
+// Also provides process_get_comm(pid) to read /proc/{pid}/comm via the shim
+// (no nitpick-fs dependency needed).
+//
+// Public API:
+//   process_monitor_init(min_ms: int64, notify: int64)
+//   process_monitor_poll()
+//   process_get_comm(pid: int64) → string
+
+use "../gui/gtk4_ffi.npk".*;
+
+// ── Module state ──────────────────────────────────────────────────────────────
+
+// Minimum runtime (ms) before a completion triggers notification
+int64:g_pm_min_ms  = 10000i64;
+// 1 = show toast notifications on completion
+int64:g_pm_notify  = 1i64;
+
+// ── Public functions ──────────────────────────────────────────────────────────
+
+/// Initialize the process monitor.
+/// min_ms : minimum process runtime (ms) before a completion notification fires
+/// notify : 1 to show toast notifications, 0 to suppress
+pub func:process_monitor_init = NIL(int64:min_ms, int64:notify) {
+    g_pm_min_ms = min_ms;
+    g_pm_notify = notify;
+    // Configure the shim with the same minimum duration
+    nitty_gtk4_proc_set_min_ms(min_ms);
+    pass(NIL);
+};
+
+/// Read the process name from /proc/{pid}/comm via the C shim.
+/// Returns the comm string (e.g. "make", "cargo", "python3") or "" on error.
+/// The comm string is at most 15 characters (Linux kernel limit).
+pub func:process_get_comm = string(int64:pid) {
+    if (pid <= 0i64) { pass(""); }
+    pass(nitty_gtk4_get_proc_comm(pid));
+};
+
+/// Poll for completed background processes and show notifications.
+/// Called from tw_on_draw() every ~2 seconds.
+/// No-op when notifications are disabled.
+pub func:process_monitor_poll = NIL() {
+    int64:pend   = nitty_gtk4_proc_notify_poll();
+    string:pm_msg = nitty_gtk4_proc_notify_msg();
+    // Only dispatch when notifications enabled and a message is pending
+    int64:should_notify = g_pm_notify;
+    if (pend != 1i64) { should_notify = 0i64; }
+    if (string_length(pm_msg) == 0i64) { should_notify = 0i64; }
+    if (should_notify == 1i64) {
+        drop(nitty_gtk4_show_notification(pm_msg));
+    }
+    pass(NIL);
+};

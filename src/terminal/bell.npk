@@ -1,0 +1,111 @@
+// src/terminal/bell.npk — Bell handler for Nitty v0.7.4
+//
+// Dispatches BEL (0x07) events to the appropriate bell action based on
+// the configured bell_mode.  All state is module-level for zero-cost polling.
+//
+// Bell modes:
+//   0 = visual      — mark tab bell dot only (no sound)
+//   1 = audible     — system beep via gdk_display_beep() (default)
+//   2 = notification — mark tab dot + show toast notification
+//   3 = disabled    — completely ignore BEL
+//
+// Suppression: bells within 100ms of each other are silently dropped.
+//
+// Public API:
+//   bell_init(mode_str: string, notify: int64)
+//   bell_handle(tab_slot: int64, is_active: int64, now_ms: int64)
+//   bell_get_mode() → int64
+//   bell_is_disabled() → int64
+
+use "../gui/gtk4_ffi.npk".*;
+use "../core/tab.npk".*;
+use "../core/tab_manager.npk".*;
+
+// ── Module state ──────────────────────────────────────────────────────────────
+
+// Bell mode: 0=visual 1=audible 2=notification 3=disabled
+int64:g_bell_mode         = 1i64;
+// Whether to also send a toast notification regardless of mode
+int64:g_bell_notify       = 0i64;
+// Suppression window in ms
+int64:g_bell_suppress_ms  = 100i64;
+// Timestamp of last bell dispatch (ms)
+int64:g_bell_last_ms      = 0i64;
+
+// ── Public functions ──────────────────────────────────────────────────────────
+
+/// Initialize bell handler from config.
+/// mode_str: "audible"|"visual"|"notification"|"disabled"
+/// notify: 1 to show toast notifications, 0 to suppress
+pub func:bell_init = NIL(string:mode_str, int64:notify) {
+    g_bell_notify = notify;
+    // Map string → int mode
+    if (mode_str == "audible")      { g_bell_mode = 1i64; pass(NIL); }
+    if (mode_str == "visual")       { g_bell_mode = 0i64; pass(NIL); }
+    if (mode_str == "notification") { g_bell_mode = 2i64; pass(NIL); }
+    if (mode_str == "disabled")     { g_bell_mode = 3i64; pass(NIL); }
+    // Unknown mode — default to audible
+    g_bell_mode = 1i64;
+    pass(NIL);
+};
+
+/// Return current bell mode integer (0=visual 1=audible 2=notification 3=disabled).
+pub func:bell_get_mode = int64() {
+    pass(g_bell_mode);
+};
+
+/// Return 1 if bell is completely disabled, 0 otherwise.
+pub func:bell_is_disabled = int64() {
+    int64:dis = is (g_bell_mode == 3i64) : 1i64 : 0i64;
+    pass(dis);
+};
+
+// Internal: send a toast notification with the tab title.
+func:_bell_notify_title = NIL(int64:tab_slot, string:prefix) {
+    string:bn_title = tm_get_title_at(tab_slot);
+    string:bn_msg   = string_concat(prefix, bn_title);
+    drop(nitty_gtk4_show_notification(bn_msg));
+    pass(NIL);
+};
+
+/// Handle a BEL event for the given tab slot.
+/// tab_slot  : the tab index that received BEL
+/// is_active : 1 if this is the currently active tab, 0 if background
+/// now_ms    : current monotonic timestamp in milliseconds
+pub func:bell_handle = NIL(int64:tab_slot, int64:is_active, int64:now_ms) {
+    // Hoist all local variables before any early-exit if blocks
+    int64:bh_delta  = now_ms - g_bell_last_ms;
+    int64:bh_skip   = 0i64;  // 1 = skip this bell (suppressed or disabled)
+
+    // Disabled mode — set skip flag
+    if (g_bell_mode == 3i64) { bh_skip = 1i64; }
+
+    // Suppression: rapid repeated bells
+    if (bh_skip == 0i64) {
+        if (bh_delta < g_bell_suppress_ms) {
+            if (g_bell_last_ms != 0i64) { bh_skip = 1i64; }
+        }
+    }
+
+    if (bh_skip == 0i64) {
+        g_bell_last_ms = now_ms;
+        // Mark the tab bell indicator (amber dot in tab bar)
+        drop(tab_mark_bell(tab_slot));
+        // Audible beep (mode 1)
+        if (g_bell_mode == 1i64) {
+            nitty_gtk4_display_beep();
+        }
+        // Toast notification (mode 2)
+        if (g_bell_mode == 2i64) {
+            drop(_bell_notify_title(tab_slot, "🔔 Bell: "));
+        }
+        // Extra notification when bell_notify override is on and mode != 2
+        if (g_bell_notify == 1i64) {
+            if (g_bell_mode != 2i64) {
+                drop(_bell_notify_title(tab_slot, "🔔 Bell: "));
+            }
+        }
+    }
+
+    pass(NIL);
+};

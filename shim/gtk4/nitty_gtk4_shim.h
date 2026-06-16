@@ -390,6 +390,14 @@ void nitty_gtk4_unregister_tab_pid(int64_t slot);
 const char *nitty_gtk4_get_proc_cwd(int64_t pid);
 
 /**
+ * Read the process name from /proc/<pid>/comm.
+ * Returns a pointer to a static buffer with the comm string (max 15 chars),
+ * stripped of trailing newline.  Returns "" on any error.
+ * Safe only on the GTK main thread (uses a static buffer).
+ */
+const char *nitty_gtk4_get_proc_comm(int64_t pid);
+
+/**
  * Spawn a new PTY + shell with the working directory set to `path`.
  * Like nitty_gtk4_spawn_tab_shell_at_cwd but takes an explicit path string
  * instead of deriving it from a source PID.  Falls back to $HOME if path
@@ -812,6 +820,49 @@ void nitty_gtk4_window_set_icon_name(int64_t win_ptr, const char *name);
  */
 void nitty_gtk4_window_set_keep_above(int64_t win_ptr, int64_t keep_above);
 
+/* ── v0.7.4: Bell and process completion notifications ──────────────────── */
+
+/**
+ * Ring the system bell (audible beep via GDK).
+ * Uses gdk_display_beep() on the default display.
+ * No-op if no display is available.
+ */
+void nitty_gtk4_display_beep(void);
+
+/**
+ * Configure the minimum process runtime (ms) before a completion notification
+ * fires.  Default: 10000 (10 s).  Set to 0 to notify for all processes.
+ */
+void nitty_gtk4_proc_set_min_ms(int64_t ms);
+
+/**
+ * Poll for a pending process-completion notification message.
+ * Returns 1 if a message is waiting; 0 otherwise.
+ * Clears the pending message on return.
+ */
+int32_t nitty_gtk4_proc_notify_poll(void);
+
+/**
+ * Copy the most recent process-completion message into buf (max bufsz bytes).
+ * Only meaningful after nitty_gtk4_proc_notify_poll() returns 1.
+ */
+void nitty_gtk4_proc_notify_get(char *buf, int32_t bufsz);
+
+/**
+ * Return a pointer to the static process-completion message buffer.
+ * Only meaningful after nitty_gtk4_proc_notify_poll() returns 1.
+ * Clears the pending message on return.
+ * Usable as a string-returning FFI function.
+ */
+const char *nitty_gtk4_proc_notify_msg(void);
+
+/**
+ * Called by the app layer when a new tab shell is spawned, so the process
+ * monitor can track its start time for completion duration calculation.
+ * slot  : tab slot index (0-15)
+ * pid   : shell process PID
+ */
+void nitty_gtk4_proc_register(int32_t slot, int64_t pid);
 
 #ifdef __cplusplus
 }

@@ -54,6 +54,15 @@ int64:g_cfg_win_always_on_top = 0i64;
 int64:g_cfg_win_decorated     = 1i64;
 string:g_cfg_win_icon_name    = "utilities-terminal";
 
+// v0.7.4: Bell, activity, process completion
+string:g_cfg_bell_mode                        = "audible";
+int64:g_cfg_bell_notify                       = 0i64;
+int64:g_cfg_visual_bell_duration              = 100i64;
+int64:g_cfg_activity_notification             = 0i64;
+int64:g_cfg_activity_silence_threshold        = 5000i64;
+int64:g_cfg_process_completion_notification   = 1i64;
+int64:g_cfg_process_min_duration              = 10000i64;
+
 // State flags
 int64:g_cfg_is_default = 1i64;  // 1 if no config file found; 0 if loaded from disk
 int64:g_cfg_loaded     = 0i64;  // set to 1 after config_load() completes
@@ -85,6 +94,14 @@ func:_load_defaults = NIL() {
     g_cfg_win_always_on_top = 0i64;
     g_cfg_win_decorated     = 1i64;
     g_cfg_win_icon_name     = "utilities-terminal";
+    // v0.7.4 bell/activity/process defaults
+    g_cfg_bell_mode                      = "audible";
+    g_cfg_bell_notify                    = 0i64;
+    g_cfg_visual_bell_duration           = 100i64;
+    g_cfg_activity_notification          = 0i64;
+    g_cfg_activity_silence_threshold     = 5000i64;
+    g_cfg_process_completion_notification = 1i64;
+    g_cfg_process_min_duration           = 10000i64;
     pass(NIL);
 };
 
@@ -278,6 +295,49 @@ func:_read_from_toml = NIL() {
     if (has_ico == 1i32) {
         string:ico_v = raw Toml.get_string("window.icon_name");
         if (raw string_is_empty(ico_v) == 0i64) { g_cfg_win_icon_name = ico_v; }
+    }
+
+    // v0.7.4: Bell mode
+    int32:has_bm = raw Toml.has_key("terminal.bell_mode");
+    if (has_bm == 1i32) {
+        string:bm_v = raw Toml.get_string("terminal.bell_mode");
+        if (raw string_is_empty(bm_v) == 0i64) { g_cfg_bell_mode = bm_v; }
+    }
+    int32:has_bn = raw Toml.has_key("terminal.bell_notify");
+    if (has_bn == 1i32) {
+        int32:v = raw Toml.get_bool("terminal.bell_notify");
+        if (v == 1i32) { g_cfg_bell_notify = 1i64; }
+        if (v == 0i32) { g_cfg_bell_notify = 0i64; }
+    }
+    int32:has_vbd = raw Toml.has_key("terminal.visual_bell_duration");
+    if (has_vbd == 1i32) {
+        int64:vbd_v = raw Toml.get_int("terminal.visual_bell_duration");
+        int64:vbd_c = raw schema_clamp_int("terminal.visual_bell_duration", vbd_v);
+        g_cfg_visual_bell_duration = vbd_c;
+    }
+    int32:has_an = raw Toml.has_key("terminal.activity_notification");
+    if (has_an == 1i32) {
+        int32:v = raw Toml.get_bool("terminal.activity_notification");
+        if (v == 1i32) { g_cfg_activity_notification = 1i64; }
+        if (v == 0i32) { g_cfg_activity_notification = 0i64; }
+    }
+    int32:has_ast = raw Toml.has_key("terminal.activity_silence_threshold");
+    if (has_ast == 1i32) {
+        int64:ast_v = raw Toml.get_int("terminal.activity_silence_threshold");
+        int64:ast_c = raw schema_clamp_int("terminal.activity_silence_threshold", ast_v);
+        g_cfg_activity_silence_threshold = ast_c;
+    }
+    int32:has_pcn = raw Toml.has_key("terminal.process_completion_notification");
+    if (has_pcn == 1i32) {
+        int32:v = raw Toml.get_bool("terminal.process_completion_notification");
+        if (v == 1i32) { g_cfg_process_completion_notification = 1i64; }
+        if (v == 0i32) { g_cfg_process_completion_notification = 0i64; }
+    }
+    int32:has_pmd = raw Toml.has_key("terminal.process_min_duration");
+    if (has_pmd == 1i32) {
+        int64:pmd_v = raw Toml.get_int("terminal.process_min_duration");
+        int64:pmd_c = raw schema_clamp_int("terminal.process_min_duration", pmd_v);
+        g_cfg_process_min_duration = pmd_c;
     }
 
     pass(NIL);
@@ -532,3 +592,11 @@ pub func:cfg_win_icon_name     = string() { pass(g_cfg_win_icon_name); };
 pub func:cfg_set_win_always_on_top = NIL(int64:v)  { g_cfg_win_always_on_top = v; pass(NIL); };
 pub func:cfg_set_win_decorated     = NIL(int64:v)  { g_cfg_win_decorated = v;     pass(NIL); };
 pub func:cfg_set_win_icon_name     = NIL(string:v) { g_cfg_win_icon_name = v;     pass(NIL); };
+// v0.7.4: Bell, activity, process completion getters
+pub func:cfg_bell_mode                        = string() { pass(g_cfg_bell_mode); };
+pub func:cfg_bell_notify                      = int64()  { pass(g_cfg_bell_notify); };
+pub func:cfg_visual_bell_duration             = int64()  { pass(g_cfg_visual_bell_duration); };
+pub func:cfg_activity_notification            = int64()  { pass(g_cfg_activity_notification); };
+pub func:cfg_activity_silence_threshold       = int64()  { pass(g_cfg_activity_silence_threshold); };
+pub func:cfg_process_completion_notification  = int64()  { pass(g_cfg_process_completion_notification); };
+pub func:cfg_process_min_duration             = int64()  { pass(g_cfg_process_min_duration); };

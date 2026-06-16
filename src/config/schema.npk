@@ -168,6 +168,24 @@ pub func:schema_init = NIL() {
     drop(_sch_add("window.decorated",     T_BOOL, "1", 0i64, 0i64));
     drop(_sch_add("window.icon_name",     T_STR,  "utilities-terminal", 0i64, 0i64));
 
+    // terminal.* — v0.7.4: Bell, activity, process completion
+    //   terminal.bell_mode:                        Enum [audible/visual/notification/disabled]
+    //   terminal.bell_notify:                      bool — 1 = also show toast notification
+    //   terminal.visual_bell_duration:             Int  — flash duration ms (50-500)
+    //   terminal.activity_notification:            bool — 1 = notify on background tab activity
+    //   terminal.activity_silence_threshold:       Int  — silence threshold ms (1000-60000)
+    //   terminal.process_completion_notification:  bool — 1 = notify when background process exits
+    //   terminal.process_min_duration:             Int  — min runtime ms before notifying (1000-300000)
+    int64:T_ENUM = 4i64;
+    drop(_sch_add_enum("terminal.bell_mode", "audible",
+        "audible\tvisual\tnotification\tdisabled"));
+    drop(_sch_add("terminal.bell_notify",                    T_BOOL, "0",     0i64, 0i64));
+    drop(_sch_add("terminal.visual_bell_duration",           T_INT,  "100",   50i64, 500i64));
+    drop(_sch_add("terminal.activity_notification",          T_BOOL, "0",     0i64, 0i64));
+    drop(_sch_add("terminal.activity_silence_threshold",     T_INT,  "5000",  1000i64, 60000i64));
+    drop(_sch_add("terminal.process_completion_notification",T_BOOL, "1",     0i64, 0i64));
+    drop(_sch_add("terminal.process_min_duration",           T_INT,  "10000", 1000i64, 300000i64));
+
     pass(NIL);
 };
 

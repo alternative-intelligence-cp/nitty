@@ -1,0 +1,143 @@
+// tests/terminal/test_terminal_polish.npk — Terminal polish tests (v0.7.5)
+//
+// Tests: RIS, DECSTR, ED 3 (clear scrollback), DECSCUSR, DECSET 1004,
+//        smcup/rmcup cursor save+restore, DECSET 1047, pending snap flag.
+
+use "../../src/terminal/terminal_state.npk".*;
+use "../../src/terminal/terminal_state_apply.npk".*;
+use "../../src/terminal/actions.npk".*;
+use "../../src/terminal/scrollback.npk".*;
+
+int64:STDOUT = 1i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        drop(write_stdout(string_concat("[PASS] ", string_concat(name, "\n"))));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    drop(write_stdout(string_concat("[FAIL] ", string_concat(name,
+        string_concat(" expected=", string_concat(string_from_int(expected),
+        string_concat(" got=", string_concat(string_from_int(got), "\n"))))))));
+    pass(NIL);
+};
+
+func:main = int32() {
+    // ── T01: RIS (ESC c) resets cursor to (0,0) ───────────────────────────
+    drop(ts_init(24i64, 80i64));
+    // Move cursor to (5,10) and set some state
+    drop(ts_set_cursor_row(5i64));
+    drop(ts_set_cursor_col(10i64));
+    drop(ts_apply_action(raw ACT_FULL_RESET(), 0i64, 0i64));
+    drop(check("T01a RIS cursor row = 0", 0i64, raw ts_get_cursor_row()));
+    drop(check("T01b RIS cursor col = 0", 0i64, raw ts_get_cursor_col()));
+    drop(check("T01c RIS cursor_shape = Block", 0i64, raw ts_get_cursor_shape()));
+
+    // ── T02: DECSTR (CSI ! p) preserves scroll region, resets cursor ──────
+    drop(ts_init(24i64, 80i64));
+    drop(ts_set_cursor_row(10i64));
+    drop(ts_set_cursor_col(20i64));
+    drop(ts_apply_action(raw ACT_SOFT_RESET(), 0i64, 0i64));
+    drop(check("T02a DECSTR cursor row = 0", 0i64, raw ts_get_cursor_row()));
+    drop(check("T02b DECSTR cursor col = 0", 0i64, raw ts_get_cursor_col()));
+    // Scroll region should reset to full screen
+    drop(check("T02c DECSTR scroll_top = 0", 0i64, raw ts_get_scroll_top()));
+    drop(check("T02d DECSTR scroll_bottom = 23", 23i64, raw ts_get_scroll_bottom()));
+
+    // ── T03: ED 3 (CSI 3 J) clears scrollback buffer ────────────────────
+    drop(ts_init(24i64, 80i64));
+    // Push something to scrollback by scrolling up
+    drop(scrollback_push_row(0i64));
+    drop(scrollback_push_row(0i64));
+    drop(scrollback_push_row(0i64));
+    int64:len_before = raw scrollback_len();
+    // ACT_ERASE_DISPLAY with mode=3
+    drop(ts_apply_action(raw ACT_ERASE_DISPLAY(), 3i64, 0i64));
+    drop(check("T03a ED 3 had scrollback before", 3i64, len_before));
+    drop(check("T03b ED 3 clears scrollback", 0i64, raw scrollback_len()));
+
+    // ── T04: DECSCUSR sets cursor shape and blink ─────────────────────────
+    drop(ts_init(24i64, 80i64));
+    // data1=shape, data2=blink.  ACT_SET_CURSOR_STYLE = 60
+    // Ps=0 → Block blink
+    drop(ts_apply_action(60i64, 0i64, 1i64));
+    drop(check("T04a DECSCUSR Ps=0 shape=Block", 0i64, raw ts_get_cursor_shape()));
+    drop(check("T04b DECSCUSR Ps=0 blink=1", 1i64, raw ts_get_cursor_blink_enabled()));
+    // Ps=2 → Block steady (data1=0, data2=0)
+    drop(ts_apply_action(60i64, 0i64, 0i64));
+    drop(check("T04c DECSCUSR Ps=2 shape=Block steady", 0i64, raw ts_get_cursor_shape()));
+    drop(check("T04d DECSCUSR Ps=2 blink=0", 0i64, raw ts_get_cursor_blink_enabled()));
+    // Ps=5 → Bar blink (data1=2, data2=1)
+    drop(ts_apply_action(60i64, 2i64, 1i64));
+    drop(check("T04e DECSCUSR Ps=5 shape=Bar", 2i64, raw ts_get_cursor_shape()));
+    drop(check("T04f DECSCUSR Ps=5 blink=1", 1i64, raw ts_get_cursor_blink_enabled()));
+    // Ps=4 → Underline steady (data1=1, data2=0)
+    drop(ts_apply_action(60i64, 1i64, 0i64));
+    drop(check("T04g DECSCUSR Ps=4 shape=Underline", 1i64, raw ts_get_cursor_shape()));
+
+    // ── T05: DECSET 1004 enables focus event mode ─────────────────────────
+    drop(ts_init(24i64, 80i64));
+    drop(check("T05a focus_events off by default", 0i64, raw ts_get_mode_focus_events()));
+    // ACT_SET_MODE=52, data1=1004, data2=is_dec*2+enabled = 1*2+1 = 3
+    drop(ts_apply_action(52i64, 1004i64, 3i64));
+    drop(check("T05b focus_events enabled", 1i64, raw ts_get_mode_focus_events()));
+    // Disable: data2 = 1*2+0 = 2
+    drop(ts_apply_action(52i64, 1004i64, 2i64));
+    drop(check("T05c focus_events disabled", 0i64, raw ts_get_mode_focus_events()));
+
+    // ── T06: smcup (1049) saves cursor; rmcup restores it ────────────────
+    drop(ts_init(24i64, 80i64));
+    drop(ts_set_cursor_row(7i64));
+    drop(ts_set_cursor_col(15i64));
+    // Enter alt screen: ACT_SET_MODE=52, data1=1049, data2=is_dec*2+enabled=1*2+1=3
+    drop(ts_apply_action(52i64, 1049i64, 3i64));
+    drop(check("T06a smcup: now on alt screen", 1i64, raw ts_get_mode_alt_screen_full()));
+    drop(check("T06b smcup: cursor moved to (0,0)", 0i64, raw ts_get_cursor_row()));
+    // Move cursor on alt screen
+    drop(ts_set_cursor_row(3i64));
+    drop(ts_set_cursor_col(5i64));
+    // Exit alt screen: data2 = 1*2+0 = 2
+    drop(ts_apply_action(52i64, 1049i64, 2i64));
+    drop(check("T06c rmcup: back to primary", 0i64, raw ts_get_mode_alt_screen_full()));
+    drop(check("T06d rmcup: cursor row restored to 7", 7i64, raw ts_get_cursor_row()));
+    drop(check("T06e rmcup: cursor col restored to 15", 15i64, raw ts_get_cursor_col()));
+
+    // ── T07: DECSET 1047 switches to alt without cursor save ──────────────
+    drop(ts_init(24i64, 80i64));
+    drop(ts_set_cursor_row(4i64));
+    drop(ts_set_cursor_col(8i64));
+    // Enter mode 1047: data2 = 1*2+1 = 3
+    drop(ts_apply_action(52i64, 1047i64, 3i64));
+    drop(check("T07a 1047 enter: mode_alt_screen_1047 = 1", 1i64, raw ts_get_mode_alt_screen_1047()));
+    // Cursor position is NOT saved — stays where it was (unlike 1049 which resets to 0,0)
+    // NOTE: 1047 does not reset cursor to 0,0 (unlike 1049); cursor position carries over
+    // Exit mode 1047: data2 = 1*2+0 = 2
+    drop(ts_apply_action(52i64, 1047i64, 2i64));
+    drop(check("T07b 1047 exit: mode_alt_screen_1047 = 0", 0i64, raw ts_get_mode_alt_screen_1047()));
+
+    // ── T08: ts_pending_snap set on smcup entry ───────────────────────────
+    drop(ts_init(24i64, 80i64));
+    drop(check("T08a pending_snap off initially", 0i64, raw ts_get_pending_snap()));
+    drop(ts_apply_action(52i64, 1049i64, 3i64));
+    drop(check("T08b pending_snap set on smcup", 1i64, raw ts_get_pending_snap()));
+    // Simulate tw_on_draw clearing it
+    drop(ts_set_pending_snap(0i64));
+    drop(check("T08c pending_snap cleared", 0i64, raw ts_get_pending_snap()));
+
+    // Report
+    drop(write_stdout(string_concat("Result: ", string_concat(
+        string_from_int(g_pass), string_concat(" passed, ",
+        string_concat(string_from_int(g_fail), " failed\n"))))));
+    if (g_fail != 0i64) { exit 1i32; }
+    exit 0i32;
+};

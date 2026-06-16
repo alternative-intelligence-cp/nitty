@@ -1,0 +1,86 @@
+// tests/terminal/test_activity.npk — Unit tests for activity.npk (v0.7.4)
+
+use "../../src/terminal/activity.npk".*;
+use "../../src/core/tab.npk".*;
+
+int64:STDOUT = 1i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        drop(write_stdout(string_concat("[PASS] ", string_concat(name, "\n"))));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    drop(write_stdout(string_concat("[FAIL] ", string_concat(name,
+        string_concat(" expected=", string_concat(string_from_int(expected),
+        string_concat(" got=", string_concat(string_from_int(got), "\n"))))))));
+    pass(NIL);
+};
+
+func:main = int32() {
+    // T01: Active tab output → NO activity indicator
+    drop(activity_init(5000i64, 0i64));
+    drop(tab_clear_activity(0i64));
+    // First output ever on slot 0 (prev=0)
+    drop(activity_on_output(0i64, 1i64, 1000i64));  // is_active=1
+    drop(check("T01 active tab → no activity mark", 0i64, raw tab_has_activity(0i64)));
+
+    // T02: Background tab, first output — no activity event (prev=0 means fresh)
+    drop(activity_init(5000i64, 0i64));
+    drop(tab_clear_activity(1i64));
+    // prev[1] = 0 (fresh), so first output should NOT fire
+    drop(activity_on_output(1i64, 0i64, 1000i64));
+    drop(check("T02 background first output → no activity", 0i64, raw tab_has_activity(1i64)));
+
+    // T03: Background tab, output after silence threshold exceeded → activity fires
+    // Set prev[1] = 1000 via the first output already done above
+    // Now output at 1000 + 6000 = 7000 (> 5000 silence threshold)
+    drop(activity_on_output(1i64, 0i64, 7000i64));
+    drop(check("T03 output after 6s silence → activity marked", 1i64, raw tab_has_activity(1i64)));
+
+    // T04: activity_clear resets silence clock
+    drop(activity_clear(1i64));
+    drop(tab_clear_activity(1i64));
+    // After clear, next output should NOT fire (prev=0 again)
+    drop(activity_on_output(1i64, 0i64, 8000i64));
+    drop(check("T04 after activity_clear, no fire on first output", 0i64, raw tab_has_activity(1i64)));
+
+    // T05: Custom silence threshold (1000ms) honored
+    drop(activity_init(1000i64, 0i64));
+    drop(tab_clear_activity(2i64));
+    // First output sets prev[2] = 500
+    drop(activity_on_output(2i64, 0i64, 500i64));
+    drop(check("T05a custom threshold 1000ms, first output no fire", 0i64, raw tab_has_activity(2i64)));
+    // Output at 500 + 1500 = 2000 (> 1000ms threshold) — should fire
+    drop(activity_on_output(2i64, 0i64, 2000i64));
+    drop(check("T05b output after 1500ms > 1000ms threshold fires", 1i64, raw tab_has_activity(2i64)));
+
+    // T06: Output within threshold (500ms < 5000ms) → no activity
+    drop(activity_init(5000i64, 0i64));
+    drop(tab_clear_activity(3i64));
+    drop(activity_on_output(3i64, 0i64, 100i64));  // sets prev[3] = 100
+    drop(activity_on_output(3i64, 0i64, 600i64));  // delta=500 < 5000 → no fire
+    drop(check("T06 delta < threshold → no activity", 0i64, raw tab_has_activity(3i64)));
+
+    // T07: Slot bounds check — slot -1 and slot 16 are no-ops
+    drop(activity_on_output(-1i64, 0i64, 99999i64));
+    drop(activity_on_output(16i64, 0i64, 99999i64));
+    drop(check("T07 out-of-bounds slots are no-ops (no crash)", 1i64, 1i64));
+
+    // Report
+    drop(write_stdout(string_concat("Result: ", string_concat(
+        string_from_int(g_pass), string_concat(" passed, ",
+        string_concat(string_from_int(g_fail), " failed\n"))))));
+    if (g_fail != 0i64) { exit 1i32; }
+    exit 0i32;
+};
