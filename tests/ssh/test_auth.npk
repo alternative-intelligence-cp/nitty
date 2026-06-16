@@ -75,11 +75,11 @@ func:main = int32() {
         0i64, @cast<int64>(cur)));
 
     // T03: AUTH_METHOD_* constants are distinct
-    m_agent    = raw AUTH_METHOD_AGENT();
-    m_pubkey   = raw AUTH_METHOD_PUBKEY();
-    m_kbdint   = raw AUTH_METHOD_KBDINT();
-    m_password = raw AUTH_METHOD_PASSWORD();
-    m_none     = raw AUTH_METHOD_NONE();
+    m_agent    = AUTH_METHOD_AGENT;
+    m_pubkey   = AUTH_METHOD_PUBKEY;
+    m_kbdint   = AUTH_METHOD_KBDINT;
+    m_password = AUTH_METHOD_PASSWORD;
+    m_none     = AUTH_METHOD_NONE;
     eq_ab = 0i32; if (m_agent    == m_pubkey)   { eq_ab = 1i32; }
     eq_ac = 0i32; if (m_agent    == m_kbdint)   { eq_ac = 1i32; }
     eq_bc = 0i32; if (m_pubkey   == m_kbdint)   { eq_bc = 1i32; }
@@ -92,10 +92,10 @@ func:main = int32() {
     drop(check_int("T03e: PASSWORD != NONE",  0i64, @cast<int64>(eq_de)));
 
     // T04: AUTH_RESULT_* constants are distinct
-    r_ok       = raw AUTH_RESULT_OK();
-    r_fail2    = raw AUTH_RESULT_FAIL();
-    r_input    = raw AUTH_RESULT_NEED_INPUT();
-    r_progress = raw AUTH_RESULT_IN_PROGRESS();
+    r_ok       = AUTH_RESULT_OK;
+    r_fail2    = AUTH_RESULT_FAIL;
+    r_input    = AUTH_RESULT_NEED_INPUT;
+    r_progress = AUTH_RESULT_IN_PROGRESS;
     eq_of = 0i32; if (r_ok    == r_fail2)    { eq_of = 1i32; }
     eq_oi = 0i32; if (r_ok    == r_input)    { eq_oi = 1i32; }
     eq_fp = 0i32; if (r_fail2 == r_progress) { eq_fp = 1i32; }

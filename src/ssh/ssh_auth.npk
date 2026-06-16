@@ -11,58 +11,35 @@
 //   loop: auth_try_next(pane_id) until AUTH_RESULT_OK or AUTH_RESULT_FAIL
 
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/src/nitpick_ssh.npk".*;
-// Inline only the C extern functions we actually need from nitpick-unix-socket
-// (importing the full module pulls in buggy UnixSocket Type methods)
-extern "nitpick_unix_socket_shim" {
-    func:nitpick_unix_socket_create  = int64();
-    func:nitpick_unix_socket_connect = int64(int64:fd, string:path);
-    func:nitpick_unix_socket_send    = int64(int64:fd, string:data, int64:len);
-    func:nitpick_unix_socket_recv    = string(int64:fd, int64:max_len);
-    func:nitpick_unix_socket_close   = int64(int64:fd);
-}
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/src/nitpick_unix_socket.npk".*;
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
 
 // ── Constants ────────────────────────────────────────────────────────────────
+// All declared with `fixed` — Nitpick's const. No Result<T> wrapping.
+// Accessible inside and outside this module without raw.
 
-// ── Private (intra-module) constants ─────────────────────────────────────────
-// Used throughout ssh_auth.npk. Not Result-wrapped (no pub keyword).
-func:_AM_AGENT    = int32() { pass 0i32; };
-func:_AM_PUBKEY   = int32() { pass 1i32; };
-func:_AM_KBDINT   = int32() { pass 2i32; };
-func:_AM_PASSWORD = int32() { pass 3i32; };
-func:_AM_COUNT    = int32() { pass 4i32; };
-func:_AM_NONE     = int32() { pass 99i32; };
+// Auth method indices (order of attempt)
+pub fixed int32:AUTH_METHOD_AGENT    = 0i32;
+pub fixed int32:AUTH_METHOD_PUBKEY   = 1i32;
+pub fixed int32:AUTH_METHOD_KBDINT   = 2i32;
+pub fixed int32:AUTH_METHOD_PASSWORD = 3i32;
+pub fixed int32:AUTH_METHOD_COUNT    = 4i32;
+pub fixed int32:AUTH_METHOD_NONE     = 99i32;
 
-func:_AR_OK       = int32() { pass 1i32; };
-func:_AR_FAIL     = int32() { pass 2i32; };
-func:_AR_INPUT    = int32() { pass 3i32; };
-func:_AR_PROGRESS = int32() { pass 0i32; };
+// auth_try_next return codes
+pub fixed int32:AUTH_RESULT_IN_PROGRESS = 0i32;   // keep calling
+pub fixed int32:AUTH_RESULT_OK          = 1i32;   // authenticated
+pub fixed int32:AUTH_RESULT_FAIL        = 2i32;   // all methods exhausted
+pub fixed int32:AUTH_RESULT_NEED_INPUT  = 3i32;   // password/passphrase needed
 
-// Agent protocol constants (private)
-func:_SSH_AGENTC_REQUEST_IDENTITIES = int32() { pass 11i32; };
-func:_SSH_AGENT_IDENTITIES_ANSWER   = int32() { pass 12i32; };
-
-// ── Public (exported) constants ───────────────────────────────────────────────
-// External callers use: raw @cast<int64>(0i32) to unwrap Result<int32>.
-pub func:AUTH_METHOD_AGENT    = int32() { pass 0i32; };
-pub func:AUTH_METHOD_PUBKEY   = int32() { pass 1i32; };
-pub func:AUTH_METHOD_KBDINT   = int32() { pass 2i32; };
-pub func:AUTH_METHOD_PASSWORD = int32() { pass 3i32; };
-pub func:AUTH_METHOD_COUNT    = int32() { pass 4i32; };
-pub func:AUTH_METHOD_NONE     = int32() { pass 99i32; };
-
-pub func:AUTH_RESULT_OK          = int32() { pass 1i32; };
-pub func:AUTH_RESULT_FAIL        = int32() { pass 2i32; };
-pub func:AUTH_RESULT_NEED_INPUT  = int32() { pass 3i32; };
-pub func:AUTH_RESULT_IN_PROGRESS = int32() { pass 0i32; };
-
-pub func:SSH_AGENTC_REQUEST_IDENTITIES = int32() { pass 11i32; };
-pub func:SSH_AGENTC_SIGN_REQUEST       = int32() { pass 13i32; };
-pub func:SSH_AGENT_IDENTITIES_ANSWER   = int32() { pass 12i32; };
-pub func:SSH_AGENT_SIGN_RESPONSE       = int32() { pass 14i32; };
-pub func:SSH_AGENT_FAILURE             = int32() { pass 5i32; };
-pub func:SSH_AGENT_RSA_SHA2_256_FLAG   = int32() { pass 2i32; };
+// SSH Agent protocol message types (RFC 4253 §6)
+pub fixed int32:SSH_AGENTC_REQUEST_IDENTITIES = 11i32;
+pub fixed int32:SSH_AGENTC_SIGN_REQUEST       = 13i32;
+pub fixed int32:SSH_AGENT_IDENTITIES_ANSWER   = 12i32;
+pub fixed int32:SSH_AGENT_SIGN_RESPONSE       = 14i32;
+pub fixed int32:SSH_AGENT_FAILURE             = 5i32;
+pub fixed int32:SSH_AGENT_RSA_SHA2_256_FLAG   = 2i32;
 
 
 // ── Per-pane state arrays (max 32 panes) ────────────────────────────────────
