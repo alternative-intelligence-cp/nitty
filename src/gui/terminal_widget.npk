@@ -57,6 +57,8 @@ use "../terminal/scrollback.npk".*;
 use "../core/tab_manager.npk".*;
 use "../core/split_tree.npk".*;
 use "../core/session.npk".*;
+use "../core/hotkey.npk".*;
+use "input.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Module state
@@ -142,6 +144,54 @@ func:_tw_sync_broadcast = NIL() {
             }
         }
         bc_li = bc_li + 1i64;
+    }
+    pass(NIL);
+};
+
+// v0.6.2: Dispatch a hotkey action by name.
+// Translates the action string returned by hk_handle_key() into actual calls.
+// Actions that overlap with existing C-shim events are handled there;
+// this function handles actions NOT covered by the C shim.
+func:dispatch_action = NIL(string:action, int64:rows, int64:cols) {
+    pick(action) {
+        // Tab management (C shim already handles most; these are extras)
+        ("tab.new")   { drop(tm_open_new_tab(rows, cols)); drop(tw_queue_redraw()); },
+        ("tab.close") {
+            int64:alive = raw tm_get_active_pid();
+            if (alive > 0i64) {
+                drop(nitty_gtk4_show_notification("Close tab? (Shell is still running)"));
+            }
+            if (alive <= 0i64) {
+                drop(tm_close_active());
+                drop(tw_queue_redraw());
+            }
+        },
+        ("tab.next")  { drop(tm_next()); drop(tw_queue_redraw()); },
+        ("tab.prev")  { drop(tm_prev()); drop(tw_queue_redraw()); },
+        ("tab.1")     { drop(tm_activate_index(0i64)); drop(tw_queue_redraw()); },
+        ("tab.2")     { drop(tm_activate_index(1i64)); drop(tw_queue_redraw()); },
+        ("tab.3")     { drop(tm_activate_index(2i64)); drop(tw_queue_redraw()); },
+        ("tab.4")     { drop(tm_activate_index(3i64)); drop(tw_queue_redraw()); },
+        ("tab.5")     { drop(tm_activate_index(4i64)); drop(tw_queue_redraw()); },
+        ("tab.6")     { drop(tm_activate_index(5i64)); drop(tw_queue_redraw()); },
+        ("tab.7")     { drop(tm_activate_index(6i64)); drop(tw_queue_redraw()); },
+        ("tab.8")     { drop(tm_activate_index(7i64)); drop(tw_queue_redraw()); },
+        ("tab.9")     { drop(tm_activate_index(8i64)); drop(tw_queue_redraw()); },
+        // Clipboard (stubs in v0.6.2 — full in v0.7.x)
+        ("edit.copy")   { drop(nitty_gtk4_clipboard_copy()); },
+        ("edit.paste")  { drop(nitty_gtk4_clipboard_paste()); },
+        // Search / clear — stubs for v0.7.x
+        ("edit.search") { drop(nitty_gtk4_show_notification("Search: coming in v0.7.x")); },
+        ("edit.clear")  { drop(nitty_gtk4_show_notification("Clear: coming in v0.7.x")); },
+        // View
+        ("view.fullscreen") { drop(nitty_gtk4_show_notification("Fullscreen: coming in v0.7.x")); },
+        ("view.zoom_in")    { drop(nitty_gtk4_show_notification("Zoom in: coming in v0.7.x")); },
+        ("view.zoom_out")   { drop(nitty_gtk4_show_notification("Zoom out: coming in v0.7.x")); },
+        ("view.zoom_reset") { drop(nitty_gtk4_show_notification("Zoom reset: coming in v0.7.x")); },
+        // App
+        ("app.settings") { drop(nitty_gtk4_show_notification("Settings: coming in v0.7.x")); },
+        ("app.quit")     { drop(nitty_gtk4_window_close(nitty_gtk4_get_main_window())); },
+        (*) { }  // unknown action — no-op
     }
     pass(NIL);
 };
@@ -655,6 +705,32 @@ pub func:tw_on_draw = NIL() {
     if (comp_slot >= 0i64) {
         drop(tm_mark_completion_at(comp_slot));
         drop(tw_queue_redraw());
+    }
+
+    // v0.6.2 Step 0e: Hotkey engine dispatch
+    // Only run if the last key was NOT already consumed by the C shim.
+    // The C shim sets the consumed flag whenever it intercepts a key
+    // (tab_event, pane_event, scroll_event fired). We clear it after read.
+    if (nitty_gtk4_key_was_consumed() == 0i64) {
+        // Check multi-chord timeout
+        if (raw hk_chord_timed_out() == 1i64) {
+            drop(hk_reset_pending());
+        }
+        // Check if a key press was pending (already stored in the C shim's buffer)
+        // nitty_gtk4_key_poll() clears the pending flag, so we call it only once.
+        // The key state (keyval, modifiers) is still readable afterwards via getters.
+        int64:kv = nitty_gtk4_key_get_keyval();
+        if (kv > 0i64) {
+            int64:gdk_mods = nitty_gtk4_key_get_modifiers();
+            int64:mods     = raw input_translate_modifiers(gdk_mods);
+            // Only dispatch on key press events (type=1), not releases (type=2)
+            if (nitty_gtk4_key_get_type() == 1i64) {
+                string:action = raw hk_handle_key(kv, mods);
+                if (string_length(action) > 0i64) {
+                    drop(dispatch_action(action, g_tw_rows, g_tw_cols));
+                }
+            }
+        }
     }
 
     // Step 1: Drain PTY byte queue through Nitpick pipeline

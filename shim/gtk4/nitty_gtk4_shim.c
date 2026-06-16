@@ -1703,3 +1703,64 @@ int64_t nitty_gtk4_spawn_tab_shell_cmd(int64_t rows, int64_t cols,
 
     return (int64_t)master_fd * 1000000LL + pid;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * v0.6.2: Hotkey engine support
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Return CLOCK_MONOTONIC time in milliseconds.
+ * Used by the Nitpick hotkey engine for multi-chord timeout tracking.
+ */
+int64_t nitty_gtk4_get_monotonic_ms(void)
+{
+    return (int64_t)(g_get_monotonic_time() / 1000LL);
+}
+
+/**
+ * Return 1 if the last key event was intercepted (consumed) by the C shim
+ * (i.e. it set a tab_event, pane_event, or scroll_event and returned TRUE).
+ * Return 0 if the key was not consumed.
+ *
+ * The Nitpick hotkey engine should query this before dispatching, to avoid
+ * double-handling keys already processed by the C interceptor.
+ *
+ * Implementation: we track consumption via g_last_key_consumed, which is
+ * set whenever on_key_pressed returns TRUE for an intercepted key.
+ */
+static int g_last_key_consumed = 0;
+
+int64_t nitty_gtk4_key_was_consumed(void)
+{
+    int consumed = g_last_key_consumed;
+    g_last_key_consumed = 0;  /* clear after read */
+    return (int64_t)consumed;
+}
+
+/* Internal helper: mark the last key as consumed (called from nitty_input.c
+ * on_key_pressed via the shared consumed flag). Since both files are compiled
+ * into the same shim .so, we can use a weak symbol approach or just expose
+ * a setter. We use a setter called from nitty_input.c's callback. */
+void nitty_gtk4_set_key_consumed(int consumed)
+{
+    g_last_key_consumed = consumed;
+}
+
+/**
+ * Clipboard copy: copy the current terminal selection to the system clipboard.
+ * Stub in v0.6.2 — full implementation in v0.7.x.
+ */
+void nitty_gtk4_clipboard_copy(void)
+{
+    /* TODO v0.7.x: use GdkClipboard to copy g_selection_text */
+}
+
+/**
+ * Clipboard paste: read system clipboard and write to active PTY master fd.
+ * Stub in v0.6.2 — full implementation in v0.7.x.
+ */
+void nitty_gtk4_clipboard_paste(void)
+{
+    /* TODO v0.7.x: use GdkClipboard to read and write to g_pty_master_fd */
+}
+

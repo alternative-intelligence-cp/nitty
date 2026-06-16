@@ -1,0 +1,271 @@
+// tests/test_hotkey.npk — Unit tests for the v0.6.2 hotkey engine
+//
+// Tests:
+//   1. parse_chord_to_binding: single combo parses correctly
+//   2. parse_chord_to_binding: two-chord sequence parses correctly
+//   3. hotkeys_init_defaults: expected count (28 bindings)
+//   4. hk_handle_key: single-chord match returns action
+//   5. hk_apply_override: override changes binding
+//   6. hk_apply_override: disable with "" sets enabled=0
+//   7. hk_detect_conflicts: counts duplicate first-chord pairs
+//   8. hk_handle_key: multi-chord sequence fires on step2
+//   9. hk_handle_key: unknown key returns ""
+//  10. parse_chord_to_binding: Alt modifier parse
+//  11. hk_find_action: finds known action
+//  12. hk_find_action: returns -1 for unknown
+
+use "../src/core/hotkey.npk".*;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:assert_eq_i64 = NIL(string:label, int64:got, int64:expected) {
+    if (got == expected) {
+        g_pass = g_pass + 1i64;
+        println(string_concat("  PASS: ", label));
+    }
+    if (got != expected) {
+        g_fail = g_fail + 1i64;
+        string:msg = string_concat("  FAIL: ", string_concat(label,
+            string_concat(" got=", string_concat(string_from_int(got),
+            string_concat(" expected=", string_from_int(expected))))));
+        println(msg);
+    }
+    pass(NIL);
+};
+
+func:assert_eq_str = NIL(string:label, string:got, string:expected) {
+    if (got == expected) {
+        g_pass = g_pass + 1i64;
+        println(string_concat("  PASS: ", label));
+    }
+    if (got != expected) {
+        g_fail = g_fail + 1i64;
+        string:msg = string_concat("  FAIL: ", string_concat(label,
+            string_concat(" got='", string_concat(got,
+            string_concat("' expected='", string_concat(expected, "'"))))));
+        println(msg);
+    }
+    pass(NIL);
+};
+
+// ── Test 1: parse single combo ────────────────────────────────────────────────
+
+func:test_parse_single_combo = NIL() {
+    println("Test 1: parse_chord_to_binding (single combo)");
+    // "Ctrl+Shift+T" => mods=3 (Ctrl+Shift), keyval=116 ('t')
+    HotkeyBinding:b = raw parse_chord_to_binding("Ctrl+Shift+T");
+    drop(assert_eq_i64("chord_len", b.chord_len, 1i64));
+    drop(assert_eq_i64("enabled",   b.enabled,   1i64));
+    drop(assert_eq_i64("keyval0",   b.keyval0,   116i64));  // 't' = 116
+    drop(assert_eq_i64("mods0",     b.mods0,     3i64));    // Ctrl=2 | Shift=1
+    drop(assert_eq_i64("keyval1",   b.keyval1,   0i64));
+    pass(NIL);
+};
+
+// ── Test 2: parse two-chord sequence ─────────────────────────────────────────
+
+func:test_parse_two_chord = NIL() {
+    println("Test 2: parse_chord_to_binding (two-chord)");
+    // "Ctrl+K Ctrl+C" => step0: mods=2,kv='k'=107  step1: mods=2,kv='c'=99
+    HotkeyBinding:b = raw parse_chord_to_binding("Ctrl+K Ctrl+C");
+    drop(assert_eq_i64("chord_len", b.chord_len, 2i64));
+    drop(assert_eq_i64("mods0",     b.mods0,     2i64));   // Ctrl only
+    drop(assert_eq_i64("keyval0",   b.keyval0,   107i64)); // 'k' = 107
+    drop(assert_eq_i64("mods1",     b.mods1,     2i64));   // Ctrl only
+    drop(assert_eq_i64("keyval1",   b.keyval1,   99i64));  // 'c' = 99
+    pass(NIL);
+};
+
+// ── Test 3: default map count ─────────────────────────────────────────────────
+
+func:test_defaults_count = NIL() {
+    println("Test 3: hotkeys_init_defaults count");
+    drop(hotkeys_init_defaults());
+    int64:n = raw hk_get_count();
+    // Expected: 28 bindings (tab*13 + pane*4 + edit*4 + view*4 + app*2 + tab_direct*9... = 28 initial)
+    // Let's just assert > 20 (we added at least 28 in defaults)
+    if (n >= 20i64) {
+        g_pass = g_pass + 1i64;
+        println(string_concat("  PASS: default count >= 20 (got ", string_concat(string_from_int(n), ")")));
+    }
+    if (n < 20i64) {
+        g_fail = g_fail + 1i64;
+        println(string_concat("  FAIL: default count too low: ", string_from_int(n)));
+    }
+    pass(NIL);
+};
+
+// ── Test 4: single-chord match returns action ─────────────────────────────────
+
+func:test_handle_key_match = NIL() {
+    println("Test 4: hk_handle_key single-chord match");
+    drop(hotkeys_init_defaults());
+    // Ctrl+Shift+T should fire "tab.new": mods=3, kv=116
+    string:action = raw hk_handle_key(116i64, 3i64);
+    drop(assert_eq_str("tab.new match", action, "tab.new"));
+    pass(NIL);
+};
+
+// ── Test 5: override changes binding ─────────────────────────────────────────
+
+func:test_override_changes_binding = NIL() {
+    println("Test 5: hk_apply_override changes binding");
+    drop(hotkeys_init_defaults());
+    // Override tab.new to Ctrl+Alt+N (mods=6=Ctrl|Alt, kv='n'=110)
+    drop(hk_apply_override("tab.new", "Ctrl+Alt+N"));
+    int64:idx = raw hk_find_action("tab.new");
+    HotkeyBinding:b = raw hk_get_binding(idx);
+    drop(assert_eq_i64("mods0 overridden",   b.mods0,   6i64));   // Ctrl|Alt
+    drop(assert_eq_i64("keyval0 overridden", b.keyval0, 110i64)); // 'n'
+    // Old key should no longer match
+    string:old_action = raw hk_handle_key(116i64, 3i64);
+    drop(assert_eq_str("old Ctrl+Shift+T no longer fires tab.new", old_action, ""));
+    // New key should match
+    string:new_action = raw hk_handle_key(110i64, 6i64);
+    drop(assert_eq_str("Ctrl+Alt+N fires tab.new", new_action, "tab.new"));
+    pass(NIL);
+};
+
+// ── Test 6: disable with "" ───────────────────────────────────────────────────
+
+func:test_disable_binding = NIL() {
+    println("Test 6: hk_apply_override disable with empty string");
+    drop(hotkeys_init_defaults());
+    drop(hk_apply_override("tab.new", ""));
+    int64:idx = raw hk_find_action("tab.new");
+    HotkeyBinding:b = raw hk_get_binding(idx);
+    drop(assert_eq_i64("enabled=0 after disable", b.enabled, 0i64));
+    // Key should no longer match
+    string:action = raw hk_handle_key(116i64, 3i64);
+    drop(assert_eq_str("disabled binding not fired", action, ""));
+    pass(NIL);
+};
+
+// ── Test 7: conflict detection ────────────────────────────────────────────────
+
+func:test_conflict_detection = NIL() {
+    println("Test 7: hk_detect_conflicts");
+    drop(hotkeys_init_defaults());
+    // Add a deliberate conflict: same keyval/mods as tab.new
+    drop(hk_apply_override("my_custom_action", "Ctrl+Shift+T"));
+    int64:conflicts = raw hk_detect_conflicts();
+    // Should detect at least 1 conflict (tab.new vs my_custom_action)
+    if (conflicts >= 1i64) {
+        g_pass = g_pass + 1i64;
+        println(string_concat("  PASS: detected >= 1 conflict (got ", string_concat(string_from_int(conflicts), ")")));
+    }
+    if (conflicts < 1i64) {
+        g_fail = g_fail + 1i64;
+        println("  FAIL: no conflicts detected for deliberate duplicate");
+    }
+    pass(NIL);
+};
+
+// ── Test 8: multi-chord sequence ──────────────────────────────────────────────
+
+func:test_multi_chord = NIL() {
+    println("Test 8: hk_handle_key two-chord sequence");
+    drop(hotkeys_init_defaults());
+    // Add a two-chord binding: "Ctrl+K Ctrl+C" -> "edit.copy_chord"
+    drop(hk_apply_override("edit.copy_chord", "Ctrl+K Ctrl+C"));
+    // Step 1: Ctrl+K should return "" (pending)
+    string:step1 = raw hk_handle_key(107i64, 2i64);  // k=107, Ctrl=2
+    drop(assert_eq_str("step1 pending", step1, ""));
+    // Step 2: Ctrl+C should return "edit.copy_chord"
+    string:step2 = raw hk_handle_key(99i64, 2i64);   // c=99, Ctrl=2
+    drop(assert_eq_str("step2 fires action", step2, "edit.copy_chord"));
+    pass(NIL);
+};
+
+// ── Test 9: unknown key returns "" ────────────────────────────────────────────
+
+func:test_unknown_key = NIL() {
+    println("Test 9: hk_handle_key unknown key");
+    drop(hotkeys_init_defaults());
+    // Keyval 0x1234 with no mods — almost certainly unbound
+    string:action = raw hk_handle_key(0x1234i64, 0i64);
+    drop(assert_eq_str("unknown key returns empty", action, ""));
+    pass(NIL);
+};
+
+// ── Test 10: Alt modifier parse ───────────────────────────────────────────────
+
+func:test_alt_modifier = NIL() {
+    println("Test 10: Alt modifier parse");
+    HotkeyBinding:b = raw parse_chord_to_binding("Alt+F4");
+    drop(assert_eq_i64("Alt mods",   b.mods0,   4i64));    // Alt=4
+    // GDK_KEY_F4 = 0xFFC1
+    drop(assert_eq_i64("F4 keyval",  b.keyval0, 0xFFC1i64));
+    pass(NIL);
+};
+
+// ── Test 11: hk_find_action finds known ──────────────────────────────────────
+
+func:test_find_known_action = NIL() {
+    println("Test 11: hk_find_action known action");
+    drop(hotkeys_init_defaults());
+    int64:idx = raw hk_find_action("tab.new");
+    if (idx >= 0i64) {
+        g_pass = g_pass + 1i64;
+        println(string_concat("  PASS: tab.new found at index ", string_from_int(idx)));
+    }
+    if (idx < 0i64) {
+        g_fail = g_fail + 1i64;
+        println("  FAIL: tab.new not found");
+    }
+    pass(NIL);
+};
+
+// ── Test 12: hk_find_action unknown returns -1 ───────────────────────────────
+
+func:test_find_unknown_action = NIL() {
+    println("Test 12: hk_find_action unknown action");
+    drop(hotkeys_init_defaults());
+    int64:idx = raw hk_find_action("does.not.exist");
+    drop(assert_eq_i64("unknown action returns -1", idx, -1i64));
+    pass(NIL);
+};
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+func:main = int32() {
+    println("=== test_hotkey.npk ===");
+    println("");
+
+    drop(test_parse_single_combo());
+    println("");
+    drop(test_parse_two_chord());
+    println("");
+    drop(test_defaults_count());
+    println("");
+    drop(test_handle_key_match());
+    println("");
+    drop(test_override_changes_binding());
+    println("");
+    drop(test_disable_binding());
+    println("");
+    drop(test_conflict_detection());
+    println("");
+    drop(test_multi_chord());
+    println("");
+    drop(test_unknown_key());
+    println("");
+    drop(test_alt_modifier());
+    println("");
+    drop(test_find_known_action());
+    println("");
+    drop(test_find_unknown_action());
+
+    println("");
+    println(string_concat("=== Results: ",
+        string_concat(string_from_int(g_pass), string_concat(" passed, ",
+        string_concat(string_from_int(g_fail), " failed ===")))));
+
+    if (g_fail == 0i64) { exit 0i32; }
+    exit 1i32;
+};

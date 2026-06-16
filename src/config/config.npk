@@ -1,4 +1,4 @@
-// src/config/config.npk — Configuration engine (v0.6.0 / v0.6.1)
+// src/config/config.npk — Configuration engine (v0.6.0 / v0.6.1 / v0.6.2)
 //
 // Loads, validates, merges defaults, and exposes Nitty configuration.
 // Config file: ~/.config/nitty/nitty.toml  (TOML format via nitpick-toml)
@@ -15,6 +15,7 @@ use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpi
 use "schema.npk".*;
 use "paths.npk".*;
 use "profile.npk".*;
+use "../core/hotkey.npk".*;
 
 // ── Resolved config globals ───────────────────────────────────────────────────
 // Defaults match schema_init() defaults. Populated by config_load().
@@ -228,6 +229,9 @@ pub func:config_load = NIL() {
     drop(paths_init());
     drop(ensure_dirs());
 
+    // v0.6.2: Always init default hotkeys first (overrides applied after TOML parse)
+    drop(hotkeys_init_defaults());
+
     string:path    = raw config_file_path();
     int32:file_exists = raw fs_exists(path);
 
@@ -249,6 +253,22 @@ pub func:config_load = NIL() {
     if (parsed >= 0i32) {
         drop(_read_from_toml());
         drop(profiles_load_toml());  // v0.6.1: load profiles from same document
+
+        // v0.6.2: Load hotkey overrides from [hotkeys.*] keys
+        int32:n = raw Toml.count();
+        int32:ki = 0i32;
+        while (ki < n) {
+            string:key = raw Toml.key_at(ki);
+            bool:is_hk = string_starts_with(key, "hotkeys.");
+            if (is_hk) {
+                // action name = everything after "hotkeys."
+                string:action = string_substring(key, 8i64, string_length(key));
+                string:chord  = raw Toml.get_string(key);
+                drop(hk_apply_override(action, chord));
+            }
+            ki = ki + 1i32;
+        }
+        drop(hk_detect_conflicts());
     }
     if (parsed < 0i32) {
         drop(profiles_init());       // parse failed: seed built-in default
@@ -280,6 +300,25 @@ pub func:config_save = int32() {
 
     // v0.6.1: Serialize profiles into the same TOML document
     drop(profiles_save_toml());
+
+    // v0.6.2: Serialize user-modified hotkey overrides
+    // We detect user-modified bindings by comparing to defaults via a re-init
+    // approach: any binding where hk_get_binding returns enabled=0 (was disabled)
+    // or keyval0 doesn't match what hotkeys_init_defaults would set gets written.
+    // For simplicity, write all bindings that differ from the hardcoded defaults.
+    // Since we don't track which were user-modified, we write only disabled ones
+    // (chord_str=""). Full diff-save is a v0.7.x enhancement.
+    int64:nhk = raw hk_get_count();
+    int64:hki = 0i64;
+    while (hki < nhk) {
+        HotkeyBinding:hkb = raw hk_get_binding(hki);
+        if (hkb.enabled == 0i64) {
+            string:act = raw hk_get_action(hki);
+            string:toml_key = string_concat("hotkeys.", act);
+            drop(Toml.set_string(toml_key, ""));
+        }
+        hki = hki + 1i64;
+    }
 
     string:text      = raw Toml.serialize();
     string:path      = raw config_file_path();

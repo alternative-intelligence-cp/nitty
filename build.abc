@@ -231,10 +231,10 @@ link_paths = []
 [target.test_terminal_integration]
 type = "binary"
 sources = ["tests/test_terminal_integration.npk"]
-deps = []
+deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = []
-link_paths = []
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
 
 [target.test_terminal_widget]
 type = "binary"
@@ -425,9 +425,9 @@ link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packag
 [target.test_config]
 type = "binary"
 sources = ["tests/config/test_config.npk"]
-deps = []
+deps = ["gtk4_shim"]
 flags = []
-link_libraries = ["nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim"]
+link_libraries = ["nitty_gtk4_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
 link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
 
 # v0.6.1: Profile system tests
@@ -438,3 +438,12 @@ deps = []
 flags = []
 link_libraries = ["nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim"]
 link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+
+# v0.6.2: Hotkey engine tests
+[target.test_hotkey]
+type = "binary"
+sources = ["tests/test_hotkey.npk"]
+deps = ["gtk4_shim"]
+flags = []
+link_libraries = ["nitty_gtk4_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_paths = [".nitpick_make/build"]

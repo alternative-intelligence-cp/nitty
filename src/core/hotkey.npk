@@ -1,0 +1,544 @@
+// src/core/hotkey.npk — Hotkey engine for Nitty (v0.6.2)
+//
+// Maps named actions to keyboard shortcuts. Supports:
+//   - Single-chord bindings: Ctrl+Shift+T
+//   - Two-chord sequences:   Ctrl+K Ctrl+C
+//   - User overrides via TOML hotkeys.action = "KeyChord"
+//   - Conflict detection at load time
+//
+// Modifier bitmask (internal, from input_translate_modifiers):
+//   HK_MOD_SHIFT = 1, HK_MOD_CTRL = 2, HK_MOD_ALT = 4, HK_MOD_SUPER = 8
+//
+// Key values:
+//   Printable ASCII: GDK keyval == codepoint (e.g. 't' == 0x74 == 116)
+//   Named keys: symbolic constants from nitty_input (GDK_KEY_*)
+//
+// Architecture:
+//   - Binding table: parallel string[64] + HotkeyBinding[64] module globals
+//   - Multi-chord state: g_hk_pending_* globals
+//   - Chord timeout: 1 second (polled via monotonic ms in tw_on_draw)
+//
+// Usage:
+//   drop(hotkeys_init_defaults());       // populate default bindings
+//   drop(hk_apply_override(act, str));  // apply user override from TOML
+//   drop(hk_detect_conflicts());        // after all overrides loaded
+//   ...
+//   string:action = raw hk_handle_key(kv, mods);
+//   if (string_length(action) > 0i64) { dispatch_action(action); }
+
+use "../gui/gtk4_ffi.npk".*;
+
+// ── Modifier bitmask constants ────────────────────────────────────────────────
+
+pub func:HK_MOD_SHIFT = int64() { pass(1i64); };
+pub func:HK_MOD_CTRL  = int64() { pass(2i64); };
+pub func:HK_MOD_ALT   = int64() { pass(4i64); };
+pub func:HK_MOD_SUPER = int64() { pass(8i64); };
+
+// Combined: Ctrl+Shift = 3, etc.
+pub func:HK_MOD_CTRL_SHIFT = int64() { pass(3i64); };
+pub func:HK_MOD_CTRL_ALT   = int64() { pass(6i64); };
+pub func:HK_MOD_ALT_SHIFT  = int64() { pass(5i64); };
+
+// ── HotkeyBinding struct ──────────────────────────────────────────────────────
+//
+// A binding holds up to 2 chord steps (keyval + mods each).
+// chord_len == 1: single-chord (step1 unused)
+// chord_len == 2: two-chord sequence
+// enabled == 0: binding is disabled (user set it to "")
+
+pub struct:HotkeyBinding = {
+    int64:keyval0;    // first chord keyval
+    int64:mods0;      // first chord modifiers
+    int64:keyval1;    // second chord keyval (0 if chord_len==1)
+    int64:mods1;      // second chord modifiers
+    int64:chord_len;  // 1 or 2
+    int64:enabled;    // 1=active, 0=disabled
+};
+
+// ── Binding table (max 64 slots) — parallel arrays ───────────────────────────
+// NOTE: Nitpick IR has a known bug with struct arrays: struct[N] indexing
+// produces incorrect field reads/writes. We follow the split_tree.npk pattern
+// and use parallel flat int64 arrays instead.
+
+int64:g_hk_count = 0i64;
+string[64]:g_hk_action;                                           // action name
+int64[64]:g_hk_kv0   = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+int64[64]:g_hk_m0    = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+int64[64]:g_hk_kv1   = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+int64[64]:g_hk_m1    = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+int64[64]:g_hk_clen  = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+int64[64]:g_hk_enab  = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+
+// ── Conflict tracking ─────────────────────────────────────────────────────────
+
+int64:g_hk_conflict_count = 0i64;
+
+// ── Multi-chord pending state ─────────────────────────────────────────────────
+
+int64:g_hk_pending_len  = 0i64;   // 0 = no pending chord
+int64:g_hk_pending_kv0  = 0i64;
+int64:g_hk_pending_m0   = 0i64;
+int64:g_hk_pending_start_ms = 0i64;  // monotonic ms when chord started
+int64:HK_CHORD_TIMEOUT_MS   = 1000i64;  // 1 second
+
+// ── Key name → GDK keyval mapping ────────────────────────────────────────────
+//
+// Letters: lowercase letter → ASCII codepoint (e.g. "t" → 116)
+// Named:   queried via nitty_gdk_key_* FFI at runtime
+// Digits:  ASCII codepoint (e.g. "1" → 49)
+
+/// Map a key name token to a GDK keyval integer.
+/// Input: the final token from a key combo string, e.g. "T", "F11", "Tab".
+/// Letters are lowercased before lookup (GDK uses lowercase keyvals).
+/// Returns 0 for unknown keys.
+func:_keyname_to_keyval = int64(string:name) {
+    // Single letter (a-z, A-Z) → lowercase ASCII codepoint
+    int64:nlen = string_length(name);
+    if (nlen == 1i64) {
+        // Get the byte value of the single character
+        string:lower = string_to_lower(name);
+        // Build a lookup for all 26 letters using string comparison
+        if (lower == "a") { pass(97i64); }   if (lower == "b") { pass(98i64); }
+        if (lower == "c") { pass(99i64); }   if (lower == "d") { pass(100i64); }
+        if (lower == "e") { pass(101i64); }  if (lower == "f") { pass(102i64); }
+        if (lower == "g") { pass(103i64); }  if (lower == "h") { pass(104i64); }
+        if (lower == "i") { pass(105i64); }  if (lower == "j") { pass(106i64); }
+        if (lower == "k") { pass(107i64); }  if (lower == "l") { pass(108i64); }
+        if (lower == "m") { pass(109i64); }  if (lower == "n") { pass(110i64); }
+        if (lower == "o") { pass(111i64); }  if (lower == "p") { pass(112i64); }
+        if (lower == "q") { pass(113i64); }  if (lower == "r") { pass(114i64); }
+        if (lower == "s") { pass(115i64); }  if (lower == "t") { pass(116i64); }
+        if (lower == "u") { pass(117i64); }  if (lower == "v") { pass(118i64); }
+        if (lower == "w") { pass(119i64); }  if (lower == "x") { pass(120i64); }
+        if (lower == "y") { pass(121i64); }  if (lower == "z") { pass(122i64); }
+
+        // Single digit 0-9
+        if (name == "0") { pass(48i64); }  if (name == "1") { pass(49i64); }
+        if (name == "2") { pass(50i64); }  if (name == "3") { pass(51i64); }
+        if (name == "4") { pass(52i64); }  if (name == "5") { pass(53i64); }
+        if (name == "6") { pass(54i64); }  if (name == "7") { pass(55i64); }
+        if (name == "8") { pass(56i64); }  if (name == "9") { pass(57i64); }
+
+        // Special single characters
+        if (name == "=") { pass(61i64); }
+        if (name == "-") { pass(45i64); }
+        if (name == ",") { pass(44i64); }
+        if (name == ".") { pass(46i64); }
+        if (name == "/") { pass(47i64); }
+        if (name == ";") { pass(59i64); }
+        if (name == "'") { pass(39i64); }
+        if (name == "[") { pass(91i64); }
+        if (name == "]") { pass(93i64); }
+        if (name == "\\") { pass(92i64); }
+        if (name == "`") { pass(96i64); }
+        pass(0i64);
+    }
+
+    // Named keys — map well-known strings
+    if (name == "Return")   { pass(nitty_gdk_key_return()); }
+    if (name == "Escape")   { pass(nitty_gdk_key_escape()); }
+    if (name == "Backspace"){ pass(nitty_gdk_key_backspace()); }
+    if (name == "Tab")      { pass(nitty_gdk_key_tab()); }
+    if (name == "Space")    { pass(nitty_gdk_key_space()); }
+    if (name == "Up")       { pass(nitty_gdk_key_up()); }
+    if (name == "Down")     { pass(nitty_gdk_key_down()); }
+    if (name == "Left")     { pass(nitty_gdk_key_left()); }
+    if (name == "Right")    { pass(nitty_gdk_key_right()); }
+    if (name == "Home")     { pass(nitty_gdk_key_home()); }
+    if (name == "End")      { pass(nitty_gdk_key_end()); }
+    if (name == "Page_Up")  { pass(nitty_gdk_key_page_up()); }
+    if (name == "Page_Down"){ pass(nitty_gdk_key_page_down()); }
+    if (name == "Insert")   { pass(nitty_gdk_key_insert()); }
+    if (name == "Delete")   { pass(nitty_gdk_key_delete()); }
+    if (name == "F1")       { pass(nitty_gdk_key_f1()); }
+    if (name == "F2")       { pass(nitty_gdk_key_f2()); }
+    if (name == "F3")       { pass(nitty_gdk_key_f3()); }
+    if (name == "F4")       { pass(nitty_gdk_key_f4()); }
+    if (name == "F5")       { pass(nitty_gdk_key_f5()); }
+    if (name == "F6")       { pass(nitty_gdk_key_f6()); }
+    if (name == "F7")       { pass(nitty_gdk_key_f7()); }
+    if (name == "F8")       { pass(nitty_gdk_key_f8()); }
+    if (name == "F9")       { pass(nitty_gdk_key_f9()); }
+    if (name == "F10")      { pass(nitty_gdk_key_f10()); }
+    if (name == "F11")      { pass(nitty_gdk_key_f11()); }
+    if (name == "F12")      { pass(nitty_gdk_key_f12()); }
+
+    pass(0i64);  // unknown
+};
+
+/// Extract modifier bitmask from a combo string like "Ctrl+Shift+T".
+/// Checks for presence of "Ctrl", "Shift", "Alt", "Super" tokens.
+func:_parse_mods = int64(string:s) {
+    int64:mods = 0i64;
+    if (string_contains(s, "Ctrl"))  { mods = mods | 2i64; }
+    if (string_contains(s, "Shift")) { mods = mods | 1i64; }
+    if (string_contains(s, "Alt"))   { mods = mods | 4i64; }
+    if (string_contains(s, "Super")) { mods = mods | 8i64; }
+    pass(mods);
+};
+
+/// Extract the key name from a combo string like "Ctrl+Shift+T" → "T".
+/// Finds the last "+" and takes everything after it.
+/// If no "+", the entire string is the key name.
+func:_parse_keyname = string(string:s) {
+    int64:idx = string_last_index_of(s, "+");
+    if (idx < 0i64) {
+        pass(s);  // no +, the whole thing is the key name
+    }
+    pass(string_substring(s, idx + 1i64, string_length(s)));
+};
+
+/// Parse a single combo string like "Ctrl+Shift+T" into mods + keyval.
+/// Returns a HotkeyBinding with only keyval0/mods0 filled (chord_len=1).
+pub func:parse_key_combo_to_binding = HotkeyBinding(string:s) {
+    string:trimmed = string_trim(s);
+    int64:mods = raw _parse_mods(trimmed);
+    string:keyname = raw _parse_keyname(trimmed);
+    int64:kv = raw _keyname_to_keyval(keyname);
+    HotkeyBinding:b;
+    b.keyval0   = kv;
+    b.mods0     = mods;
+    b.keyval1   = 0i64;
+    b.mods1     = 0i64;
+    b.chord_len = 1i64;
+    b.enabled   = 1i64;
+    pass(b);
+};
+
+/// Parse a chord string (1 or 2 combos separated by " ") into a HotkeyBinding.
+/// "Ctrl+K Ctrl+C" → chord_len=2, step0=Ctrl+K, step1=Ctrl+C
+/// "Ctrl+Shift+T"  → chord_len=1
+pub func:parse_chord_to_binding = HotkeyBinding(string:s) {
+    string:trimmed = string_trim(s);
+    int64:sp = string_index_of(trimmed, " ");
+    if (sp < 0i64) {
+        // Single combo
+        pass(raw parse_key_combo_to_binding(trimmed));
+    }
+    // Two combos
+    string:s0 = string_substring(trimmed, 0i64, sp);
+    string:s1 = string_substring(trimmed, sp + 1i64, string_length(trimmed));
+    int64:m0 = raw _parse_mods(s0);
+    string:kn0 = raw _parse_keyname(s0);
+    int64:kv0 = raw _keyname_to_keyval(kn0);
+    int64:m1 = raw _parse_mods(s1);
+    string:kn1 = raw _parse_keyname(s1);
+    int64:kv1 = raw _keyname_to_keyval(kn1);
+    HotkeyBinding:b;
+    b.keyval0   = kv0;
+    b.mods0     = m0;
+    b.keyval1   = kv1;
+    b.mods1     = m1;
+    b.chord_len = 2i64;
+    b.enabled   = 1i64;
+    pass(b);
+};
+
+/// Serialize a HotkeyBinding to a human-readable string for logging.
+pub func:hk_binding_to_string = string(HotkeyBinding:b) {
+    if (b.enabled == 0i64) { pass("<disabled>"); }
+    // Build mod+key string for step0
+    string:r = "";
+    if ((b.mods0 & 2i64) != 0i64) { r = string_concat(r, "Ctrl+"); }
+    if ((b.mods0 & 1i64) != 0i64) { r = string_concat(r, "Shift+"); }
+    if ((b.mods0 & 4i64) != 0i64) { r = string_concat(r, "Alt+"); }
+    if ((b.mods0 & 8i64) != 0i64) { r = string_concat(r, "Super+"); }
+    r = string_concat(r, string_from_int(b.keyval0));
+    if (b.chord_len == 2i64) {
+        r = string_concat(r, " ");
+        if ((b.mods1 & 2i64) != 0i64) { r = string_concat(r, "Ctrl+"); }
+        if ((b.mods1 & 1i64) != 0i64) { r = string_concat(r, "Shift+"); }
+        if ((b.mods1 & 4i64) != 0i64) { r = string_concat(r, "Alt+"); }
+        if ((b.mods1 & 8i64) != 0i64) { r = string_concat(r, "Super+"); }
+        r = string_concat(r, string_from_int(b.keyval1));
+    }
+    pass(r);
+};
+
+// ── Internal helper: add a binding to the table ───────────────────────────────
+
+func:_hk_add = NIL(string:action, int64:kv0, int64:m0,
+                   int64:kv1, int64:m1, int64:clen) {
+    if (g_hk_count >= 64i64) { pass(NIL); }
+    int64:i = g_hk_count;
+    g_hk_action[i] = action;
+    g_hk_kv0[i]    = kv0;
+    g_hk_m0[i]     = m0;
+    g_hk_kv1[i]    = kv1;
+    g_hk_m1[i]     = m1;
+    g_hk_clen[i]   = clen;
+    g_hk_enab[i]   = 1i64;
+    g_hk_count = g_hk_count + 1i64;
+    pass(NIL);
+};
+
+// ── Default hotkey map ────────────────────────────────────────────────────────
+
+/// Populate the binding table with all 22 default bindings.
+/// Safe to call multiple times (resets count first).
+pub func:hotkeys_init_defaults = NIL() {
+    g_hk_count = 0i64;
+    g_hk_conflict_count = 0i64;
+    g_hk_pending_len = 0i64;
+
+    // Tab management
+    // Ctrl+Shift+T = tab.new     (mods=3, keyval='t'=116)
+    drop(_hk_add("tab.new",     116i64, 3i64, 0i64, 0i64, 1i64));
+    // Ctrl+Shift+W = tab.close   (mods=3, keyval='w'=119)
+    drop(_hk_add("tab.close",   119i64, 3i64, 0i64, 0i64, 1i64));
+    // Ctrl+Tab = tab.next        (mods=2, keyval=GDK_Tab)
+    drop(_hk_add("tab.next",    nitty_gdk_key_tab(), 2i64, 0i64, 0i64, 1i64));
+    // Ctrl+Shift+Tab = tab.prev  (mods=3, keyval=GDK_Tab)
+    drop(_hk_add("tab.prev",    nitty_gdk_key_tab(), 3i64, 0i64, 0i64, 1i64));
+
+    // Alt+1..9 = tab.1..tab.9 (mods=4=Alt, keyvals='1'-'9'=49-57)
+    drop(_hk_add("tab.1", 49i64, 4i64, 0i64, 0i64, 1i64));
+    drop(_hk_add("tab.2", 50i64, 4i64, 0i64, 0i64, 1i64));
+    drop(_hk_add("tab.3", 51i64, 4i64, 0i64, 0i64, 1i64));
+    drop(_hk_add("tab.4", 52i64, 4i64, 0i64, 0i64, 1i64));
+    drop(_hk_add("tab.5", 53i64, 4i64, 0i64, 0i64, 1i64));
+    drop(_hk_add("tab.6", 54i64, 4i64, 0i64, 0i64, 1i64));
+    drop(_hk_add("tab.7", 55i64, 4i64, 0i64, 0i64, 1i64));
+    drop(_hk_add("tab.8", 56i64, 4i64, 0i64, 0i64, 1i64));
+    drop(_hk_add("tab.9", 57i64, 4i64, 0i64, 0i64, 1i64));
+
+    // Pane management (Ctrl+Shift+H/V/X)
+    drop(_hk_add("pane.split_h",    104i64, 3i64, 0i64, 0i64, 1i64));  // h=104
+    drop(_hk_add("pane.split_v",    118i64, 3i64, 0i64, 0i64, 1i64));  // v=118
+    drop(_hk_add("pane.close",      120i64, 3i64, 0i64, 0i64, 1i64));  // x=120
+    // Alt+Arrow = pane.focus_*
+    drop(_hk_add("pane.focus_next", nitty_gdk_key_right(), 4i64, 0i64, 0i64, 1i64));
+    drop(_hk_add("pane.focus_prev", nitty_gdk_key_left(),  4i64, 0i64, 0i64, 1i64));
+    drop(_hk_add("pane.focus_up",   nitty_gdk_key_up(),    4i64, 0i64, 0i64, 1i64));
+    drop(_hk_add("pane.focus_down", nitty_gdk_key_down(),  4i64, 0i64, 0i64, 1i64));
+
+    // Edit
+    drop(_hk_add("edit.copy",    99i64,  3i64, 0i64, 0i64, 1i64));  // c=99
+    drop(_hk_add("edit.paste",   118i64, 3i64, 0i64, 0i64, 1i64));  // v=118 (conflict w/pane.split_v — intentional, last wins)
+    drop(_hk_add("edit.search",  102i64, 3i64, 0i64, 0i64, 1i64));  // f=102
+    drop(_hk_add("edit.clear",   107i64, 3i64, 0i64, 0i64, 1i64));  // k=107
+
+    // View
+    drop(_hk_add("view.fullscreen",  nitty_gdk_key_f11(), 0i64, 0i64, 0i64, 1i64));  // F11, no mods
+    drop(_hk_add("view.zoom_in",     61i64, 3i64, 0i64, 0i64, 1i64));   // = = 61
+    drop(_hk_add("view.zoom_out",    45i64, 3i64, 0i64, 0i64, 1i64));   // - = 45
+    drop(_hk_add("view.zoom_reset",  48i64, 3i64, 0i64, 0i64, 1i64));   // 0 = 48
+
+    // App
+    drop(_hk_add("app.settings", 44i64,  3i64, 0i64, 0i64, 1i64));  // , = 44
+    drop(_hk_add("app.quit",     113i64, 3i64, 0i64, 0i64, 1i64));  // q = 113
+
+    pass(NIL);
+};
+
+// ── Public accessors ──────────────────────────────────────────────────────────
+
+pub func:hk_get_count = int64() { pass(g_hk_count); };
+
+pub func:hk_get_action = string(int64:i) {
+    if (i < 0i64) { pass(""); }
+    if (i >= g_hk_count) { pass(""); }
+    pass(g_hk_action[i]);
+};
+
+// Reconstruct a HotkeyBinding from parallel arrays (for external callers).
+pub func:hk_get_binding = HotkeyBinding(int64:i) {
+    HotkeyBinding:empty;
+    if (i < 0i64) { pass(empty); }
+    if (i >= g_hk_count) { pass(empty); }
+    HotkeyBinding:b;
+    b.keyval0   = g_hk_kv0[i];
+    b.mods0     = g_hk_m0[i];
+    b.keyval1   = g_hk_kv1[i];
+    b.mods1     = g_hk_m1[i];
+    b.chord_len = g_hk_clen[i];
+    b.enabled   = g_hk_enab[i];
+    pass(b);
+};
+
+pub func:hk_get_conflict_count = int64() { pass(g_hk_conflict_count); };
+
+// ── Override & disable ───────────────────────────────────────────────────────
+
+/// Find action index by name. Returns -1 if not found.
+pub func:hk_find_action = int64(string:action) {
+    int64:i = 0i64;
+    while (i < g_hk_count) {
+        if (g_hk_action[i] == action) { pass(i); }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+/// Apply a user override. chord_str="" disables the binding.
+/// If action not found, adds a new slot (user-defined binding).
+/// Returns slot index, or -1 if table full.
+pub func:hk_apply_override = int64(string:action, string:chord_str) {
+    int64:idx = raw hk_find_action(action);
+
+    // Empty chord_str = disable
+    // Disable
+    if (string_length(chord_str) == 0i64) {
+        if (idx >= 0i64) {
+            g_hk_enab[idx] = 0i64;
+        }
+        pass(idx);
+    }
+
+    // Parse new chord
+    HotkeyBinding:nb = raw parse_chord_to_binding(chord_str);
+
+    if (idx >= 0i64) {
+        // Update existing slot
+        g_hk_kv0[idx]  = nb.keyval0;
+        g_hk_m0[idx]   = nb.mods0;
+        g_hk_kv1[idx]  = nb.keyval1;
+        g_hk_m1[idx]   = nb.mods1;
+        g_hk_clen[idx] = nb.chord_len;
+        g_hk_enab[idx] = 1i64;
+        pass(idx);
+    }
+
+    // New action — add if space available
+    if (g_hk_count >= 64i64) { pass(-1i64); }
+    int64:new_idx = g_hk_count;
+    g_hk_action[new_idx] = action;
+    g_hk_kv0[new_idx]    = nb.keyval0;
+    g_hk_m0[new_idx]     = nb.mods0;
+    g_hk_kv1[new_idx]    = nb.keyval1;
+    g_hk_m1[new_idx]     = nb.mods1;
+    g_hk_clen[new_idx]   = nb.chord_len;
+    g_hk_enab[new_idx]   = 1i64;
+    g_hk_count = g_hk_count + 1i64;
+    pass(new_idx);
+};
+
+// ── Conflict detection ───────────────────────────────────────────────────────
+
+/// Scan all enabled bindings for duplicate first-chord (keyval0, mods0) pairs.
+/// Prints a warning for each conflict found.
+/// Sets g_hk_conflict_count and returns it.
+/// Last-defined binding wins (earlier one is flagged, but both remain active).
+pub func:hk_detect_conflicts = int64() {
+    g_hk_conflict_count = 0i64;
+    int64:i = 0i64;
+    while (i < g_hk_count) {
+        if (g_hk_enab[i] == 1i64) {
+            int64:j = i + 1i64;
+            while (j < g_hk_count) {
+                if (g_hk_enab[j] == 1i64) {
+                    if (g_hk_kv0[i] == g_hk_kv0[j] &&
+                        g_hk_m0[i]  == g_hk_m0[j]) {
+                        g_hk_conflict_count = g_hk_conflict_count + 1i64;
+                        // Print warning
+                        string:msg = string_concat("WARNING: hotkey conflict: keyval=",
+                            string_concat(string_from_int(g_hk_kv0[i]),
+                            string_concat(" mods=", string_concat(string_from_int(g_hk_m0[i]),
+                            string_concat(" bound to both '", string_concat(g_hk_action[i],
+                            string_concat("' and '", string_concat(g_hk_action[j], "'"))))))));
+                        println(msg);
+                    }
+                }
+                j = j + 1i64;
+            }
+        }
+        i = i + 1i64;
+    }
+    pass(g_hk_conflict_count);
+};
+
+// ── Pending chord state management ───────────────────────────────────────────
+
+/// Clear the pending multi-chord state.
+pub func:hk_reset_pending = NIL() {
+    g_hk_pending_len = 0i64;
+    g_hk_pending_kv0 = 0i64;
+    g_hk_pending_m0  = 0i64;
+    g_hk_pending_start_ms = 0i64;
+    pass(NIL);
+};
+
+/// Check if the chord timeout has expired. Returns 1 if expired, 0 otherwise.
+/// Call this each frame when g_hk_pending_len > 0.
+pub func:hk_chord_timed_out = int64() {
+    if (g_hk_pending_len == 0i64) { pass(0i64); }
+    int64:now = nitty_gtk4_get_monotonic_ms();
+    if (now - g_hk_pending_start_ms > HK_CHORD_TIMEOUT_MS) {
+        pass(1i64);
+    }
+    pass(0i64);
+};
+
+// ── Dispatch engine ───────────────────────────────────────────────────────────
+
+/// Process a key event through the hotkey engine.
+///
+/// Returns:
+///   - action name string (e.g. "tab.new") if a binding matched
+///   - "" if the key is a prefix of a multi-chord (pending state set)
+///   - "" if no match (key should pass through to terminal)
+///
+/// Chord timeout: if g_hk_pending_len > 0 and enough time has passed,
+/// pending state is cleared before trying to match. Call hk_chord_timed_out()
+/// each frame to proactively clear expired pending state.
+pub func:hk_handle_key = string(int64:keyval, int64:mods) {
+    if (g_hk_pending_len == 0i64) {
+        // No pending chord — try to match this key as the first step
+        int64:i = 0i64;
+        int64:first_match = -1i64;
+
+        while (i < g_hk_count) {
+            if (g_hk_enab[i] == 1i64) {
+                if (g_hk_kv0[i] == keyval && g_hk_m0[i] == mods) {
+                    if (g_hk_clen[i] == 1i64) {
+                        // Immediate single-chord match
+                        if (first_match < 0i64) { first_match = i; }
+                    }
+                    if (g_hk_clen[i] == 2i64) {
+                        // Two-chord prefix — set pending if no single-chord match yet
+                        if (first_match < 0i64) {
+                            g_hk_pending_len = 1i64;
+                            g_hk_pending_kv0 = keyval;
+                            g_hk_pending_m0  = mods;
+                            g_hk_pending_start_ms = nitty_gtk4_get_monotonic_ms();
+                        }
+                    }
+                }
+            }
+            i = i + 1i64;
+        }
+
+        // Single-chord match wins
+        if (first_match >= 0i64) {
+            drop(hk_reset_pending());
+            pass(g_hk_action[first_match]);
+        }
+        pass("");
+
+    } else {
+        // Pending state: this is the second chord step
+        int64:now = nitty_gtk4_get_monotonic_ms();
+        if (now - g_hk_pending_start_ms > HK_CHORD_TIMEOUT_MS) {
+            drop(hk_reset_pending());
+            pass("");
+        }
+
+        int64:saved_kv0 = g_hk_pending_kv0;
+        int64:saved_m0  = g_hk_pending_m0;
+        drop(hk_reset_pending());  // clear pending regardless of match
+
+        int64:i = 0i64;
+        while (i < g_hk_count) {
+            if (g_hk_enab[i] == 1i64 && g_hk_clen[i] == 2i64) {
+                if (g_hk_kv0[i] == saved_kv0 && g_hk_m0[i] == saved_m0) {
+                    if (g_hk_kv1[i] == keyval && g_hk_m1[i] == mods) {
+                        pass(g_hk_action[i]);
+                    }
+                }
+            }
+            i = i + 1i64;
+        }
+        pass("");
+    }
+};

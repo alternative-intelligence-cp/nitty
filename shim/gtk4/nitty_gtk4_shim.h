@@ -535,6 +535,21 @@ void nitty_gtk4_set_swap_mode(int64_t active);
 int64_t nitty_gtk4_spawn_tab_shell_cmd(int64_t rows, int64_t cols,
                                         const char *cwd, const char *shell_bin);
 
+/**
+ * v0.6.2: Hotkey engine support.
+ *
+ * nitty_gtk4_get_monotonic_ms: monotonic clock in milliseconds (for chord timeout).
+ * nitty_gtk4_key_was_consumed:  returns 1 if the last key event was intercepted
+ *   by the C shim (tab/pane/scroll event fired), 0 if it passed through.
+ *   Prevents the Nitpick hotkey engine from double-dispatching intercepted keys.
+ * nitty_gtk4_clipboard_copy:   copy terminal selection to clipboard (stub v0.6.2).
+ * nitty_gtk4_clipboard_paste:  paste clipboard into active PTY (stub v0.6.2).
+ */
+int64_t nitty_gtk4_get_monotonic_ms(void);
+int64_t nitty_gtk4_key_was_consumed(void);
+void    nitty_gtk4_clipboard_copy(void);
+void    nitty_gtk4_clipboard_paste(void);
+
 #ifdef __cplusplus
 }
 #endif

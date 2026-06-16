@@ -468,4 +468,14 @@ extern "nitty_gtk4_shim" {
     // shell: "" = use $SHELL. cwd: "" = use $HOME.
     // Returns packed (fd*1000000 + pid) or -1.
     func:nitty_gtk4_spawn_tab_shell_cmd = int64(int64:rows, int64:cols, string:cwd, string:shell);
+
+    // v0.6.2: Hotkey engine support.
+    // get_monotonic_ms: milliseconds from arbitrary epoch (for chord timeout).
+    // key_was_consumed: 1 if the last key event was intercepted by the C shim
+    //   (tab/pane/scroll event fired), 0 otherwise. Clears after read.
+    // clipboard_copy/paste: stub implementations (full in v0.7.x).
+    func:nitty_gtk4_get_monotonic_ms   = int64();
+    func:nitty_gtk4_key_was_consumed   = int64();
+    func:nitty_gtk4_clipboard_copy     = NIL();
+    func:nitty_gtk4_clipboard_paste    = NIL();
 }

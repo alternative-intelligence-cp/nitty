@@ -28,6 +28,9 @@
 /* Forward declaration — defined in nitty_gtk4_shim.c */
 extern void nitty_gtk4_grid_handle_key(int64_t keyval, int64_t modifiers);
 
+/* v0.6.2: Key-consumed sentinel — set when on_key_pressed intercepts a key */
+extern void nitty_gtk4_set_key_consumed(int consumed);
+
 /* v0.1.4: Terminal mode — when set, keys go to PTY instead of grid */
 static int g_terminal_mode = 0;
 static int64_t g_pty_master_fd = -1;
@@ -140,13 +143,16 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
     g_key_type      = 1;
     g_key_pending   = 1;
 
+    /* v0.6.2: reset consumed flag at start of each key event */
+    nitty_gtk4_set_key_consumed(0);
+
     /* v0.3.4: Intercept Shift+scroll-navigation shortcuts before PTY routing */
     if (state & GDK_SHIFT_MASK) {
         switch (keyval) {
-            case GDK_KEY_Page_Up:   g_scroll_event = 1; return TRUE;
-            case GDK_KEY_Page_Down: g_scroll_event = 2; return TRUE;
-            case GDK_KEY_Home:      g_scroll_event = 3; return TRUE;
-            case GDK_KEY_End:       g_scroll_event = 4; return TRUE;
+            case GDK_KEY_Page_Up:   g_scroll_event = 1; nitty_gtk4_set_key_consumed(1); return TRUE;
+            case GDK_KEY_Page_Down: g_scroll_event = 2; nitty_gtk4_set_key_consumed(1); return TRUE;
+            case GDK_KEY_Home:      g_scroll_event = 3; nitty_gtk4_set_key_consumed(1); return TRUE;
+            case GDK_KEY_End:       g_scroll_event = 4; nitty_gtk4_set_key_consumed(1); return TRUE;
             default: break;
         }
     }
@@ -160,61 +166,52 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
     if ((state & GDK_CONTROL_MASK) && (state & GDK_SHIFT_MASK)) {
         switch (keyval) {
             case GDK_KEY_t: case GDK_KEY_T:
-                g_tab_event = 1; return TRUE;  /* new tab */
+                g_tab_event = 1; nitty_gtk4_set_key_consumed(1); return TRUE;  /* new tab */
             case GDK_KEY_w: case GDK_KEY_W:
                 /* v0.5.1: pane_event=18 lets Nitpick decide: close pane or tab */
-                g_pane_event = 18; return TRUE;
-            /* v0.4.2: Ctrl+Shift+Left/Right: dual-mode (tab move OR pane resize) */
-            /* Nitpick checks pane_count to decide which action to take.          */
+                g_pane_event = 18; nitty_gtk4_set_key_consumed(1); return TRUE;
             case GDK_KEY_Left:  case GDK_KEY_KP_Left:
-                g_tab_event = 14; return TRUE; /* dual: tab-move-left or pane-resize-left */
+                g_tab_event = 14; nitty_gtk4_set_key_consumed(1); return TRUE;
             case GDK_KEY_Right: case GDK_KEY_KP_Right:
-                g_tab_event = 15; return TRUE; /* dual: tab-move-right or pane-resize-right */
-            /* v0.5.2: Ctrl+Shift+Up/Down for vertical pane resize */
+                g_tab_event = 15; nitty_gtk4_set_key_consumed(1); return TRUE;
             case GDK_KEY_Up:    case GDK_KEY_KP_Up:
-                g_pane_event = 19; return TRUE; /* resize_up: shrink active pane vertically */
+                g_pane_event = 19; nitty_gtk4_set_key_consumed(1); return TRUE;
             case GDK_KEY_Down:  case GDK_KEY_KP_Down:
-                g_pane_event = 20; return TRUE; /* resize_down: grow active pane vertically */
-            /* v0.5.1: Split pane shortcuts */
+                g_pane_event = 20; nitty_gtk4_set_key_consumed(1); return TRUE;
             case GDK_KEY_e: case GDK_KEY_E:
-                g_pane_event = 16; return TRUE; /* split horizontal */
+                g_pane_event = 16; nitty_gtk4_set_key_consumed(1); return TRUE;
             case GDK_KEY_o: case GDK_KEY_O:
-                g_pane_event = 17; return TRUE; /* split vertical */
-            /* v0.5.3: Ctrl+Shift+M: maximize / restore active pane */
+                g_pane_event = 17; nitty_gtk4_set_key_consumed(1); return TRUE;
             case GDK_KEY_m: case GDK_KEY_M:
-                g_pane_event = 27; return TRUE; /* maximize_toggle */
-            /* v0.5.4: Ctrl+Shift+B: broadcast input toggle */
+                g_pane_event = 27; nitty_gtk4_set_key_consumed(1); return TRUE;
             case GDK_KEY_b: case GDK_KEY_B:
-                g_pane_event = 28; return TRUE; /* broadcast_toggle */
-            /* v0.5.5: Ctrl+Shift+S: swap mode toggle */
+                g_pane_event = 28; nitty_gtk4_set_key_consumed(1); return TRUE;
             case GDK_KEY_s: case GDK_KEY_S:
-                g_pane_event = 29; return TRUE; /* swap_mode_toggle */
-            /* v0.5.5: Ctrl+Shift+!: explode panes to tabs */
+                g_pane_event = 29; nitty_gtk4_set_key_consumed(1); return TRUE;
             case GDK_KEY_exclam:
-                g_pane_event = 31; return TRUE; /* explode_panes */
-            /* v0.5.5: Ctrl+Shift+@: combine next tab as pane */
+                g_pane_event = 31; nitty_gtk4_set_key_consumed(1); return TRUE;
             case GDK_KEY_at:
-                g_pane_event = 32; return TRUE; /* combine_next */
+                g_pane_event = 32; nitty_gtk4_set_key_consumed(1); return TRUE;
             default: break;
         }
     }
 
     /* v0.5.5: Escape cancels swap mode */
     if (keyval == GDK_KEY_Escape && g_swap_mode_active) {
-        g_pane_event = 30; return TRUE; /* swap_cancel */
+        g_pane_event = 30; nitty_gtk4_set_key_consumed(1); return TRUE; /* swap_cancel */
     }
 
     /* v0.5.2: Intercept Alt+Arrow for pane focus navigation before PTY routing */
     if ((state & GDK_ALT_MASK) && !(state & GDK_CONTROL_MASK) && !(state & GDK_SHIFT_MASK)) {
         switch (keyval) {
             case GDK_KEY_Left:  case GDK_KEY_KP_Left:
-                g_pane_event = 21; return TRUE; /* nav_left */
+                g_pane_event = 21; nitty_gtk4_set_key_consumed(1); return TRUE;
             case GDK_KEY_Right: case GDK_KEY_KP_Right:
-                g_pane_event = 22; return TRUE; /* nav_right */
+                g_pane_event = 22; nitty_gtk4_set_key_consumed(1); return TRUE;
             case GDK_KEY_Up:    case GDK_KEY_KP_Up:
-                g_pane_event = 23; return TRUE; /* nav_up */
+                g_pane_event = 23; nitty_gtk4_set_key_consumed(1); return TRUE;
             case GDK_KEY_Down:  case GDK_KEY_KP_Down:
-                g_pane_event = 24; return TRUE; /* nav_down */
+                g_pane_event = 24; nitty_gtk4_set_key_consumed(1); return TRUE;
             default: break;
         }
     }
@@ -223,26 +220,24 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
     /* v0.5.2: Added Ctrl+Tab (25) / Ctrl+Shift+Tab (26) for pane cycling */
     if (state & GDK_CONTROL_MASK) {
         switch (keyval) {
-            case GDK_KEY_Page_Up:   g_tab_event = 3; return TRUE;  /* prev tab */
-            case GDK_KEY_Page_Down: g_tab_event = 4; return TRUE;  /* next tab */
-            /* Ctrl+1..9: direct tab switch → events 5..13 */
-            case GDK_KEY_1: g_tab_event = 5;  return TRUE;
-            case GDK_KEY_2: g_tab_event = 6;  return TRUE;
-            case GDK_KEY_3: g_tab_event = 7;  return TRUE;
-            case GDK_KEY_4: g_tab_event = 8;  return TRUE;
-            case GDK_KEY_5: g_tab_event = 9;  return TRUE;
-            case GDK_KEY_6: g_tab_event = 10; return TRUE;
-            case GDK_KEY_7: g_tab_event = 11; return TRUE;
-            case GDK_KEY_8: g_tab_event = 12; return TRUE;
-            case GDK_KEY_9: g_tab_event = 13; return TRUE;
-            /* v0.5.2: Ctrl+Tab / Ctrl+Shift+Tab — cycle panes */
+            case GDK_KEY_Page_Up:   g_tab_event = 3; nitty_gtk4_set_key_consumed(1); return TRUE;
+            case GDK_KEY_Page_Down: g_tab_event = 4; nitty_gtk4_set_key_consumed(1); return TRUE;
+            case GDK_KEY_1: g_tab_event = 5;  nitty_gtk4_set_key_consumed(1); return TRUE;
+            case GDK_KEY_2: g_tab_event = 6;  nitty_gtk4_set_key_consumed(1); return TRUE;
+            case GDK_KEY_3: g_tab_event = 7;  nitty_gtk4_set_key_consumed(1); return TRUE;
+            case GDK_KEY_4: g_tab_event = 8;  nitty_gtk4_set_key_consumed(1); return TRUE;
+            case GDK_KEY_5: g_tab_event = 9;  nitty_gtk4_set_key_consumed(1); return TRUE;
+            case GDK_KEY_6: g_tab_event = 10; nitty_gtk4_set_key_consumed(1); return TRUE;
+            case GDK_KEY_7: g_tab_event = 11; nitty_gtk4_set_key_consumed(1); return TRUE;
+            case GDK_KEY_8: g_tab_event = 12; nitty_gtk4_set_key_consumed(1); return TRUE;
+            case GDK_KEY_9: g_tab_event = 13; nitty_gtk4_set_key_consumed(1); return TRUE;
             case GDK_KEY_Tab: case GDK_KEY_ISO_Left_Tab:
                 if (state & GDK_SHIFT_MASK) {
-                    g_pane_event = 26; /* cycle_prev */
+                    g_pane_event = 26;
                 } else {
-                    g_pane_event = 25; /* cycle_next */
+                    g_pane_event = 25;
                 }
-                return TRUE;
+                nitty_gtk4_set_key_consumed(1); return TRUE;
             default: break;
         }
     }
