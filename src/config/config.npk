@@ -1,4 +1,4 @@
-// src/config/config.npk — Configuration engine (v0.6.0)
+// src/config/config.npk — Configuration engine (v0.6.0 / v0.6.1)
 //
 // Loads, validates, merges defaults, and exposes Nitty configuration.
 // Config file: ~/.config/nitty/nitty.toml  (TOML format via nitpick-toml)
@@ -14,6 +14,7 @@ use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpic
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
 use "schema.npk".*;
 use "paths.npk".*;
+use "profile.npk".*;
 
 // ── Resolved config globals ───────────────────────────────────────────────────
 // Defaults match schema_init() defaults. Populated by config_load().
@@ -233,6 +234,7 @@ pub func:config_load = NIL() {
     // No config file found — use defaults and seed the file
     if (file_exists == 0i32) {
         drop(_load_defaults());
+        drop(profiles_init());       // v0.6.1: seed built-in Default profile
         g_cfg_is_default = 1i64;
         drop(config_write_defaults());
         g_cfg_loaded = 1i64;
@@ -246,6 +248,10 @@ pub func:config_load = NIL() {
     int32:parsed = raw Toml.parse_file(path);
     if (parsed >= 0i32) {
         drop(_read_from_toml());
+        drop(profiles_load_toml());  // v0.6.1: load profiles from same document
+    }
+    if (parsed < 0i32) {
+        drop(profiles_init());       // parse failed: seed built-in default
     }
     // If parse failed, we keep the defaults already loaded above
 
@@ -271,6 +277,9 @@ pub func:config_save = int32() {
     drop(Toml.set_string("appearance.theme",           g_cfg_theme));
     drop(Toml.set_bool("general.close_on_exit",        @cast_unchecked<int32>(g_cfg_close_on_exit)));
     drop(Toml.set_bool("general.confirm_on_close",     @cast_unchecked<int32>(g_cfg_confirm_on_close)));
+
+    // v0.6.1: Serialize profiles into the same TOML document
+    drop(profiles_save_toml());
 
     string:text      = raw Toml.serialize();
     string:path      = raw config_file_path();

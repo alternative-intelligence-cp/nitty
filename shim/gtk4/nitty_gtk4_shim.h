@@ -524,6 +524,17 @@ int64_t nitty_gtk4_broadcast_is_active(void);
  */
 void nitty_gtk4_set_swap_mode(int64_t active);
 
+/**
+ * v0.6.1: Profile-aware tab spawn.
+ * Spawns a PTY+shell with an explicit shell binary AND working directory.
+ * shell_bin: path to shell executable ("" or NULL = use $SHELL).
+ * cwd:       initial working directory ("" or NULL = use $HOME).
+ * Returns (master_fd * 1000000 + pid), or -1 on failure.
+ * Falls back through: shell_cmd → spawn_at (cwd only) → spawn_shell.
+ */
+int64_t nitty_gtk4_spawn_tab_shell_cmd(int64_t rows, int64_t cols,
+                                        const char *cwd, const char *shell_bin);
+
 #ifdef __cplusplus
 }
 #endif

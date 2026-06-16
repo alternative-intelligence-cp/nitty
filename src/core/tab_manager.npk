@@ -1,4 +1,4 @@
-// src/core/tab_manager.npk — Tab collection manager (v0.4.3)
+// src/core/tab_manager.npk — Tab collection manager (v0.4.3 / v0.6.1)
 //
 // Manages the ordered collection of tabs. Owns the tab creation/deletion
 // lifecycle, active tab tracking, and tab ordering.
@@ -23,6 +23,7 @@
 
 use "tab.npk".*;
 use "../gui/gtk4_ffi.npk".*;
+use "../config/profile.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════
 // Module state
@@ -170,6 +171,83 @@ pub func:tm_open_new_tab = int64(int64:rows, int64:cols) {
     drop(tab_set_active(new_idx, 1i64));
 
     // Switch the C-side idle poll and input routing to the new PTY
+    nitty_gtk4_set_active_pty_fd(fd, pid);
+
+    pass(new_id);
+};
+
+/// Open a new tab seeded from a named profile.
+/// Resolves the profile's inheritance chain, then spawns with the resolved
+/// shell binary and working directory. Falls back to the default tab spawn
+/// if the profile cannot be found or resolution fails.
+/// profile_name: exact name of the profile; pass "" to use the default.
+/// Returns the new tab's unique ID, or 0 on spawn failure.
+pub func:tm_open_profile_tab = int64(int64:rows, int64:cols, string:profile_name) {
+    // Resolve profile slot
+    int64:prof_slot = -1i64;
+    if (string_length(profile_name) > 0i64) {
+        prof_slot = raw profile_find_by_name(profile_name);
+    }
+    if (prof_slot < 0i64) {
+        prof_slot = raw profile_get_default_idx();
+    }
+
+    // Resolve inherited fields into scratch arrays
+    int32:is_ok = raw profile_resolve(prof_slot);
+    if (is_ok == 0i32) {
+        // Cycle/error — fall back to plain spawn
+        pass(raw tm_open_new_tab(rows, cols));
+    }
+
+    string:r_shell = raw profile_resolved_shell_path();
+    string:r_cwd   = raw profile_resolved_working_dir();
+    string:r_title = raw profile_resolved_tab_title();
+
+    // Try profile-aware spawn
+    int64:packed = -1i64;
+    if (string_length(r_shell) > 0i64) {
+        // Shell binary specified — use full spawn_cmd path
+        packed = nitty_gtk4_spawn_tab_shell_cmd(rows, cols, r_cwd, r_shell);
+    }
+    if (packed == -1i64) {
+        // No shell override or spawn_cmd failed — try CWD-only spawn
+        if (string_length(r_cwd) > 0i64) {
+            packed = nitty_gtk4_spawn_tab_shell_at_path(rows, cols, r_cwd);
+        }
+    }
+    if (packed == -1i64) {
+        // Final fallback: plain spawn
+        packed = nitty_gtk4_spawn_tab_shell(rows, cols);
+    }
+    if (packed == -1i64) {
+        pass(0i64);  // all spawn attempts failed
+    }
+
+    int64:fd  = nitty_gtk4_spawn_result_fd(packed);
+    int64:pid = nitty_gtk4_spawn_result_pid(packed);
+    if (fd == -1i64) { pass(0i64); }
+
+    // Deactivate the current active tab
+    if (g_tm_count > 0i64) {
+        drop(tab_set_active(g_tm_active_index, 0i64));
+    }
+
+    // Register the new tab
+    int64:new_id  = raw tm_add_tab(fd, pid);
+    int64:new_idx = g_tm_count - 1i64;
+    g_tm_active_index = new_idx;
+    drop(tab_set_active(new_idx, 1i64));
+
+    // Attach profile index to the tab slot
+    drop(tab_set_profile_idx(new_idx, prof_slot));
+
+    // Override title from profile if set
+    if (string_length(r_title) > 0i64) {
+        drop(tab_set_title(new_idx, r_title));
+        drop(tab_set_custom_title(new_idx, 1i64));  // lock against OSC override
+    }
+
+    // Switch C-side idle poll and input routing
     nitty_gtk4_set_active_pty_fd(fd, pid);
 
     pass(new_id);

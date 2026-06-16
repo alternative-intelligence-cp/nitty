@@ -1640,3 +1640,66 @@ void nitty_gtk4_set_swap_mode(int64_t active)
 {
     nitty_input_set_swap_mode((int)active);
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * v0.6.1: Profile-aware tab spawn: explicit shell binary + working directory.
+ * Returns (master_fd * 1000000 + pid), same as nitty_gtk4_spawn_tab_shell.
+ * shell_bin: empty string or NULL → fall back to $SHELL.
+ * cwd:       empty string or NULL → fall back to $HOME.
+ * ─────────────────────────────────────────────────────────────────────────────*/
+int64_t nitty_gtk4_spawn_tab_shell_cmd(int64_t rows, int64_t cols,
+                                        const char *cwd, const char *shell_bin)
+{
+    extern int64_t nitty_pty_openpt(void);
+    extern int64_t nitty_pty_spawn_shell_cmd(int64_t master_fd, int64_t rows,
+                                              int64_t cols, const char *cwd,
+                                              const char *shell_bin);
+    extern int64_t nitty_pty_spawn_shell_at(int64_t master_fd, int64_t rows,
+                                             int64_t cols, const char *cwd);
+    extern int64_t nitty_pty_spawn_shell(int64_t master_fd, int64_t rows,
+                                          int64_t cols);
+    extern int64_t nitty_pty_close(int64_t fd);
+
+    int master_fd = (int)nitty_pty_openpt();
+    if (master_fd < 0) return -1;
+
+    /* Validate cwd — use $HOME as fallback if path is not a directory */
+    char resolved_cwd[4096];
+    resolved_cwd[0] = '\0';
+    if (cwd && cwd[0] != '\0') {
+        struct stat st;
+        if (stat(cwd, &st) == 0 && S_ISDIR(st.st_mode)) {
+            snprintf(resolved_cwd, sizeof(resolved_cwd), "%s", cwd);
+        }
+    }
+    if (resolved_cwd[0] == '\0') {
+        const char *home = getenv("HOME");
+        if (home) snprintf(resolved_cwd, sizeof(resolved_cwd), "%s", home);
+    }
+
+    int64_t pid = -1;
+
+    /* Try profile-specified shell+cwd first */
+    if (shell_bin && shell_bin[0] != '\0') {
+        pid = nitty_pty_spawn_shell_cmd((int64_t)master_fd, rows, cols,
+                                         resolved_cwd, shell_bin);
+    }
+
+    /* Fall back to CWD-only spawn (uses $SHELL) */
+    if (pid <= 0) {
+        pid = nitty_pty_spawn_shell_at((int64_t)master_fd, rows, cols,
+                                        resolved_cwd);
+    }
+
+    /* Last resort: plain spawn */
+    if (pid <= 0) {
+        pid = nitty_pty_spawn_shell((int64_t)master_fd, rows, cols);
+    }
+
+    if (pid <= 0) {
+        nitty_pty_close((int64_t)master_fd);
+        return -1;
+    }
+
+    return (int64_t)master_fd * 1000000LL + pid;
+}

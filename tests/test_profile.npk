@@ -1,0 +1,136 @@
+// tests/test_profile.npk — Unit tests for src/config/profile.npk (v0.6.1)
+//
+// Test coverage:
+//   1. profiles_init() seeds a default profile
+//   2. profile_add() appends a new slot
+//   3. profile_find_by_name() locates by name
+//   4. profile_get_default_idx() finds the is_default==1 slot
+//   5. profile_resolve() with no inheritance returns own values
+//   6. profile_resolve() with one level of inheritance fills gaps
+//   7. profile_resolve() detects cycles and returns 0
+//   8. profile_resolve() with missing parent falls back gracefully
+
+use "../src/config/profile.npk".*;
+
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:got, int64:expected) {
+    if (got == expected) {
+        g_pass = g_pass + 1i64;
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    string:msg = string_concat("FAIL: ", name);
+    msg = string_concat(msg, " — got ");
+    msg = string_concat(msg, string_from_int(got));
+    msg = string_concat(msg, " expected ");
+    msg = string_concat(msg, string_from_int(expected));
+    println(msg);
+    pass(NIL);
+};
+
+func:check_str = NIL(string:name, string:got, string:expected) {
+    if (got == expected) {
+        g_pass = g_pass + 1i64;
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    string:msg = string_concat("FAIL: ", name);
+    msg = string_concat(msg, " — got \"");
+    msg = string_concat(msg, got);
+    msg = string_concat(msg, "\" expected \"");
+    msg = string_concat(msg, expected);
+    msg = string_concat(msg, "\"");
+    println(msg);
+    pass(NIL);
+};
+
+func:run_tests = NIL() {
+    // ── Test 1: profiles_init seeds a default profile ──────────────────────────
+    drop(profiles_init());
+    drop(check("init: count=1",          raw profile_count(),               1i64));
+    drop(check_str("init: name[0]",      raw profile_get_name(0i64),        "Default"));
+    drop(check("init: type[0]=local",    raw profile_get_type(0i64),        0i64));
+    drop(check("init: is_default[0]=1",  raw profile_get_is_default(0i64),  1i64));
+    drop(check_str("init: inherits[0]=", raw profile_get_inherits(0i64),    ""));
+    drop(check_str("init: shell[0]=",    raw profile_get_shell_path(0i64),  ""));
+    drop(check_str("init: cwd[0]=",      raw profile_get_working_dir(0i64), ""));
+
+    // ── Test 2: profiles_init is idempotent ────────────────────────────────────
+    drop(profiles_init());
+    drop(check("idempotent: count still 1", raw profile_count(), 1i64));
+
+    // ── Test 3: profile_add adds new slots ────────────────────────────────────
+    int64:slot1 = raw profile_add("Dev", 0i64, 0i64, "", "", "/usr/bin/fish", "/home/user/dev", "", 1i64);
+    drop(check("add: slot1=1",            slot1,                              1i64));
+    drop(check("add: count=2",            raw profile_count(),                2i64));
+    drop(check_str("add: name[1]=Dev",    raw profile_get_name(1i64),         "Dev"));
+    drop(check_str("add: shell[1]",       raw profile_get_shell_path(1i64),   "/usr/bin/fish"));
+    drop(check_str("add: cwd[1]",         raw profile_get_working_dir(1i64),  "/home/user/dev"));
+
+    // ── Test 4: profile_find_by_name ──────────────────────────────────────────
+    drop(check("find Default=0", raw profile_find_by_name("Default"), 0i64));
+    drop(check("find Dev=1",     raw profile_find_by_name("Dev"),     1i64));
+    drop(check("find miss=-1",   raw profile_find_by_name("Missing"), -1i64));
+
+    // ── Test 5: profile_get_default_idx ───────────────────────────────────────
+    drop(check("default_idx=0", raw profile_get_default_idx(), 0i64));
+
+    // ── Test 6: profile_resolve — no inheritance, returns own values ────────────
+    int32:ok0 = raw profile_resolve(0i64);
+    drop(check("resolve0 ok",  @cast_unchecked<int64>(ok0), 1i64));
+    drop(check_str("resolve0 shell=", raw profile_resolved_shell_path(), ""));
+    drop(check_str("resolve0 cwd=",   raw profile_resolved_working_dir(), ""));
+
+    int32:ok1 = raw profile_resolve(1i64);
+    drop(check("resolve1 ok",   @cast_unchecked<int64>(ok1), 1i64));
+    drop(check_str("resolve1 shell=/usr/bin/fish", raw profile_resolved_shell_path(), "/usr/bin/fish"));
+    drop(check_str("resolve1 cwd=/home/user/dev",  raw profile_resolved_working_dir(), "/home/user/dev"));
+
+    // ── Test 7: profile_resolve — one-level inheritance ───────────────────────
+    // Child overrides CWD; shell comes from parent "Dev"
+    int64:slot2 = raw profile_add("DevChild", 0i64, 0i64, "Dev", "", "", "/home/user/dev/project", "", 1i64);
+    drop(check("add: slot2=2", slot2, 2i64));
+
+    int32:ok2 = raw profile_resolve(2i64);
+    drop(check("resolve2 ok",                  @cast_unchecked<int64>(ok2), 1i64));
+    drop(check_str("resolve2 shell from parent", raw profile_resolved_shell_path(), "/usr/bin/fish"));
+    drop(check_str("resolve2 cwd from child",   raw profile_resolved_working_dir(), "/home/user/dev/project"));
+
+    // ── Test 8: profile_resolve — cycle detection ──────────────────────────────
+    int64:slot3 = raw profile_add("CycA", 0i64, 0i64, "CycB", "", "", "", "", 1i64);
+    int64:slot4 = raw profile_add("CycB", 0i64, 0i64, "CycA", "", "", "", "", 1i64);
+    drop(check("add cycle slots", slot4, 4i64));
+
+    int32:ok_cyc = raw profile_resolve(slot3);
+    drop(check("cycle detected -> 0", @cast_unchecked<int64>(ok_cyc), 0i64));
+
+    // ── Test 9: profile_resolve — missing parent falls back gracefully ──────────
+    int64:slot5 = raw profile_add("Orphan", 0i64, 0i64, "NonExistent", "", "/bin/sh", "", "", 1i64);
+    int32:ok5 = raw profile_resolve(slot5);
+    drop(check("orphan resolve ok",   @cast_unchecked<int64>(ok5), 1i64));
+    drop(check_str("orphan shell",    raw profile_resolved_shell_path(), "/bin/sh"));
+
+    // ── Test 10: profile_resolve — out-of-range slot ───────────────────────────
+    int32:ok_oor = raw profile_resolve(-1i64);
+    drop(check("oor -1 -> 0", @cast_unchecked<int64>(ok_oor), 0i64));
+
+    int32:ok_oor2 = raw profile_resolve(100i64);
+    drop(check("oor 100 -> 0", @cast_unchecked<int64>(ok_oor2), 0i64));
+
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    drop(run_tests());
+    println(string_concat("PASS: ", string_from_int(g_pass)));
+    println(string_concat("FAIL: ", string_from_int(g_fail)));
+    if (g_fail > 0i64) {
+        exit 1i32;
+    }
+    println("All profile tests passed.");
+    exit 0i32;
+};

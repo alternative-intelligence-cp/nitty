@@ -463,4 +463,9 @@ extern "nitty_gtk4_shim" {
 
     // v0.5.5: Swap mode — tell input.c to intercept next Escape as swap_cancel
     func:nitty_gtk4_set_swap_mode = NIL(int64:active);
+
+    // v0.6.1: Profile-aware tab spawn — explicit shell binary + working directory.
+    // shell: "" = use $SHELL. cwd: "" = use $HOME.
+    // Returns packed (fd*1000000 + pid) or -1.
+    func:nitty_gtk4_spawn_tab_shell_cmd = int64(int64:rows, int64:cols, string:cwd, string:shell);
 }

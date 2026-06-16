@@ -627,3 +627,88 @@ int64_t nitty_pty_spawn_shell_at(int64_t master_fd, int64_t rows, int64_t cols,
 
     return (int64_t)pid;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.6.1: Spawn shell with explicit binary path + CWD
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+int64_t nitty_pty_spawn_shell_cmd(int64_t master_fd, int64_t rows, int64_t cols,
+                                   const char *cwd, const char *shell_bin)
+{
+    char slave_path[256];
+    int pr = ptsname_r((int)master_fd, slave_path, sizeof(slave_path));
+    if (pr != 0) {
+        fprintf(stderr, "PTY: spawn_cmd: ptsname_r failed: %s\n", strerror(errno));
+        return -1;
+    }
+
+    nitty_pty_set_winsize(master_fd, rows, cols, 0, 0);
+
+    int slave_fd = open(slave_path, O_RDWR);
+    if (slave_fd < 0) {
+        fprintf(stderr, "PTY: spawn_cmd: open slave(%s) failed: %s\n",
+                slave_path, strerror(errno));
+        return -1;
+    }
+
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        fprintf(stderr, "PTY: spawn_cmd: fork failed: %s\n", strerror(errno));
+        close(slave_fd);
+        return -1;
+    }
+
+    if (pid == 0) {
+        /* ────── Child process ────── */
+        close((int)master_fd);
+
+        if (setsid() < 0) _exit(126);
+        if (ioctl(slave_fd, TIOCSCTTY, 0) < 0) _exit(126);
+
+        if (dup2(slave_fd, STDIN_FILENO)  < 0 ||
+            dup2(slave_fd, STDOUT_FILENO) < 0 ||
+            dup2(slave_fd, STDERR_FILENO) < 0) _exit(126);
+
+        if (slave_fd > STDERR_FILENO) close(slave_fd);
+        for (int fd = STDERR_FILENO + 1; fd < 1024; fd++) close(fd);
+
+        /* Change to CWD before exec */
+        if (cwd && cwd[0] != '\0') {
+            if (chdir(cwd) != 0) {
+                const char *home = getenv("HOME");
+                if (home) {
+                    int _r = chdir(home);
+                    (void)_r;
+                }
+            }
+        }
+
+        setenv("TERM", "xterm-256color", 1);
+        setenv("COLORTERM", "truecolor", 1);
+        setenv("TERM_PROGRAM", "nitty", 1);
+        setenv("TERM_PROGRAM_VERSION", "0.6.1", 1);
+
+        /* Resolve shell: use explicit path if provided and executable, else $SHELL */
+        const char *shell = NULL;
+        if (shell_bin && shell_bin[0] != '\0' && access(shell_bin, X_OK) == 0) {
+            shell = shell_bin;
+        } else {
+            shell = nitty_pty_get_default_shell();
+        }
+
+        char *argv[] = { (char *)shell, (char *)"-l", NULL };
+        execv(shell, argv);
+        _exit(127);
+    }
+
+    /* ────── Parent process ────── */
+    close(slave_fd);
+    nitty_pty_set_nonblock(master_fd);
+
+    fprintf(stderr, "PTY: spawned shell '%s' PID %d at '%s'\n",
+            (shell_bin && shell_bin[0]) ? shell_bin : "(default)",
+            (int)pid, cwd ? cwd : "(default)");
+
+    return (int64_t)pid;
+}

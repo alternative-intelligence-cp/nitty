@@ -429,3 +429,12 @@ deps = []
 flags = []
 link_libraries = ["nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim"]
 link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+
+# v0.6.1: Profile system tests
+[target.test_profile]
+type = "binary"
+sources = ["tests/test_profile.npk"]
+deps = []
+flags = []
+link_libraries = ["nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]

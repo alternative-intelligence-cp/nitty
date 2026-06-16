@@ -97,6 +97,15 @@ int64_t nitty_pty_spawn_shell(int64_t master_fd, int64_t rows, int64_t cols);
 int64_t nitty_pty_spawn_shell_at(int64_t master_fd, int64_t rows, int64_t cols,
                                    const char *cwd);
 
+/**
+ * v0.6.1: Spawn a shell with an explicit binary path AND working directory.
+ * shell_bin: path to shell binary (NULL or "" = use $SHELL).
+ * cwd: initial working directory (NULL or "" = use $HOME).
+ * Returns child PID (> 0) on success, -1 on error.
+ */
+int64_t nitty_pty_spawn_shell_cmd(int64_t master_fd, int64_t rows, int64_t cols,
+                                   const char *cwd, const char *shell_bin);
+
 /** Check if child is alive. Returns 1=alive, 0=exited, -1=error. */
 int64_t nitty_pty_child_alive(int64_t pid);
 
