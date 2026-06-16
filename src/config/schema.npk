@@ -178,7 +178,7 @@ pub func:schema_init = NIL() {
     //   terminal.process_min_duration:             Int  — min runtime ms before notifying (1000-300000)
     int64:T_ENUM = 4i64;
     drop(_sch_add_enum("terminal.bell_mode", "audible",
-        "audible\tvisual\tnotification\tdisabled"));
+        "audible", "visual", "notification", "disabled", 4i64));
     drop(_sch_add("terminal.bell_notify",                    T_BOOL, "0",     0i64, 0i64));
     drop(_sch_add("terminal.visual_bell_duration",           T_INT,  "100",   50i64, 500i64));
     drop(_sch_add("terminal.activity_notification",          T_BOOL, "0",     0i64, 0i64));
