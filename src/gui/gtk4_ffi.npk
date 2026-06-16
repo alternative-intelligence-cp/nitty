@@ -549,4 +549,27 @@ extern "nitty_gtk4_shim" {
 
     // Stop watching and release resources.
     func:nitty_gtk4_config_watch_stop  = NIL();
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.7.0: Search bar — drawn overlay + key event queue
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Draw the search bar overlay each frame.
+    // query:      current query string
+    // match_info: "X / Y" or "No matches" or "" (empty=hide info)
+    // is_visible: 0=hidden, 1=draw
+    // case_on:    1=case-sensitive indicator lit
+    func:nitty_search_bar_draw     = NIL(string:query, string:match_info,
+                                         int64:is_visible, int64:case_on);
+
+    // Set search bar active state (1=open, 0=closed). Flushes event queue on close.
+    func:nitty_search_bar_set_active = NIL(int64:active);
+
+    // Poll for next search input event.
+    // Returns: 0=none, 1=char, 2=backspace, 3=escape, 4=enter, 5=shift_enter, 6=case_toggle
+    func:nitty_search_event_poll    = int64();
+
+    // Get the Unicode codepoint of the last typed character (after poll returns 1).
+    func:nitty_search_event_get_char = int64();
 }
+

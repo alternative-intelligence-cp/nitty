@@ -39,6 +39,7 @@ use "../terminal/scrollback.npk".*;
 use "color_scheme.npk".*;
 use "color_resolve.npk".*;
 use "tab_bar.npk".*;
+use "../terminal/search.npk".*;  // v0.7.0: search highlight
 
 // ═══════════════════════════════════════════════════════════════════════
 // Module state
@@ -217,6 +218,28 @@ pub func:renderer_sync_frame = NIL() {
             if (flags != 0i64) {
                 nitty_render_set_cell_flags(c, r, flags);
             }
+
+            // v0.7.0: Search match highlight (overrides cell bg/fg)
+            if (raw se_is_active() == 1i64) {
+                // Build the row encoding expected by se_cell_match():
+                //   scrollback row:  sb_idx     (>= 0)
+                //   active screen:   -(active_row + 1)  (< 0)
+                int64:se_row_enc = 0i64;
+                if (sb_idx >= 0i64) { se_row_enc = sb_idx; }
+                if (sb_idx < 0i64)  { se_row_enc = -(active_row + 1i64); }
+                int64:mk = raw se_cell_match(se_row_enc, c);
+                if (mk == 1i64) {
+                    // Regular match: yellow bg, black fg
+                    nitty_render_set_cell_bg(c, r, 1000i64, 900i64, 0i64);
+                    nitty_render_set_cell_fg(c, r, 0i64, 0i64, 0i64);
+                }
+                if (mk == 2i64) {
+                    // Current focused match: orange bg, black fg
+                    nitty_render_set_cell_bg(c, r, 1000i64, 550i64, 0i64);
+                    nitty_render_set_cell_fg(c, r, 0i64, 0i64, 0i64);
+                }
+            }
+
             c = c + 1i64;
         }
         r = r + 1i64;

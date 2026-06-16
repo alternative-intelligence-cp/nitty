@@ -2455,3 +2455,237 @@ void nitty_gtk4_config_watch_stop(void)
     }
     g_config_changed=0;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.7.0: Search bar — drawn overlay + key event queue
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Active flag — checked by nitty_input.c before PTY routing */
+static int g_search_bar_active = 0;
+
+/* Search event ring buffer (capacity 32) */
+#define SEARCH_EVQ_CAP 32
+static int64_t g_search_evq_type[SEARCH_EVQ_CAP];
+static int64_t g_search_evq_char[SEARCH_EVQ_CAP];
+static int     g_search_evq_head = 0;  /* next read */
+static int     g_search_evq_tail = 0;  /* next write */
+static int64_t g_search_last_char = 0;
+
+/* ── Active flag API ─────────────────────────────────────────────────── */
+
+int nitty_search_bar_is_active(void)
+{
+    return g_search_bar_active;
+}
+
+void nitty_search_bar_set_active(int active)
+{
+    g_search_bar_active = active ? 1 : 0;
+    if (!active) {
+        /* Flush event queue on close */
+        g_search_evq_head = 0;
+        g_search_evq_tail = 0;
+    }
+}
+
+/* ── Key interception ────────────────────────────────────────────────── */
+
+static void _search_evq_push(int64_t ev_type, int64_t ev_char)
+{
+    int next = (g_search_evq_tail + 1) % SEARCH_EVQ_CAP;
+    if (next == g_search_evq_head) return; /* queue full — drop */
+    g_search_evq_type[g_search_evq_tail] = ev_type;
+    g_search_evq_char[g_search_evq_tail] = ev_char;
+    g_search_evq_tail = next;
+}
+
+int nitty_search_intercept_key(guint keyval, guint state)
+{
+    int has_shift = (state & GDK_SHIFT_MASK) != 0;
+    int has_ctrl  = (state & GDK_CONTROL_MASK) != 0;
+
+    /* Escape: close search */
+    if (keyval == GDK_KEY_Escape) {
+        _search_evq_push(3, 0);
+        return 1;
+    }
+
+    /* Backspace */
+    if (keyval == GDK_KEY_BackSpace) {
+        _search_evq_push(2, 0);
+        return 1;
+    }
+
+    /* Enter: next match (Shift+Enter: prev match) */
+    if (keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter) {
+        if (has_shift) {
+            _search_evq_push(5, 0);  /* prev */
+        } else {
+            _search_evq_push(4, 0);  /* next */
+        }
+        return 1;
+    }
+
+    /* Ctrl+Shift+C: toggle case sensitivity */
+    if (has_ctrl && has_shift && (keyval == GDK_KEY_c || keyval == GDK_KEY_C)) {
+        _search_evq_push(6, 0);
+        return 1;
+    }
+
+    /* Arrow keys / function keys: let them pass through (allow scrolling in search mode) */
+    if (keyval == GDK_KEY_Up || keyval == GDK_KEY_Down ||
+        keyval == GDK_KEY_Left || keyval == GDK_KEY_Right ||
+        keyval == GDK_KEY_Page_Up || keyval == GDK_KEY_Page_Down)
+    {
+        return 0;  /* not consumed: let normal scroll handling occur */
+    }
+
+    /* Printable characters (no Ctrl modifier) */
+    if (!has_ctrl && keyval >= 0x20 && keyval <= 0x10FFFF) {
+        _search_evq_push(1, (int64_t)keyval);
+        return 1;
+    }
+
+    /* Everything else: consume but don't enqueue (don't write to PTY) */
+    if (keyval >= 0x20) return 1;
+    return 0;
+}
+
+int64_t nitty_search_event_poll(void)
+{
+    if (g_search_evq_head == g_search_evq_tail) return 0;
+    int64_t ev   = g_search_evq_type[g_search_evq_head];
+    g_search_last_char = g_search_evq_char[g_search_evq_head];
+    g_search_evq_head = (g_search_evq_head + 1) % SEARCH_EVQ_CAP;
+    return ev;
+}
+
+int64_t nitty_search_event_get_char(void)
+{
+    return g_search_last_char;
+}
+
+/* ── Drawn search bar ────────────────────────────────────────────────── */
+
+/*
+ * g_draw_cr is defined in this file (nitty_gtk4_shim.c) and used by
+ * nitty_render.c via extern. Use it directly here.
+ */
+extern int64_t nitty_render_get_tab_bar_height(void);
+
+void nitty_search_bar_draw(const char *query, const char *match_info,
+                            int is_visible, int case_on)
+{
+    if (!is_visible) return;
+
+    cairo_t *cr = g_draw_cr;
+    if (cr == NULL) return;
+
+    int64_t win_w     = nitty_gtk4_get_draw_width();
+    int64_t tab_bar_h = nitty_render_get_tab_bar_height();
+
+    /* Search bar dimensions */
+    double bar_w = 360.0;
+    double bar_h = 38.0;
+    double bar_x = (double)(win_w) - bar_w - 12.0;
+    double bar_y = (double)(tab_bar_h) + 8.0;
+    double radius = 6.0;
+
+    /* ── Save state so we don't disturb the tab-bar translation ── */
+    cairo_save(cr);
+
+    /* Draw rounded-rectangle background: dark semi-transparent */
+    cairo_new_path(cr);
+    cairo_arc(cr, bar_x + bar_w - radius, bar_y + radius,           radius, -G_PI_2, 0.0);
+    cairo_arc(cr, bar_x + bar_w - radius, bar_y + bar_h - radius,   radius, 0.0,     G_PI_2);
+    cairo_arc(cr, bar_x + radius,         bar_y + bar_h - radius,   radius, G_PI_2,  G_PI);
+    cairo_arc(cr, bar_x + radius,         bar_y + radius,           radius, G_PI,    3.0 * G_PI_2);
+    cairo_close_path(cr);
+    cairo_set_source_rgba(cr, 0.12, 0.12, 0.14, 0.94);
+    cairo_fill(cr);
+
+    /* Thin border */
+    cairo_new_path(cr);
+    cairo_arc(cr, bar_x + bar_w - radius, bar_y + radius,           radius, -G_PI_2, 0.0);
+    cairo_arc(cr, bar_x + bar_w - radius, bar_y + bar_h - radius,   radius, 0.0,     G_PI_2);
+    cairo_arc(cr, bar_x + radius,         bar_y + bar_h - radius,   radius, G_PI_2,  G_PI);
+    cairo_arc(cr, bar_x + radius,         bar_y + radius,           radius, G_PI,    3.0 * G_PI_2);
+    cairo_close_path(cr);
+    cairo_set_source_rgba(cr, 0.4, 0.4, 0.45, 0.7);
+    cairo_set_line_width(cr, 1.0);
+    cairo_stroke(cr);
+
+    /* ── Query text ── */
+    PangoLayout *lo = pango_cairo_create_layout(cr);
+    PangoFontDescription *fd = pango_font_description_from_string("Sans 11");
+    pango_layout_set_font_description(lo, fd);
+
+    /* Query field background (slightly lighter) */
+    double qx = bar_x + 8.0;
+    double qy = bar_y + 6.0;
+    double qw = bar_w - 100.0;
+    double qh = bar_h - 12.0;
+    cairo_set_source_rgba(cr, 0.22, 0.22, 0.25, 1.0);
+    cairo_rectangle(cr, qx, qy, qw, qh);
+    cairo_fill(cr);
+
+    /* Query text */
+    const char *q_text = (query && query[0]) ? query : "";
+    pango_layout_set_text(lo, q_text[0] ? q_text : " ", -1);
+    cairo_set_source_rgb(cr, 0.92, 0.92, 0.92);
+    cairo_move_to(cr, qx + 4.0, qy + 4.0);
+    pango_cairo_show_layout(cr, lo);
+
+    /* Cursor blink placeholder: a simple | after query text */
+    int q_w_px = 0, q_h_px = 0;
+    pango_layout_get_pixel_size(lo, &q_w_px, &q_h_px);
+    cairo_set_source_rgba(cr, 0.85, 0.85, 0.85, 0.9);
+    cairo_rectangle(cr, qx + 4.0 + (double)q_w_px + 1.0, qy + 4.0, 1.5, (double)q_h_px);
+    cairo_fill(cr);
+
+    /* ── Match info label ── */
+    double lx = bar_x + qw + 14.0;
+    double lw = bar_w - qw - 22.0;
+    if (match_info && match_info[0]) {
+        /* Red tint if "No matches" */
+        int no_match = (match_info[0] == 'N' && match_info[1] == 'o');
+        if (no_match) {
+            cairo_set_source_rgb(cr, 0.9, 0.35, 0.35);
+        } else {
+            cairo_set_source_rgb(cr, 0.65, 0.65, 0.70);
+        }
+        pango_layout_set_text(lo, match_info, -1);
+        pango_layout_set_width(lo, (int)(lw * PANGO_SCALE));
+        pango_layout_set_ellipsize(lo, PANGO_ELLIPSIZE_END);
+        cairo_move_to(cr, lx, bar_y + 10.0);
+        pango_cairo_show_layout(cr, lo);
+    }
+
+    /* ── Case-sensitive indicator (small "Aa" badge) ── */
+    double cx_btn = bar_x + bar_w - 26.0;
+    double cy_btn = bar_y + 6.0;
+    if (case_on) {
+        cairo_set_source_rgba(cr, 0.25, 0.55, 0.95, 0.85);
+        cairo_rectangle(cr, cx_btn, cy_btn, 20.0, 18.0);
+        cairo_fill(cr);
+        cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+    } else {
+        cairo_set_source_rgba(cr, 0.30, 0.30, 0.34, 0.9);
+        cairo_rectangle(cr, cx_btn, cy_btn, 20.0, 18.0);
+        cairo_fill(cr);
+        cairo_set_source_rgb(cr, 0.60, 0.60, 0.65);
+    }
+    PangoFontDescription *fd_small = pango_font_description_from_string("Sans Bold 9");
+    pango_layout_set_font_description(lo, fd_small);
+    pango_layout_set_text(lo, "Aa", -1);
+    pango_layout_set_width(lo, -1);
+    cairo_move_to(cr, cx_btn + 2.0, cy_btn + 2.0);
+    pango_cairo_show_layout(cr, lo);
+    pango_font_description_free(fd_small);
+
+    pango_font_description_free(fd);
+    g_object_unref(lo);
+
+    cairo_restore(cr);
+}
+

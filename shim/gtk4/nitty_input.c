@@ -31,6 +31,10 @@ extern void nitty_gtk4_grid_handle_key(int64_t keyval, int64_t modifiers);
 /* v0.6.2: Key-consumed sentinel — set when on_key_pressed intercepts a key */
 extern void nitty_gtk4_set_key_consumed(int consumed);
 
+/* v0.7.0: Search bar interception — defined in nitty_gtk4_shim.c */
+extern int  nitty_search_bar_is_active(void);
+extern int  nitty_search_intercept_key(unsigned int keyval, unsigned int state);
+
 /* v0.1.4: Terminal mode — when set, keys go to PTY instead of grid */
 static int g_terminal_mode = 0;
 static int64_t g_pty_master_fd = -1;
@@ -199,6 +203,17 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
     /* v0.5.5: Escape cancels swap mode */
     if (keyval == GDK_KEY_Escape && g_swap_mode_active) {
         g_pane_event = 30; nitty_gtk4_set_key_consumed(1); return TRUE; /* swap_cancel */
+    }
+
+    /* v0.7.0: Search bar active — intercept keys before PTY routing */
+    if (nitty_search_bar_is_active()) {
+        /* Allow Ctrl+Shift shortcuts (tab/pane events) to fall through above */
+        int consumed = nitty_search_intercept_key(keyval, state);
+        if (consumed) {
+            nitty_gtk4_set_key_consumed(1);
+            return TRUE;
+        }
+        /* Not consumed by search — fall through to normal routing below */
     }
 
     /* v0.5.2: Intercept Alt+Arrow for pane focus navigation before PTY routing */

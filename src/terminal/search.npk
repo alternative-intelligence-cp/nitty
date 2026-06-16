@@ -1,0 +1,293 @@
+// src/terminal/search.npk — Search-in-scrollback engine for Nitty v0.7.0
+//
+// Provides substring search across the full terminal buffer (scrollback + active screen).
+// All state is flat int64 arrays — no structs, no recursion.
+//
+// Row encoding convention used internally:
+//   sb_row >= 0  → scrollback index (0=newest, sb_count-1=oldest)
+//   sb_row <  0  → active screen row: actual_row = -(sb_row + 1)
+//                  i.e. screen row 0 → sb_row = -1
+//                       screen row 1 → sb_row = -2, etc.
+//
+// Usage (each frame):
+//   if se_is_active() → pass match data to renderer via se_cell_match()
+//   se_execute() → called after any query/case change to refresh matches
+
+use "../terminal/scrollback.npk".*;
+use "../terminal/grid.npk".*;
+
+// ── Match storage (flat parallel arrays, max 4096 matches) ──────────────
+
+int64:SE_MAX_MATCHES = 4096i64;
+
+int64[4096]:g_se_row;        // row encoding (see above)
+int64[4096]:g_se_col_start;  // inclusive start column
+int64[4096]:g_se_col_end;    // exclusive end column
+int64:g_se_match_count = 0i64;
+int64:g_se_current_idx = -1i64;   // -1 = no focused match
+
+// ── Query buffer (codepoints, max 256 chars) ─────────────────────────────
+
+int64[256]:g_se_qbuf;          // query codepoints
+int64:g_se_qlen = 0i64;
+
+// ── Module state ─────────────────────────────────────────────────────────
+
+int64:g_se_active         = 0i64;
+int64:g_se_case_sensitive = 0i64;
+int64:g_se_wrap_around    = 1i64;
+
+// ── Public API ────────────────────────────────────────────────────────────
+
+pub func:se_is_active        = int64() { pass(g_se_active); };
+pub func:se_match_count      = int64() { pass(g_se_match_count); };
+pub func:se_current_index    = int64() { pass(g_se_current_idx); };
+pub func:se_is_case_sensitive = int64() { pass(g_se_case_sensitive); };
+
+pub func:se_activate = NIL() {
+    g_se_active = 1i64;
+    pass(NIL);
+};
+
+pub func:se_deactivate = NIL() {
+    g_se_active         = 0i64;
+    g_se_match_count    = 0i64;
+    g_se_current_idx    = -1i64;
+    g_se_qlen           = 0i64;
+    pass(NIL);
+};
+
+pub func:se_toggle_case = NIL() {
+    if (g_se_case_sensitive == 0i64) { g_se_case_sensitive = 1i64; pass(NIL); }
+    g_se_case_sensitive = 0i64;
+    pass(NIL);
+};
+
+// ── Query management ──────────────────────────────────────────────────────
+
+pub func:se_query_append = NIL(int64:cp) {
+    if (g_se_qlen >= 255i64) { pass(NIL); }
+    g_se_qbuf[g_se_qlen] = cp;
+    g_se_qlen = g_se_qlen + 1i64;
+    pass(NIL);
+};
+
+pub func:se_query_backspace = NIL() {
+    if (g_se_qlen > 0i64) {
+        g_se_qlen = g_se_qlen - 1i64;
+    }
+    pass(NIL);
+};
+
+pub func:se_query_clear = NIL() {
+    g_se_qlen = 0i64;
+    pass(NIL);
+};
+
+pub func:se_get_query_len = int64() {
+    pass(g_se_qlen);
+};
+
+pub func:se_get_query_cp = int64(int64:i) {
+    if (i < 0i64) { pass(0i64); }
+    if (i >= g_se_qlen) { pass(0i64); }
+    pass(g_se_qbuf[i]);
+};
+
+// ── Case folding: ASCII only (a-z ↔ A-Z) ────────────────────────────────
+
+func:_fold = int64(int64:cp) {
+    // Only fold ASCII letters
+    if (cp >= 65i64) {
+        if (cp <= 90i64) {
+            pass(cp + 32i64);  // A-Z → a-z
+        }
+    }
+    pass(cp);
+};
+
+// ── Row text search: find all matches of query in a row ──────────────────
+// Writes matches into the global match arrays starting at offset.
+// Returns number of matches added.
+
+func:_search_row = int64(int64:sb_row_enc, int64:write_offset) {
+    if (g_se_qlen == 0i64)  { pass(0i64); }
+    if (write_offset >= SE_MAX_MATCHES) { pass(0i64); }
+
+    int64:cols = raw grid_get_cols();
+
+    // Build row codepoints: read from scrollback or active grid
+    // We'll compare on the fly using a sliding window approach.
+    // For each column, we compare a sub-sequence against the query.
+
+    int64:added = 0i64;
+    int64:c = 0i64;
+
+    while (c < cols) {
+        // Check if query matches starting at column c
+        int64:q = 0i64;
+        int64:match = 1i64;
+
+        while (q < g_se_qlen) {
+            int64:tc = c + q;
+            if (tc >= cols) { match = 0i64; q = g_se_qlen; }
+            if (match == 1i64) {
+                // Get cell codepoint
+                int64:cell_cp = 0i64;
+                if (sb_row_enc >= 0i64) {
+                    cell_cp = raw scrollback_get_cp(sb_row_enc, tc);
+                }
+                if (sb_row_enc < 0i64) {
+                    int64:screen_row = -(sb_row_enc + 1i64);
+                    cell_cp = raw grid_get_cp(screen_row, tc);
+                }
+                // Map 0 (empty) to space for comparison
+                if (cell_cp == 0i64) { cell_cp = 32i64; }
+
+                int64:query_cp = g_se_qbuf[q];
+
+                // Case-insensitive: fold both
+                if (g_se_case_sensitive == 0i64) {
+                    cell_cp  = raw _fold(cell_cp);
+                    query_cp = raw _fold(query_cp);
+                }
+
+                if (cell_cp != query_cp) { match = 0i64; }
+            }
+            q = q + 1i64;
+        }
+
+        if (match == 1i64) {
+            if (write_offset + added < SE_MAX_MATCHES) {
+                int64:mi = write_offset + added;
+                g_se_row[mi]       = sb_row_enc;
+                g_se_col_start[mi] = c;
+                g_se_col_end[mi]   = c + g_se_qlen;
+                added = added + 1i64;
+            }
+            // Skip past this match (non-overlapping)
+            c = c + g_se_qlen;
+        }
+        if (match == 0i64) {
+            c = c + 1i64;
+        }
+    }
+
+    pass(added);
+};
+
+// ── Execute search ────────────────────────────────────────────────────────
+// Scans all scrollback rows (oldest first) then active screen rows.
+// Populates match arrays and resets current_idx to 0 (or -1 if no matches).
+
+pub func:se_execute = NIL() {
+    g_se_match_count = 0i64;
+    g_se_current_idx = -1i64;
+
+    if (g_se_qlen == 0i64)  { pass(NIL); }
+    if (g_se_active == 0i64) { pass(NIL); }
+
+    int64:sb_len    = raw scrollback_len();
+    int64:scr_rows  = raw grid_get_rows();
+    int64:total_added = 0i64;
+
+    // 1. Search scrollback rows — oldest first (idx sb_len-1 down to 0)
+    int64:si = sb_len - 1i64;
+    while (si >= 0i64) {
+        if (total_added < SE_MAX_MATCHES) {
+            int64:n = raw _search_row(si, total_added);
+            total_added = total_added + n;
+        }
+        si = si - 1i64;
+    }
+
+    // 2. Search active screen rows — top to bottom
+    int64:r = 0i64;
+    while (r < scr_rows) {
+        if (total_added < SE_MAX_MATCHES) {
+            // Encode: screen row r → sb_row = -(r+1)
+            int64:enc = -(r + 1i64);
+            int64:n = raw _search_row(enc, total_added);
+            total_added = total_added + n;
+        }
+        r = r + 1i64;
+    }
+
+    g_se_match_count = total_added;
+    if (g_se_match_count > 0i64) {
+        g_se_current_idx = 0i64;
+    }
+
+    pass(NIL);
+};
+
+// ── Navigation ────────────────────────────────────────────────────────────
+
+pub func:se_next = NIL() {
+    if (g_se_match_count == 0i64) { pass(NIL); }
+    int64:next = g_se_current_idx + 1i64;
+    if (next >= g_se_match_count) {
+        if (g_se_wrap_around == 1i64) { next = 0i64; }
+        if (g_se_wrap_around == 0i64) { next = g_se_match_count - 1i64; }
+    }
+    g_se_current_idx = next;
+    pass(NIL);
+};
+
+pub func:se_prev = NIL() {
+    if (g_se_match_count == 0i64) { pass(NIL); }
+    int64:prev = g_se_current_idx - 1i64;
+    if (prev < 0i64) {
+        if (g_se_wrap_around == 1i64) { prev = g_se_match_count - 1i64; }
+        if (g_se_wrap_around == 0i64) { prev = 0i64; }
+    }
+    g_se_current_idx = prev;
+    pass(NIL);
+};
+
+// ── Cell match query (called per-cell in renderer) ────────────────────────
+// Returns: 0=no match, 1=regular match, 2=current focused match.
+// sb_row_enc: same encoding as above (≥0=scrollback, <0=screen).
+
+pub func:se_cell_match = int64(int64:sb_row_enc, int64:col) {
+    if (g_se_active == 0i64)        { pass(0i64); }
+    if (g_se_match_count == 0i64)   { pass(0i64); }
+
+    int64:result = 0i64;
+    int64:i = 0i64;
+    while (i < g_se_match_count) {
+        if (g_se_row[i] == sb_row_enc) {
+            if (col >= g_se_col_start[i]) {
+                if (col < g_se_col_end[i]) {
+                    if (i == g_se_current_idx) {
+                        result = 2i64;
+                    }
+                    if (i != g_se_current_idx) {
+                        if (result != 2i64) { result = 1i64; }
+                    }
+                }
+            }
+        }
+        i = i + 1i64;
+    }
+    pass(result);
+};
+
+// ── Scroll offset for current match ──────────────────────────────────────
+// Returns the viewport offset (rows above bottom) needed to show the current match.
+// Caller passes the result to viewport_set_offset(offset, max).
+
+pub func:se_current_match_offset = int64() {
+    if (g_se_current_idx < 0i64)       { pass(0i64); }
+    if (g_se_current_idx >= g_se_match_count) { pass(0i64); }
+
+    int64:enc = g_se_row[g_se_current_idx];
+
+    // Scrollback row: offset = sb_idx + 1 puts that row at top of screen
+    if (enc >= 0i64) {
+        pass(enc + 1i64);
+    }
+
+    // Active screen: offset = 0 (live view)
+    pass(0i64);
+};

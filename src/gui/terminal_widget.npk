@@ -52,6 +52,7 @@ use "tab_bar.npk".*;
 use "tab_context_menu.npk".*;
 use "split_view.npk".*;
 use "settings.npk".*;              // v0.6.5: settings window
+use "search_bar.npk".*;            // v0.7.0: search in scrollback
 use "../terminal/terminal_pipeline.npk".*;
 use "../terminal/terminal_state.npk".*;
 use "../terminal/scrollback.npk".*;
@@ -187,8 +188,8 @@ func:dispatch_action = NIL(string:action, int64:rows, int64:cols) {
         // Clipboard (stubs in v0.6.2 — full in v0.7.x)
         ("edit.copy")   { drop(nitty_gtk4_clipboard_copy()); },
         ("edit.paste")  { drop(nitty_gtk4_clipboard_paste()); },
-        // Search / clear — stubs for v0.7.x
-        ("edit.search") { drop(nitty_gtk4_show_notification("Search: coming in v0.7.x")); },
+        // Search
+        ("edit.search") { drop(sb_toggle()); },  // v0.7.0
         ("edit.clear")  { drop(nitty_gtk4_show_notification("Clear: coming in v0.7.x")); },
         // View
         ("view.fullscreen") { drop(nitty_gtk4_show_notification("Fullscreen: coming in v0.7.x")); },
@@ -266,6 +267,11 @@ pub func:tw_on_draw = NIL() {
     if (sev == 2i64) { drop(viewport_scroll_down(vis_rows)); }
     if (sev == 3i64) { drop(viewport_scroll_to_top(sb_len)); }
     if (sev == 4i64) { drop(viewport_scroll_to_bottom()); }
+
+    // v0.7.0 Step 0b2: Poll search key events and update search engine
+    drop(sb_poll_input());
+    // v0.7.0 Step 0b3: Draw the search bar overlay (no-op when closed)
+    drop(sb_draw());
 
     // v0.4.1 Step 0c: Poll tab keyboard events
     // 1=new 2=close 3=prev 4=next 5..13=direct(idx 0..8)

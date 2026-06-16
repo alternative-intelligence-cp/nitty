@@ -1,0 +1,247 @@
+// tests/terminal/test_search.npk — Unit tests for the v0.7.0 search engine
+//
+// Tests the pure-Nitpick search engine (search.npk) without GTK.
+// Populates the scrollback buffer and active grid with known data,
+// then verifies that se_execute() finds the right matches and
+// se_cell_match() returns the correct kind codes.
+//
+// T01: se_activate() sets is_active=1
+// T02: se_deactivate() clears matches, sets is_active=0
+// T03: se_execute() with empty query → 0 matches
+// T04: search in scrollback finds correct row/col
+// T05: case-insensitive: "error" matches "Error" and "ERROR"
+// T06: se_next() / se_prev() cycle through matches
+// T07: wrap-around: se_next() at last match → index 0
+// T08: se_cell_match() returns 1 for regular match, 2 for current match
+//
+// All pass → exit 0.  Any failure → exit 1.
+
+use "../../src/terminal/search.npk".*;
+use "../../src/terminal/scrollback.npk".*;
+use "../../src/terminal/grid.npk".*;
+use "../../src/terminal/terminal_state.npk".*;
+
+// fd 1 = stdout
+int64:STDOUT = 1i64;
+
+// Test counters
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:print_line = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:check = NIL(string:name, int64:expected, int64:actual) {
+    if (actual == expected) {
+        g_pass = g_pass + 1i64;
+        drop(print_line("[PASS] " + name + "\n"));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    drop(print_line("[FAIL] " + name + " expected=" + string_from_int(expected) +
+                    " actual=" + string_from_int(actual) + "\n"));
+    pass(NIL);
+};
+
+// ASCII character → codepoint lookup (covers a-z, A-Z, 0-9, space, common)
+func:_char_to_cp = int64(string:ch) {
+    if (ch == "a") { pass(97i64); }
+    if (ch == "b") { pass(98i64); }
+    if (ch == "c") { pass(99i64); }
+    if (ch == "d") { pass(100i64); }
+    if (ch == "e") { pass(101i64); }
+    if (ch == "f") { pass(102i64); }
+    if (ch == "g") { pass(103i64); }
+    if (ch == "h") { pass(104i64); }
+    if (ch == "i") { pass(105i64); }
+    if (ch == "j") { pass(106i64); }
+    if (ch == "k") { pass(107i64); }
+    if (ch == "l") { pass(108i64); }
+    if (ch == "m") { pass(109i64); }
+    if (ch == "n") { pass(110i64); }
+    if (ch == "o") { pass(111i64); }
+    if (ch == "p") { pass(112i64); }
+    if (ch == "q") { pass(113i64); }
+    if (ch == "r") { pass(114i64); }
+    if (ch == "s") { pass(115i64); }
+    if (ch == "t") { pass(116i64); }
+    if (ch == "u") { pass(117i64); }
+    if (ch == "v") { pass(118i64); }
+    if (ch == "w") { pass(119i64); }
+    if (ch == "x") { pass(120i64); }
+    if (ch == "y") { pass(121i64); }
+    if (ch == "z") { pass(122i64); }
+    if (ch == "A") { pass(65i64); }
+    if (ch == "B") { pass(66i64); }
+    if (ch == "C") { pass(67i64); }
+    if (ch == "D") { pass(68i64); }
+    if (ch == "E") { pass(69i64); }
+    if (ch == "F") { pass(70i64); }
+    if (ch == "G") { pass(71i64); }
+    if (ch == "H") { pass(72i64); }
+    if (ch == "I") { pass(73i64); }
+    if (ch == "J") { pass(74i64); }
+    if (ch == "K") { pass(75i64); }
+    if (ch == "L") { pass(76i64); }
+    if (ch == "M") { pass(77i64); }
+    if (ch == "N") { pass(78i64); }
+    if (ch == "O") { pass(79i64); }
+    if (ch == "P") { pass(80i64); }
+    if (ch == "Q") { pass(81i64); }
+    if (ch == "R") { pass(82i64); }
+    if (ch == "S") { pass(83i64); }
+    if (ch == "T") { pass(84i64); }
+    if (ch == "U") { pass(85i64); }
+    if (ch == "V") { pass(86i64); }
+    if (ch == "W") { pass(87i64); }
+    if (ch == "X") { pass(88i64); }
+    if (ch == "Y") { pass(89i64); }
+    if (ch == "Z") { pass(90i64); }
+    if (ch == " ") { pass(32i64); }
+    if (ch == "0") { pass(48i64); }
+    if (ch == "1") { pass(49i64); }
+    if (ch == "2") { pass(50i64); }
+    if (ch == "3") { pass(51i64); }
+    if (ch == "4") { pass(52i64); }
+    if (ch == "5") { pass(53i64); }
+    if (ch == "6") { pass(54i64); }
+    if (ch == "7") { pass(55i64); }
+    if (ch == "8") { pass(56i64); }
+    if (ch == "9") { pass(57i64); }
+    if (ch == "_") { pass(95i64); }
+    if (ch == "-") { pass(45i64); }
+    if (ch == ":") { pass(58i64); }
+    pass(63i64);  // '?' for unknown
+};
+
+// Push a string to scrollback (writes to grid row 0, then pushes)
+func:push_sb_row = NIL(string:text) {
+    int64:cols = raw ts_get_cols();
+    int64:len  = string_length(text);
+    int64:i = 0i64;
+    while (i < len) {
+        if (i < cols) {
+            string:ch = string_char_at(text, i);
+            int64:cp = raw _char_to_cp(ch);
+            drop(grid_set_cp(0i64, i, cp));
+        }
+        i = i + 1i64;
+    }
+    drop(scrollback_push_row(0i64));
+    // Clear row 0 for next push
+    int64:c = 0i64;
+    while (c < cols) {
+        drop(grid_set_cp(0i64, c, 32i64));
+        c = c + 1i64;
+    }
+    pass(NIL);
+};
+
+// Set query from a string
+func:set_query = NIL(string:q) {
+    drop(se_query_clear());
+    int64:i = 0i64;
+    int64:len = string_length(q);
+    while (i < len) {
+        string:ch = string_char_at(q, i);
+        int64:cp = raw _char_to_cp(ch);
+        drop(se_query_append(cp));
+        i = i + 1i64;
+    }
+    pass(NIL);
+};
+
+// ── Tests ─────────────────────────────────────────────────────────────────
+
+func:main = int32() {
+
+    // Initialize terminal state (80 cols, 24 rows, scrollback 100)
+    drop(ts_init(80i64, 24i64));
+    drop(scrollback_init(80i64));
+    drop(scrollback_set_max_lines(100i64));
+
+    // ── T01: se_activate() sets is_active=1 ───────────────────────────────
+    drop(se_activate());
+    drop(check("T01 se_activate sets is_active=1", 1i64, raw se_is_active()));
+
+    // ── T02: se_deactivate() clears state ─────────────────────────────────
+    drop(se_deactivate());
+    drop(check("T02a se_deactivate sets is_active=0", 0i64, raw se_is_active()));
+    drop(check("T02b se_deactivate clears match count", 0i64, raw se_match_count()));
+
+    // ── T03: se_execute() with empty query → 0 matches ────────────────────
+    drop(se_activate());
+    drop(se_query_clear());
+    drop(se_execute());
+    drop(check("T03 empty query returns 0 matches", 0i64, raw se_match_count()));
+
+    // ── Populate scrollback with known data ───────────────────────────────
+    // After pushes (newest=idx 0, oldest=idx 2):
+    //   idx 2 (oldest): "hello world"
+    //   idx 1:          "error: file not found"
+    //   idx 0 (newest): "error count: 3"
+    drop(push_sb_row("hello world"));
+    drop(push_sb_row("error: file not found"));
+    drop(push_sb_row("error count: 3"));
+
+    // ── T04: search in scrollback finds correct row/col ───────────────────
+    drop(set_query("hello"));
+    drop(se_execute());
+    drop(check("T04a hello matches 1 time", 1i64, raw se_match_count()));
+    drop(check("T04b current match index is 0", 0i64, raw se_current_index()));
+
+    // ── T05: case-insensitive search ──────────────────────────────────────
+    drop(set_query("error"));
+    drop(se_execute());
+    drop(check("T05a error finds 2 rows (case-insensitive default)", 2i64, raw se_match_count()));
+
+    // Push an uppercase row
+    drop(push_sb_row("ERROR log entry"));
+    drop(set_query("error"));
+    drop(se_execute());
+    drop(check("T05b error also matches ERROR (case-insensitive, 3 total)", 3i64, raw se_match_count()));
+
+    // ── T06: se_next() / se_prev() ────────────────────────────────────────
+    // After T05b: 3 matches, current=0
+    drop(se_next());
+    drop(check("T06a se_next advances to index 1", 1i64, raw se_current_index()));
+    drop(se_prev());
+    drop(check("T06b se_prev returns to index 0", 0i64, raw se_current_index()));
+
+    // ── T07: wrap-around ──────────────────────────────────────────────────
+    drop(se_next());  // 0→1
+    drop(se_next());  // 1→2
+    drop(check("T07a at last match (index 2)", 2i64, raw se_current_index()));
+    drop(se_next());  // 2→0 (wrap)
+    drop(check("T07b se_next wraps from last to 0", 0i64, raw se_current_index()));
+
+    // ── T08: se_cell_match() returns correct kind ─────────────────────────
+    // State: 3 matches for "error", current=0
+    // Oldest-first search order:
+    //   4 rows total (idx3=hello, idx2=error:..., idx1=error count, idx0=ERROR)
+    //   match[0] = sb_row=2 (oldest error: "error: file not found"), col=0..5
+    //   match[1] = sb_row=1 ("error count: 3"), col=0..5
+    //   match[2] = sb_row=0 ("ERROR log entry"), col=0..5 (case-insensitive)
+    //   current_idx=0 → match[0] is sb_row=2
+
+    // current match at (sb_row=2, col=0) → kind=2
+    drop(check("T08a cell at current match is kind=2", 2i64, raw se_cell_match(2i64, 0i64)));
+    // regular match at (sb_row=1, col=0) → kind=1
+    drop(check("T08b cell at regular match is kind=1", 1i64, raw se_cell_match(1i64, 0i64)));
+    // no match at (sb_row=3, col=10) → kind=0 ("hello world", no "error")
+    drop(check("T08c cell with no match is kind=0", 0i64, raw se_cell_match(3i64, 10i64)));
+
+    // ── Summary ───────────────────────────────────────────────────────────
+    drop(print_line("---\n"));
+    drop(print_line("Passed: " + string_from_int(g_pass) + "\n"));
+    drop(print_line("Failed: " + string_from_int(g_fail) + "\n"));
+
+    if (g_fail == 0i64) {
+        drop(print_line("All tests passed.\n"));
+        exit 0i32;
+    }
+    exit 1i32;
+};

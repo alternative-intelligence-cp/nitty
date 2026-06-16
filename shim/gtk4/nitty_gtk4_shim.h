@@ -671,6 +671,60 @@ int64_t nitty_gtk4_config_watch_poll(void);
  */
 void nitty_gtk4_config_watch_stop(void);
 
+/* ── Search bar — drawn overlay (v0.7.0) ──────────────────────────────── */
+
+/**
+ * Draw the search bar overlay at the top-right of the terminal area.
+ * Called from tab_bar.npk / search_bar.npk each frame.
+ *
+ * query:      Current query string (displayed in the text field area).
+ * match_info: "X / Y" or "No matches" label text.
+ * is_visible: 0=hidden (do nothing), 1=draw.
+ * case_on:    1=case-sensitive indicator lit.
+ */
+void nitty_search_bar_draw(const char *query, const char *match_info,
+                            int is_visible, int case_on);
+
+/**
+ * Returns 1 if the search bar is currently active (visible), 0 otherwise.
+ * Called by nitty_input.c to decide whether to intercept keys.
+ */
+int nitty_search_bar_is_active(void);
+
+/**
+ * Activate / deactivate the search bar.
+ * Called from Nitpick via FFI.
+ */
+void nitty_search_bar_set_active(int active);
+
+/**
+ * Poll for the next pending search input event.
+ * Returns event type or 0 if none pending:
+ *   1 = printable character typed (call nitty_search_event_get_char())
+ *   2 = backspace
+ *   3 = escape (close search)
+ *   4 = enter (next match)
+ *   5 = shift+enter (prev match)
+ *   6 = case-sensitivity toggle (Ctrl+Shift+C in search mode)
+ */
+int64_t nitty_search_event_poll(void);
+
+/**
+ * Get the Unicode codepoint of the last typed character (event type 1).
+ * Only valid immediately after nitty_search_event_poll() returns 1.
+ */
+int64_t nitty_search_event_get_char(void);
+
+/**
+ * Intercept a key event for search mode.
+ * Called from nitty_input.c when search bar is active.
+ * Returns 1 if the key was consumed (do NOT forward to PTY), 0 if pass-through.
+ * Side effect: pushes an event into g_search_event_queue.
+ */
+int nitty_search_intercept_key(unsigned int keyval, unsigned int state);
+
+
+
 #ifdef __cplusplus
 }
 #endif

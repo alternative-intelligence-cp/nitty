@@ -78,3 +78,17 @@ pub func:viewport_scroll_to_top = NIL(int64:sb_len) {
     g_vp_at_bottom = 0i64;
     pass(NIL);
 };
+
+/// v0.7.0: Jump directly to a specific scroll offset.
+/// `offset` = desired rows-from-bottom (0 = live view).
+/// `max`    = maximum allowed offset (typically scrollback_len()).
+/// Clamps offset to [0, max].
+pub func:viewport_set_offset = NIL(int64:offset, int64:max) {
+    int64:o = offset;
+    if (o < 0i64)   { o = 0i64; }
+    if (o > max)    { o = max; }
+    g_vp_offset = o;
+    if (o == 0i64) { g_vp_at_bottom = 1i64; }
+    if (o > 0i64)  { g_vp_at_bottom = 0i64; }
+    pass(NIL);
+};

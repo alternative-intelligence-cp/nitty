@@ -1,0 +1,158 @@
+// src/gui/search_bar.npk — Search bar UI controller for Nitty v0.7.0
+//
+// Manages the drawn search bar overlay and routes key events from the
+// search event queue (polled from nitty_gtk4_shim.c) to the search engine.
+//
+// Per-frame usage in terminal_widget.npk (tw_on_draw):
+//   sb_poll_input();   // drain search key events and update engine
+//   sb_draw();         // call nitty_search_bar_draw with current state
+//
+// Action wiring in dispatch_action:
+//   "edit.search" → sb_toggle()
+
+use "gtk4_ffi.npk".*;
+use "../terminal/search.npk".*;
+use "viewport.npk".*;
+use "../terminal/scrollback.npk".*;
+
+// ── Module state ─────────────────────────────────────────────────────────
+
+int64:g_sb_visible = 0i64;   // 1 = search bar is shown
+
+// ── Public API ────────────────────────────────────────────────────────────
+
+pub func:sb_is_visible = int64() { pass(g_sb_visible); };
+
+/// Toggle the search bar open/closed.
+/// Opening: activates search engine, notifies C shim.
+/// Closing: deactivates engine, clears C shim flag.
+pub func:sb_toggle = NIL() {
+    if (g_sb_visible == 0i64) {
+        // Open
+        g_sb_visible = 1i64;
+        drop(se_activate());
+        drop(nitty_search_bar_set_active(1i64));
+    }
+    if (g_sb_visible == 1i64) {
+        // Close (handled in sb_close)
+        g_sb_visible = 0i64;
+        drop(se_deactivate());
+        drop(nitty_search_bar_set_active(0i64));
+    }
+    pass(NIL);
+};
+
+/// Close the search bar explicitly (e.g. on Escape).
+pub func:sb_close = NIL() {
+    g_sb_visible = 0i64;
+    drop(se_deactivate());
+    drop(nitty_search_bar_set_active(0i64));
+    pass(NIL);
+};
+
+// ── Query string builder ──────────────────────────────────────────────────
+// Converts the codepoint buffer in search.npk to a display string.
+// Uses string_from_char() for ASCII; shows '?' for non-ASCII (>127).
+
+func:_build_query_string = string() {
+    string:s = "";
+    int64:qlen = raw se_get_query_len();
+    int64:i = 0i64;
+    while (i < qlen) {
+        int64:cp = raw se_get_query_cp(i);
+        if (cp >= 32i64) {
+            if (cp <= 126i64) {
+                s = s + string_from_char(cp);
+            }
+            if (cp > 126i64) {
+                s = s + "?";
+            }
+        }
+        i = i + 1i64;
+    }
+    pass(s);
+};
+
+// ── Match info string builder ─────────────────────────────────────────────
+
+func:_build_match_info = string() {
+    int64:count   = raw se_match_count();
+    int64:current = raw se_current_index();
+
+    if (raw se_get_query_len() == 0i64) { pass(""); }
+    if (count == 0i64) { pass("No matches"); }
+
+    // Format: "N / M" (1-indexed current)
+    int64:disp = current + 1i64;
+    string:s = string_from_int(disp) + " / " + string_from_int(count);
+    pass(s);
+};
+
+// ── Input polling ─────────────────────────────────────────────────────────
+/// Drain all pending search events from the C queue each frame.
+/// Calls the appropriate search engine functions.
+
+pub func:sb_poll_input = NIL() {
+    if (g_sb_visible == 0i64) { pass(NIL); }
+
+    int64:ev = 1i64;
+    while (ev != 0i64) {
+        ev = nitty_search_event_poll();
+        if (ev == 1i64) {
+            // Printable character
+            int64:cp = nitty_search_event_get_char();
+            drop(se_query_append(cp));
+            drop(se_execute());
+        }
+        if (ev == 2i64) {
+            // Backspace
+            drop(se_query_backspace());
+            drop(se_execute());
+        }
+        if (ev == 3i64) {
+            // Escape: close search
+            drop(sb_close());
+            ev = 0i64;  // stop draining
+        }
+        if (ev == 4i64) {
+            // Enter: next match
+            drop(se_next());
+            // Scroll to current match
+            int64:off = raw se_current_match_offset();
+            int64:max = raw scrollback_len();
+            drop(viewport_set_offset(off, max));
+        }
+        if (ev == 5i64) {
+            // Shift+Enter: previous match
+            drop(se_prev());
+            int64:off = raw se_current_match_offset();
+            int64:max = raw scrollback_len();
+            drop(viewport_set_offset(off, max));
+        }
+        if (ev == 6i64) {
+            // Case toggle
+            drop(se_toggle_case());
+            drop(se_execute());
+        }
+    }
+
+    pass(NIL);
+};
+
+// ── Draw the search bar ───────────────────────────────────────────────────
+/// Calls nitty_search_bar_draw with current state each frame.
+
+pub func:sb_draw = NIL() {
+    if (g_sb_visible == 0i64) {
+        // Draw nothing (hidden)
+        drop(nitty_search_bar_draw("", "", 0i64, 0i64));
+        pass(NIL);
+    }
+
+    string:qstr  = raw _build_query_string();
+    string:minfo = raw _build_match_info();
+    int64:case_on = raw se_is_case_sensitive();
+
+    drop(nitty_search_bar_draw(qstr, minfo, 1i64, case_on));
+    pass(NIL);
+};
