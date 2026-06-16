@@ -1,63 +1,65 @@
-// src/gui/tab_bar.npk — Cairo-drawn tab bar renderer (v0.4.3)
+// src/gui/tab_bar.npk — Cairo-drawn tab bar renderer (v0.4.3, v0.6.4)
 //
 // Renders the tab bar at the top of the DrawingArea using Cairo/Pango
 // (via C shim FFI functions). Called every frame from renderer_sync_frame().
 //
+// v0.6.4: Tab bar colors are now mutable (theme-aware). Call tb_apply_theme()
+// after theme_apply() to update the tab bar colors to match the terminal theme.
+//
 // Color scheme: dark theme consistent with the terminal background.
-//   - Tab bar background:  rgb(38, 38, 38)   — #262626
-//   - Active tab bg:       rgb(58, 58, 58)   — #3a3a3a
-//   - Inactive tab bg:     rgb(38, 38, 38)   — same as bar
+//   - Tab bar background:  derived from terminal bg (or rgb(38, 38, 38))
+//   - Active tab bg:       bg + 20 luminance offset
 //   - Active tab text:     rgb(230, 230, 230) — bright white
 //   - Inactive tab text:   rgb(150, 150, 150) — dimmed
 //   - Accent underline:    rgb(80, 160, 240)  — blue accent
-//   - Separator:           rgb(90, 90, 90)    — subtle vertical line
 
 use "../core/tab_manager.npk".*;
 use "../core/tab.npk".*;
 use "../core/split_tree.npk".*;
 use "gtk4_ffi.npk".*;
+use "color_scheme.npk".*;   // v0.6.4: mutable scheme state for theme integration
 
 // ═══════════════════════════════════════════════════════════════════
-// Constants (colors are fixed-point × 1000)
+// Color state (mutable — updated by tb_apply_theme())
+// Values are scaled ×1000 (0-255 range → 0-255000/1000) for Cairo
 // ═══════════════════════════════════════════════════════════════════
 
-// Tab bar background
+// Tab bar background (matches terminal bg)
 int64:TB_BAR_R = 38i64;
 int64:TB_BAR_G = 38i64;
 int64:TB_BAR_B = 38i64;
 
-// Active tab background
+// Active tab background (slightly lighter than bar)
 int64:TB_ACTIVE_BG_R = 58i64;
 int64:TB_ACTIVE_BG_G = 58i64;
 int64:TB_ACTIVE_BG_B = 58i64;
 
-// Active tab text (bright white)
+// Active tab text (bright — scaled ×1000 for Cairo)
 int64:TB_ACTIVE_FG_R = 900i64;
 int64:TB_ACTIVE_FG_G = 900i64;
 int64:TB_ACTIVE_FG_B = 900i64;
 
-// Inactive tab text (dimmed)
+// Inactive tab text (dimmed — scaled ×1000 for Cairo)
 int64:TB_INACTIVE_FG_R = 590i64;
 int64:TB_INACTIVE_FG_G = 590i64;
 int64:TB_INACTIVE_FG_B = 590i64;
 
-// Accent underline (blue)
+// Accent underline
 int64:TB_ACCENT_R = 310i64;
 int64:TB_ACCENT_G = 630i64;
 int64:TB_ACCENT_B = 940i64;
 
-// v0.4.3: Activity indicator dot colors
-// Activity = subtle blue dot (output arrived while inactive)
+// Activity indicator dot colors
 int64:TB_DOT_ACT_R = 250i64;
 int64:TB_DOT_ACT_G = 580i64;
 int64:TB_DOT_ACT_B = 900i64;
 
-// Bell = amber dot
+// Bell dot
 int64:TB_DOT_BELL_R = 940i64;
 int64:TB_DOT_BELL_G = 740i64;
 int64:TB_DOT_BELL_B = 100i64;
 
-// Completion = green dot (shell exited)
+// Completion dot
 int64:TB_DOT_COMP_R = 300i64;
 int64:TB_DOT_COMP_G = 820i64;
 int64:TB_DOT_COMP_B = 300i64;
@@ -112,8 +114,83 @@ pub func:tb_set_visible = NIL(int64:visible) {
 };
 
 // ═══════════════════════════════════════════════════════════════════
+// v0.6.4: Theme integration
+// ═══════════════════════════════════════════════════════════════════
+
+/// Apply the current color scheme to the tab bar color state.
+/// Called after theme_apply() to synchronize tab bar colors with the terminal.
+/// Derives tab bar background from default_bg_r/g/b, active tab from bg+20,
+/// and sets fg/accent for dark vs light themes.
+pub func:tb_apply_theme = NIL() {
+    // Read terminal background color from mutable color scheme state
+    int64:bg_r = raw scheme_default_bg_r();
+    int64:bg_g = raw scheme_default_bg_g();
+    int64:bg_b = raw scheme_default_bg_b();
+
+    // Tab bar background = terminal background
+    TB_BAR_R = bg_r;
+    TB_BAR_G = bg_g;
+    TB_BAR_B = bg_b;
+
+    // Active tab = bg + 20 offset (clamped to 255)
+    int64:off_r = bg_r + 20i64;
+    int64:off_g = bg_g + 20i64;
+    int64:off_b = bg_b + 20i64;
+    if (off_r > 255i64) { off_r = 255i64; }
+    if (off_g > 255i64) { off_g = 255i64; }
+    if (off_b > 255i64) { off_b = 255i64; }
+    TB_ACTIVE_BG_R = off_r;
+    TB_ACTIVE_BG_G = off_g;
+    TB_ACTIVE_BG_B = off_b;
+
+    // Determine if theme is dark: bg luminance < 128?
+    // Luminance approx = 0.299*R + 0.587*G + 0.114*B
+    int64:lum = (bg_r * 299i64 + bg_g * 587i64 + bg_b * 114i64) / 1000i64;
+    int64:is_dark_theme = 0i64;
+    if (lum < 128i64) { is_dark_theme = 1i64; }
+
+    // For dark themes: bright text + blue accent (default)
+    if (is_dark_theme == 1i64) {
+        TB_ACTIVE_FG_R   = 900i64;
+        TB_ACTIVE_FG_G   = 900i64;
+        TB_ACTIVE_FG_B   = 900i64;
+        TB_INACTIVE_FG_R = 590i64;
+        TB_INACTIVE_FG_G = 590i64;
+        TB_INACTIVE_FG_B = 590i64;
+        TB_ACCENT_R = 310i64;
+        TB_ACCENT_G = 630i64;
+        TB_ACCENT_B = 940i64;
+    }
+    // For light themes: dark text + blue accent (adapted)
+    if (is_dark_theme == 0i64) {
+        TB_ACTIVE_FG_R   = 60i64;
+        TB_ACTIVE_FG_G   = 60i64;
+        TB_ACTIVE_FG_B   = 60i64;
+        TB_INACTIVE_FG_R = 350i64;
+        TB_INACTIVE_FG_G = 350i64;
+        TB_INACTIVE_FG_B = 350i64;
+        // Slightly darker blue for light themes
+        TB_ACCENT_R = 120i64;
+        TB_ACCENT_G = 490i64;
+        TB_ACCENT_B = 830i64;
+    }
+    pass(NIL);
+};
+
+/// Reset tab bar colors to the dark default (xterm theme).
+pub func:tb_reset_theme_default = NIL() {
+    TB_BAR_R = 38i64;      TB_BAR_G = 38i64;      TB_BAR_B = 38i64;
+    TB_ACTIVE_BG_R = 58i64; TB_ACTIVE_BG_G = 58i64; TB_ACTIVE_BG_B = 58i64;
+    TB_ACTIVE_FG_R = 900i64; TB_ACTIVE_FG_G = 900i64; TB_ACTIVE_FG_B = 900i64;
+    TB_INACTIVE_FG_R = 590i64; TB_INACTIVE_FG_G = 590i64; TB_INACTIVE_FG_B = 590i64;
+    TB_ACCENT_R = 310i64; TB_ACCENT_G = 630i64; TB_ACCENT_B = 940i64;
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════
 // Rendering
 // ═══════════════════════════════════════════════════════════════════
+
 
 /// Render the tab bar. Call every frame before rendering the terminal grid.
 /// This draws directly into the Cairo context via FFI.
