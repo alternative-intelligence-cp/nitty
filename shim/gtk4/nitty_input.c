@@ -36,6 +36,48 @@ static int64_t g_pty_master_fd = -1;
 extern int64_t nitty_pty_write_byte(int64_t fd, int64_t byte_val);
 extern int64_t nitty_pty_write_string(int64_t fd, const char *str);
 
+/* v0.5.4: Broadcast input fd array — extra PTY fds to mirror key input to */
+#define NITTY_BROADCAST_MAX 32
+static int64_t g_broadcast_fds[NITTY_BROADCAST_MAX];
+static int     g_broadcast_count = 0;
+
+/* Fan-out write: primary fd + all broadcast fds */
+static void _bc_write_byte(int64_t byte_val)
+{
+    nitty_pty_write_byte(g_pty_master_fd, byte_val);
+    for (int i = 0; i < g_broadcast_count; i++) {
+        if (g_broadcast_fds[i] >= 0)
+            nitty_pty_write_byte(g_broadcast_fds[i], byte_val);
+    }
+}
+static void _bc_write_string(const char *str)
+{
+    nitty_pty_write_string(g_pty_master_fd, str);
+    for (int i = 0; i < g_broadcast_count; i++) {
+        if (g_broadcast_fds[i] >= 0)
+            nitty_pty_write_string(g_broadcast_fds[i], str);
+    }
+}
+
+/* Broadcast management — called from nitty_gtk4_shim.c */
+void nitty_input_broadcast_begin(void)
+{
+    g_broadcast_count = 0;
+}
+void nitty_input_broadcast_add_fd(int64_t fd)
+{
+    if (g_broadcast_count < NITTY_BROADCAST_MAX && fd >= 0)
+        g_broadcast_fds[g_broadcast_count++] = fd;
+}
+void nitty_input_broadcast_clear(void)
+{
+    g_broadcast_count = 0;
+}
+int nitty_input_broadcast_count(void)
+{
+    return g_broadcast_count;
+}
+
 /* ── Keyboard event state ─────────────────────────────────────────────── */
 
 static int      g_key_pending   = 0;
@@ -137,6 +179,9 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
             /* v0.5.3: Ctrl+Shift+M: maximize / restore active pane */
             case GDK_KEY_m: case GDK_KEY_M:
                 g_pane_event = 27; return TRUE; /* maximize_toggle */
+            /* v0.5.4: Ctrl+Shift+B: broadcast input toggle */
+            case GDK_KEY_b: case GDK_KEY_B:
+                g_pane_event = 28; return TRUE; /* broadcast_toggle */
             default: break;
         }
     }
@@ -204,55 +249,55 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
 
         /* Ctrl+letter: send control character */
         if (has_ctrl && keyval >= 'a' && keyval <= 'z') {
-            nitty_pty_write_byte(g_pty_master_fd, (int64_t)(keyval - 'a' + 1));
-            return TRUE;  /* Consume the event */
+            _bc_write_byte((int64_t)(keyval - 'a' + 1));
+            return TRUE;
         }
         if (has_ctrl && keyval >= 'A' && keyval <= 'Z') {
-            nitty_pty_write_byte(g_pty_master_fd, (int64_t)(keyval - 'A' + 1));
+            _bc_write_byte((int64_t)(keyval - 'A' + 1));
             return TRUE;
         }
 
         /* Special keys */
         switch (keyval) {
-            case GDK_KEY_Return:    nitty_pty_write_string(g_pty_master_fd, "\r");     return TRUE;
-            case GDK_KEY_BackSpace: nitty_pty_write_byte(g_pty_master_fd, 0x7F);       return TRUE;
-            case GDK_KEY_Tab:       nitty_pty_write_byte(g_pty_master_fd, 0x09);       return TRUE;
-            case GDK_KEY_Escape:    nitty_pty_write_byte(g_pty_master_fd, 0x1B);       return TRUE;
-            case GDK_KEY_Up:        nitty_pty_write_string(g_pty_master_fd, "\x1b[A"); return TRUE;
-            case GDK_KEY_Down:      nitty_pty_write_string(g_pty_master_fd, "\x1b[B"); return TRUE;
-            case GDK_KEY_Right:     nitty_pty_write_string(g_pty_master_fd, "\x1b[C"); return TRUE;
-            case GDK_KEY_Left:      nitty_pty_write_string(g_pty_master_fd, "\x1b[D"); return TRUE;
-            case GDK_KEY_Home:      nitty_pty_write_string(g_pty_master_fd, "\x1b[H"); return TRUE;
-            case GDK_KEY_End:       nitty_pty_write_string(g_pty_master_fd, "\x1b[F"); return TRUE;
-            case GDK_KEY_Insert:    nitty_pty_write_string(g_pty_master_fd, "\x1b[2~"); return TRUE;
-            case GDK_KEY_Delete:    nitty_pty_write_string(g_pty_master_fd, "\x1b[3~"); return TRUE;
-            case GDK_KEY_Page_Up:   nitty_pty_write_string(g_pty_master_fd, "\x1b[5~"); return TRUE;
-            case GDK_KEY_Page_Down: nitty_pty_write_string(g_pty_master_fd, "\x1b[6~"); return TRUE;
-            case GDK_KEY_F1:        nitty_pty_write_string(g_pty_master_fd, "\x1bOP");  return TRUE;
-            case GDK_KEY_F2:        nitty_pty_write_string(g_pty_master_fd, "\x1bOQ");  return TRUE;
-            case GDK_KEY_F3:        nitty_pty_write_string(g_pty_master_fd, "\x1bOR");  return TRUE;
-            case GDK_KEY_F4:        nitty_pty_write_string(g_pty_master_fd, "\x1bOS");  return TRUE;
-            case GDK_KEY_F5:        nitty_pty_write_string(g_pty_master_fd, "\x1b[15~"); return TRUE;
-            case GDK_KEY_F6:        nitty_pty_write_string(g_pty_master_fd, "\x1b[17~"); return TRUE;
-            case GDK_KEY_F7:        nitty_pty_write_string(g_pty_master_fd, "\x1b[18~"); return TRUE;
-            case GDK_KEY_F8:        nitty_pty_write_string(g_pty_master_fd, "\x1b[19~"); return TRUE;
-            case GDK_KEY_F9:        nitty_pty_write_string(g_pty_master_fd, "\x1b[20~"); return TRUE;
-            case GDK_KEY_F10:       nitty_pty_write_string(g_pty_master_fd, "\x1b[21~"); return TRUE;
-            case GDK_KEY_F11:       nitty_pty_write_string(g_pty_master_fd, "\x1b[23~"); return TRUE;
-            case GDK_KEY_F12:       nitty_pty_write_string(g_pty_master_fd, "\x1b[24~"); return TRUE;
+            case GDK_KEY_Return:    _bc_write_string("\r");     return TRUE;
+            case GDK_KEY_BackSpace: _bc_write_byte(0x7F);       return TRUE;
+            case GDK_KEY_Tab:       _bc_write_byte(0x09);       return TRUE;
+            case GDK_KEY_Escape:    _bc_write_byte(0x1B);       return TRUE;
+            case GDK_KEY_Up:        _bc_write_string("\x1b[A"); return TRUE;
+            case GDK_KEY_Down:      _bc_write_string("\x1b[B"); return TRUE;
+            case GDK_KEY_Right:     _bc_write_string("\x1b[C"); return TRUE;
+            case GDK_KEY_Left:      _bc_write_string("\x1b[D"); return TRUE;
+            case GDK_KEY_Home:      _bc_write_string("\x1b[H"); return TRUE;
+            case GDK_KEY_End:       _bc_write_string("\x1b[F"); return TRUE;
+            case GDK_KEY_Insert:    _bc_write_string("\x1b[2~"); return TRUE;
+            case GDK_KEY_Delete:    _bc_write_string("\x1b[3~"); return TRUE;
+            case GDK_KEY_Page_Up:   _bc_write_string("\x1b[5~"); return TRUE;
+            case GDK_KEY_Page_Down: _bc_write_string("\x1b[6~"); return TRUE;
+            case GDK_KEY_F1:        _bc_write_string("\x1bOP");  return TRUE;
+            case GDK_KEY_F2:        _bc_write_string("\x1bOQ");  return TRUE;
+            case GDK_KEY_F3:        _bc_write_string("\x1bOR");  return TRUE;
+            case GDK_KEY_F4:        _bc_write_string("\x1bOS");  return TRUE;
+            case GDK_KEY_F5:        _bc_write_string("\x1b[15~"); return TRUE;
+            case GDK_KEY_F6:        _bc_write_string("\x1b[17~"); return TRUE;
+            case GDK_KEY_F7:        _bc_write_string("\x1b[18~"); return TRUE;
+            case GDK_KEY_F8:        _bc_write_string("\x1b[19~"); return TRUE;
+            case GDK_KEY_F9:        _bc_write_string("\x1b[20~"); return TRUE;
+            case GDK_KEY_F10:       _bc_write_string("\x1b[21~"); return TRUE;
+            case GDK_KEY_F11:       _bc_write_string("\x1b[23~"); return TRUE;
+            case GDK_KEY_F12:       _bc_write_string("\x1b[24~"); return TRUE;
             default: break;
         }
 
         /* Alt+key: prepend ESC */
         if (has_alt && keyval >= 0x20 && keyval <= 0x7E) {
-            nitty_pty_write_byte(g_pty_master_fd, 0x1B);
-            nitty_pty_write_byte(g_pty_master_fd, (int64_t)keyval);
+            _bc_write_byte(0x1B);
+            _bc_write_byte((int64_t)keyval);
             return TRUE;
         }
 
         /* Printable ASCII */
         if (keyval >= 0x20 && keyval <= 0x7E) {
-            nitty_pty_write_byte(g_pty_master_fd, (int64_t)keyval);
+            _bc_write_byte((int64_t)keyval);
             return TRUE;
         }
 

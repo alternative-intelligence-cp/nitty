@@ -173,12 +173,17 @@ pub func:tb_render = NIL(int64:window_width) {
         }
 
         // Draw tab title text
-        // v0.5.3: Append maximize indicator to active tab title if maximized
+        // v0.5.3: Prefix maximize indicator to active tab title if maximized
+        // v0.5.4: Prefix ⚡ broadcast indicator if broadcast is active
         string:title = raw tm_get_title_at(i);
         string:disp_title = title;
         if (is_active_tab == 1i64) {
             if (raw split_tree_is_maximized() != 0i64) {
-                disp_title = "[⊡] ";
+                disp_title = string_concat("[⊡] ", disp_title);
+            }
+            int64:bc_slot = raw tm_get_active_index();
+            if (raw tab_get_broadcast_enabled(bc_slot) != 0i64) {
+                disp_title = string_concat("⚡ ", disp_title);
             }
         }
         int64:text_x = x + TB_PAD_X;

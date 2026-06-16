@@ -9,7 +9,7 @@
 
 [project]
 name = "nitty"
-version = "0.0.4"
+version = "0.0.5"
 author = "Alternative Intelligence"
 compiler = "/home/randy/Workspace/REPOS/nitpick/build/nitpickc"
 
@@ -361,6 +361,14 @@ link_paths = []
 [target.test_split_maximize]
 type = "binary"
 sources = ["tests/test_split_maximize.npk"]
+deps = []
+flags = []
+link_libraries = []
+link_paths = []
+
+[target.test_broadcast]
+type = "binary"
+sources = ["tests/test_broadcast.npk"]
 deps = []
 flags = []
 link_libraries = []

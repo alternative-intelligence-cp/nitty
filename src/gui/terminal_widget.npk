@@ -116,6 +116,36 @@ pub func:tw_get_cols = int64() { pass(g_tw_cols); };
 /// Step 1: Drain the PTY byte queue (filled by nitty_terminal_poll_output).
 ///   Each byte goes through pipeline_feed → parser → dispatch → ts_apply.
 /// Step 2: Sync TerminalState cells → C render grid (clear + push non-space).
+/// Sync the C-side broadcast fd table to the active tab's broadcast state.
+/// Call after any tab switch to ensure broadcast targets are correct.
+/// If broadcast is off for the newly active tab, clears the C-side list.
+/// If broadcast is on, re-registers all non-active-pane fds.
+func:_tw_sync_broadcast = NIL() {
+    int64:bc_slot = raw tm_get_active_index();
+    if (raw tab_get_broadcast_enabled(bc_slot) == 0i64) {
+        // Broadcast is off for this tab — make sure C-side is clear
+        drop(nitty_gtk4_broadcast_clear());
+        pass(NIL);
+    }
+    // Broadcast is on: re-register fds from the active split tree
+    drop(nitty_gtk4_broadcast_begin());
+    drop(split_tree_layout(0i64, 0i64, 10000i64, 10000i64));
+    int64:bc_lc     = raw split_tree_get_layout_count();
+    int64:bc_active = raw split_tree_get_active();
+    int64:bc_li     = 0i64;
+    while (bc_li < bc_lc) {
+        int64:bc_pid = raw split_tree_get_layout_pane_id(bc_li);
+        if (bc_pid != bc_active) {
+            int64:bc_fd = raw split_view_get_pane_fd(bc_pid);
+            if (bc_fd >= 0i64) {
+                drop(nitty_gtk4_broadcast_add_fd(bc_fd));
+            }
+        }
+        bc_li = bc_li + 1i64;
+    }
+    pass(NIL);
+};
+
 pub func:tw_on_draw = NIL() {
     // Step 0: Focus change reporting (DECSET 1004)
     int64:cur_focused = nitty_gtk4_get_focused();
@@ -173,11 +203,13 @@ pub func:tw_on_draw = NIL() {
     if (tev == 3i64) {
         // Prev tab
         drop(tm_prev());
+        drop(_tw_sync_broadcast());
         drop(tw_queue_redraw());
     }
     if (tev == 4i64) {
         // Next tab
         drop(tm_next());
+        drop(_tw_sync_broadcast());
         drop(tw_queue_redraw());
     }
     if (tev >= 5i64) {
@@ -185,6 +217,7 @@ pub func:tw_on_draw = NIL() {
             // Direct switch: event 5→idx 0, 6→idx 1, ..., 13→idx 8
             int64:target_idx = tev - 5i64;
             drop(tm_activate_index(target_idx));
+            drop(_tw_sync_broadcast());
             drop(tw_queue_redraw());
         }
     }
@@ -431,6 +464,48 @@ pub func:tw_on_draw = NIL() {
         }
         // Rebuild widget tree with new (maximized or restored) layout
         drop(split_view_build());
+        drop(tw_queue_redraw());
+    }
+
+    // v0.5.4: Ctrl+Shift+B — toggle broadcast input to all panes
+    if (pev == 28i64) {
+        int64:bc_slot = raw tm_get_active_index();
+        int64:bc_was  = raw tab_get_broadcast_enabled(bc_slot);
+        if (bc_was != 0i64) {
+            // Turning off: clear C-side broadcast table and update tab state
+            drop(tab_set_broadcast_enabled(bc_slot, 0i64));
+            drop(nitty_gtk4_broadcast_clear());
+            drop(nitty_gtk4_show_notification("Broadcast input disabled"));
+        }
+        if (bc_was == 0i64) {
+            // Turning on: register all non-active pane fds in C-side table
+            drop(tab_set_broadcast_enabled(bc_slot, 1i64));
+            drop(nitty_gtk4_broadcast_begin());
+            // Iterate the split_tree layout to collect all live pane fds
+            drop(split_tree_layout(0i64, 0i64, 10000i64, 10000i64));
+            int64:bc_lc     = raw split_tree_get_layout_count();
+            int64:bc_active = raw split_tree_get_active();
+            int64:bc_li     = 0i64;
+            int64:bc_added  = 0i64;
+            while (bc_li < bc_lc) {
+                int64:bc_pid = raw split_tree_get_layout_pane_id(bc_li);
+                if (bc_pid != bc_active) {
+                    int64:bc_fd = raw split_view_get_pane_fd(bc_pid);
+                    if (bc_fd >= 0i64) {
+                        drop(nitty_gtk4_broadcast_add_fd(bc_fd));
+                        bc_added = bc_added + 1i64;
+                    }
+                }
+                bc_li = bc_li + 1i64;
+            }
+            // Show notification with pane count
+            if (bc_lc <= 1i64) {
+                drop(nitty_gtk4_show_notification("⚡ Broadcast active (single pane — no targets)"));
+            }
+            if (bc_lc > 1i64) {
+                drop(nitty_gtk4_show_notification("⚡ Broadcast input enabled"));
+            }
+        }
         drop(tw_queue_redraw());
     }
 

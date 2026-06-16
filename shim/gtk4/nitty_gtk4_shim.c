@@ -1590,3 +1590,36 @@ void nitty_gtk4_show_notification(const char *msg)
     g_timeout_add(2000, _notify_dismiss_cb, popup);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.5.4: Broadcast input — delegate to nitty_input.c internals
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Externals declared in nitty_input.c */
+extern void nitty_input_broadcast_begin(void);
+extern void nitty_input_broadcast_add_fd(int64_t fd);
+extern void nitty_input_broadcast_clear(void);
+
+void nitty_gtk4_broadcast_begin(void)
+{
+    nitty_input_broadcast_begin();
+}
+
+void nitty_gtk4_broadcast_add_fd(int64_t fd)
+{
+    nitty_input_broadcast_add_fd(fd);
+}
+
+void nitty_gtk4_broadcast_clear(void)
+{
+    nitty_input_broadcast_clear();
+}
+
+int64_t nitty_gtk4_broadcast_is_active(void)
+{
+    /* A broadcast count > 0 means broadcast is active.
+     * We check indirectly: try adding a sentinel (-1) then clear; easier
+     * to just expose a small flag from nitty_input.c. */
+    /* Simple: delegate to a helper we'll define inline here */
+    extern int nitty_input_broadcast_count(void);
+    return (nitty_input_broadcast_count() > 0) ? 1 : 0;
+}

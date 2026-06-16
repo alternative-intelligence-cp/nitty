@@ -491,6 +491,32 @@ void nitty_gtk4_widget_set_expand(int64_t widget_ptr, int64_t fill_h, int64_t fi
  */
 void nitty_gtk4_show_notification(const char *msg);
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.5.4: Broadcast input control
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Begin a new broadcast fd list (clears any previous list).
+ * Call this before nitty_gtk4_broadcast_add_fd() calls.
+ */
+void nitty_gtk4_broadcast_begin(void);
+
+/**
+ * Add a PTY master fd to the broadcast list.
+ * Keys typed in the active pane will also be written to this fd.
+ */
+void nitty_gtk4_broadcast_add_fd(int64_t fd);
+
+/**
+ * Clear all broadcast fds (disable broadcast).
+ */
+void nitty_gtk4_broadcast_clear(void);
+
+/**
+ * Returns 1 if broadcast is currently active (at least one extra fd), else 0.
+ */
+int64_t nitty_gtk4_broadcast_is_active(void);
+
 #ifdef __cplusplus
 }
 #endif

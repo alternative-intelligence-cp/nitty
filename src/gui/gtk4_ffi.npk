@@ -454,4 +454,10 @@ extern "nitty_gtk4_shim" {
 
     // v0.5.3: Brief toast notification (e.g. "Maximum pane count reached")
     func:nitty_gtk4_show_notification = NIL(string:msg);
+
+    // v0.5.4: Broadcast input — manage the C-side extra-fd write list
+    func:nitty_gtk4_broadcast_begin      = NIL();
+    func:nitty_gtk4_broadcast_add_fd     = NIL(int64:fd);
+    func:nitty_gtk4_broadcast_clear      = NIL();
+    func:nitty_gtk4_broadcast_is_active  = int64();
 }

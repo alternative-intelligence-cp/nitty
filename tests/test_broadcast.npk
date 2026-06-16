@@ -1,0 +1,116 @@
+// tests/test_broadcast.npk — Broadcast input data model tests (v0.5.4)
+//
+// Tests the tab.npk broadcast state (enabled flag, mask) in isolation.
+// No GTK or PTY dependency — pure data-model verification.
+
+use "../src/core/tab.npk".*;
+
+func:failsafe = int32(tbb32:_code) { exit 1i32; };
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (expected != got)")));
+    pass(NIL);
+};
+
+func:check32 = NIL(string:name, int32:expected, int32:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (i32 expected != got)")));
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    print("=== test_broadcast: Broadcast Input Data Model Tests ===");
+
+    // Setup: create a tab slot for testing
+    drop(tab_create(0i64, 1i64, 3i64, 100i64));  // slot=0, id=1, fd=3, pid=100
+
+    // T01: broadcast_enabled starts 0 after tab_create
+    print("T01: broadcast_enabled=0 after tab_create");
+    drop(check("T01: broadcast_enabled initial=0", 0i64, raw tab_get_broadcast_enabled(0i64)));
+
+    // T02: broadcast_mask starts 0 after tab_create (means all panes)
+    print("T02: broadcast_mask=0 after tab_create");
+    drop(check("T02: broadcast_mask initial=0", 0i64, raw tab_get_broadcast_mask(0i64)));
+
+    // T03: tab_set_broadcast_enabled turns it on
+    print("T03: tab_set_broadcast_enabled(0, 1)");
+    drop(tab_set_broadcast_enabled(0i64, 1i64));
+    drop(check("T03: broadcast_enabled=1", 1i64, raw tab_get_broadcast_enabled(0i64)));
+
+    // T04: tab_toggle_broadcast flips to off and returns 0
+    print("T04: tab_toggle_broadcast (was on -> off)");
+    int64:t04_new = raw tab_toggle_broadcast(0i64);
+    drop(check("T04: toggle returns 0", 0i64, t04_new));
+    drop(check("T04: enabled=0 after toggle off", 0i64, raw tab_get_broadcast_enabled(0i64)));
+
+    // T05: tab_toggle_broadcast flips to on and returns 1
+    print("T05: tab_toggle_broadcast (was off -> on)");
+    int64:t05_new = raw tab_toggle_broadcast(0i64);
+    drop(check("T05: toggle returns 1", 1i64, t05_new));
+    drop(check("T05: enabled=1 after toggle on", 1i64, raw tab_get_broadcast_enabled(0i64)));
+
+    // T06: tab_set_broadcast_mask stores a bitmask
+    print("T06: tab_set_broadcast_mask");
+    drop(tab_set_broadcast_mask(0i64, 0b101i64));  // panes 0 and 2
+    drop(check("T06: mask=5 (0b101)", 5i64, raw tab_get_broadcast_mask(0i64)));
+
+    // T07: tab_clear_broadcast_mask resets to 0 (all panes)
+    print("T07: tab_clear_broadcast_mask");
+    drop(tab_clear_broadcast_mask(0i64));
+    drop(check("T07: mask=0 after clear", 0i64, raw tab_get_broadcast_mask(0i64)));
+
+    // T08: tab_destroy clears broadcast state
+    print("T08: tab_destroy clears broadcast state");
+    drop(tab_set_broadcast_enabled(0i64, 1i64));
+    drop(tab_set_broadcast_mask(0i64, 7i64));
+    drop(tab_destroy(0i64));
+    drop(check("T08: enabled=0 after destroy", 0i64, raw tab_get_broadcast_enabled(0i64)));
+    drop(check("T08: mask=0 after destroy",    0i64, raw tab_get_broadcast_mask(0i64)));
+
+    // T09: tab_swap correctly exchanges broadcast state between slots
+    print("T09: tab_swap broadcasts state");
+    drop(tab_create(0i64, 1i64, 3i64, 100i64));
+    drop(tab_create(1i64, 2i64, 4i64, 101i64));
+    drop(tab_set_broadcast_enabled(0i64, 1i64));
+    drop(tab_set_broadcast_mask(0i64, 3i64));
+    drop(tab_set_broadcast_enabled(1i64, 0i64));
+    drop(tab_set_broadcast_mask(1i64, 0i64));
+    drop(tab_swap(0i64, 1i64));
+    // After swap: slot 0 should have the state that was in slot 1 (off/0)
+    //             slot 1 should have the state that was in slot 0 (on/3)
+    drop(check("T09: slot 0 enabled=0 (was slot 1)", 0i64, raw tab_get_broadcast_enabled(0i64)));
+    drop(check("T09: slot 0 mask=0 (was slot 1)",    0i64, raw tab_get_broadcast_mask(0i64)));
+    drop(check("T09: slot 1 enabled=1 (was slot 0)", 1i64, raw tab_get_broadcast_enabled(1i64)));
+    drop(check("T09: slot 1 mask=3 (was slot 0)",    3i64, raw tab_get_broadcast_mask(1i64)));
+
+    // T10: broadcast state is independent per slot (no cross-slot contamination)
+    print("T10: broadcast state independent per slot");
+    drop(tab_create(2i64, 3i64, 5i64, 102i64));
+    drop(check("T10: slot 2 enabled=0 (new slot)", 0i64, raw tab_get_broadcast_enabled(2i64)));
+    drop(tab_set_broadcast_enabled(2i64, 1i64));
+    drop(check("T10: slot 0 still 0 (independent)", 0i64, raw tab_get_broadcast_enabled(0i64)));
+    drop(check("T10: slot 2 now 1",                  1i64, raw tab_get_broadcast_enabled(2i64)));
+
+    // Summary
+    print("=== Results ===");
+    if (g_fail > 0i64) {
+        print("SOME TESTS FAILED");
+        exit 1i32;
+    }
+    print("All broadcast tests passed.");
+    exit 0i32;
+};

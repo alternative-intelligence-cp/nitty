@@ -1,4 +1,4 @@
-// src/core/tab.npk — Tab data model (v0.4.3 / v0.5.0)
+// src/core/tab.npk — Tab data model (v0.4.3 / v0.5.0 / v0.5.4)
 //
 // Stores per-tab metadata as parallel flat arrays.
 // Each tab occupies one slot [0..MAX_TABS-1].
@@ -16,6 +16,8 @@
 //   custom_title   — 1 = user-renamed; OSC 0/2 won't override
 //   custom_color   — packed RGB (0=none, otherwise (r<<16)|(g<<8)|b)
 //   active_pane    — v0.5.0: pane_id of the focused pane in this tab's split tree
+//   broadcast_enabled — v0.5.4: 1 = broadcast input to all panes in this tab
+//   broadcast_mask — v0.5.4: bitmask of target pane slots (0=all panes, bit k=include slot k)
 //
 // Slot lifecycle:
 //   tab_create(slot, id, pty_fd, shell_pid) → initialize all fields
@@ -43,6 +45,8 @@ string[16]:g_tab_title;
 int64[16]:g_tab_custom_title;    // v0.4.3: 1 = user-renamed, OSC won't override
 int64[16]:g_tab_custom_color;    // v0.4.3: packed RGB (0=none)
 int64[16]:g_tab_active_pane;     // v0.5.0: pane_id of focused pane (0 = default)
+int64[16]:g_tab_broadcast_enabled; // v0.5.4: 1=broadcast input active for this tab
+int64[16]:g_tab_broadcast_mask;    // v0.5.4: bitmask of target pane_ids (0=all panes)
 
 // ═══════════════════════════════════════════════════════════════════
 // Slot lifecycle
@@ -63,6 +67,8 @@ pub func:tab_create = NIL(int64:slot, int64:id, int64:pty_fd, int64:shell_pid) {
     g_tab_custom_title[slot] = 0i64;
     g_tab_custom_color[slot] = 0i64;
     g_tab_active_pane[slot] = 0i64;  // v0.5.0
+    g_tab_broadcast_enabled[slot] = 0i64;  // v0.5.4
+    g_tab_broadcast_mask[slot]    = 0i64;  // v0.5.4: 0=all panes
     pass(NIL);
 };
 
@@ -80,6 +86,8 @@ pub func:tab_destroy = NIL(int64:slot) {
     g_tab_custom_title[slot] = 0i64;
     g_tab_custom_color[slot] = 0i64;
     g_tab_active_pane[slot] = 0i64;  // v0.5.0
+    g_tab_broadcast_enabled[slot] = 0i64;  // v0.5.4
+    g_tab_broadcast_mask[slot]    = 0i64;  // v0.5.4
     pass(NIL);
 };
 
@@ -312,6 +320,15 @@ pub func:tab_swap = NIL(int64:a, int64:b) {
     g_tab_active_pane[a] = g_tab_active_pane[b];
     g_tab_active_pane[b] = tmp_pane;
 
+    // v0.5.4: Swap broadcast_enabled and broadcast_mask
+    int64:tmp_bcast = g_tab_broadcast_enabled[a];
+    g_tab_broadcast_enabled[a] = g_tab_broadcast_enabled[b];
+    g_tab_broadcast_enabled[b] = tmp_bcast;
+
+    int64:tmp_bmask = g_tab_broadcast_mask[a];
+    g_tab_broadcast_mask[a] = g_tab_broadcast_mask[b];
+    g_tab_broadcast_mask[b] = tmp_bmask;
+
     pass(NIL);
 };
 
@@ -327,5 +344,49 @@ pub func:tab_get_active_pane = int64(int64:slot) {
 /// Set the pane_id of the currently focused pane within this tab's split tree.
 pub func:tab_set_active_pane = NIL(int64:slot, int64:pane_id) {
     g_tab_active_pane[slot] = pane_id;
+    pass(NIL);
+};
+
+// ===================================================================
+// v0.5.4: Broadcast input
+// ===================================================================
+
+/// Check if broadcast input is enabled for this tab slot.
+pub func:tab_get_broadcast_enabled = int64(int64:slot) {
+    pass(g_tab_broadcast_enabled[slot]);
+};
+
+/// Enable or disable broadcast input for this tab slot.
+pub func:tab_set_broadcast_enabled = NIL(int64:slot, int64:val) {
+    g_tab_broadcast_enabled[slot] = val;
+    pass(NIL);
+};
+
+/// Toggle broadcast input for this tab slot.
+/// Returns the new state (1=enabled, 0=disabled).
+pub func:tab_toggle_broadcast = int64(int64:slot) {
+    if (g_tab_broadcast_enabled[slot] == 0i64) {
+        g_tab_broadcast_enabled[slot] = 1i64;
+        pass(1i64);
+    }
+    g_tab_broadcast_enabled[slot] = 0i64;
+    pass(0i64);
+};
+
+/// Get the broadcast pane_id bitmask for this tab.
+/// 0 = broadcast to all panes; bit k set = include pane_id k.
+pub func:tab_get_broadcast_mask = int64(int64:slot) {
+    pass(g_tab_broadcast_mask[slot]);
+};
+
+/// Set the broadcast pane_id bitmask for this tab.
+pub func:tab_set_broadcast_mask = NIL(int64:slot, int64:mask) {
+    g_tab_broadcast_mask[slot] = mask;
+    pass(NIL);
+};
+
+/// Clear the broadcast mask (reset to all panes).
+pub func:tab_clear_broadcast_mask = NIL(int64:slot) {
+    g_tab_broadcast_mask[slot] = 0i64;
     pass(NIL);
 };
