@@ -165,6 +165,54 @@ pub func:main = int32() {
     int64:t14_wrapb = raw split_tree_prev_pane();
     drop(check("T14: prev_pane from 0 wraps to 1", 1i64, t14_wrapb));
 
+    // T15: pane count limit — split_tree_split returns 63 at 16 panes (v0.5.3)
+    print("T15: pane count limit = 16");
+    drop(raw split_tree_reset());
+    // Split up to 15 more panes (starting at 1, target is 16)
+    int64:t15_i = 0i64;
+    while (t15_i < 15i64) {
+        int64:t15_cur = raw split_tree_get_active();
+        drop(raw split_tree_split(t15_cur, 0i32));
+        t15_i = t15_i + 1i64;
+    }
+    drop(check("T15: pane_count=16", 16i64, raw split_tree_pane_count()));
+    // Now try one more split — should be refused (returns 63)
+    int64:t15_active = raw split_tree_get_active();
+    int64:t15_extra = raw split_tree_split(t15_active, 0i32);
+    drop(check("T15: extra split refused=63", 63i64, t15_extra));
+    drop(check("T15: count still 16", 16i64, raw split_tree_pane_count()));
+    drop(check("T15: pane_count_limit=16", 16i64, raw split_tree_pane_count_limit()));
+
+    // T16: depth-3 remove -- 4 panes, remove a leaf at depth 3
+    print("T16: depth-3 remove");
+    drop(raw split_tree_reset());
+    // Build: root(split H) -> left=pane0, right=split(V) -> pane1, pane2
+    //   then split pane1 V -> pane1, pane3 giving a depth-3 leaf
+    drop(raw split_tree_split(0i64, 0i32));  // pane1, root now H-split
+    drop(raw split_tree_split(1i64, 1i32));  // pane2 under right side
+    drop(raw split_tree_split(2i64, 0i32));  // pane3, depth 3 on right side
+    drop(check("T16: 4 panes before remove", 4i64, raw split_tree_pane_count()));
+    // Remove pane3 (depth-3)
+    drop(raw split_tree_set_active(1i64));
+    int32:t16_ok = raw split_tree_remove(3i64);
+    drop(check32("T16: remove returns 1", 1i32, t16_ok));
+    drop(check("T16: pane_count=3 after remove", 3i64, raw split_tree_pane_count()));
+
+    // T17: grandparent adoption -- remove a pane whose parent is the root's child
+    print("T17: grandparent adoption");
+    drop(raw split_tree_reset());
+    // 3-pane tree: root(H) -> pane0, split(V) -> pane1, pane2
+    drop(raw split_tree_split(0i64, 0i32));  // pane1
+    drop(raw split_tree_split(1i64, 1i32));  // pane2 (right side of root)
+    drop(check("T17: 3 panes", 3i64, raw split_tree_pane_count()));
+    // Remove pane2 -- the right child of the inner V-split collapses up
+    int32:t17_ok = raw split_tree_remove(2i64);
+    drop(check32("T17: remove pane2 returns 1", 1i32, t17_ok));
+    drop(check("T17: pane_count=2 after adoption", 2i64, raw split_tree_pane_count()));
+    // The active pane should still exist (leftmost = pane 0 after tree collapse)
+    int64:t17_active = raw split_tree_get_active();
+    drop(check("T17: active pane is 0 (leftmost after collapse)", 0i64, t17_active));
+
     // Summary
     print("=== Results ===");
     if (g_fail > 0i64) {

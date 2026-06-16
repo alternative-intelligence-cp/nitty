@@ -1,4 +1,4 @@
-// src/core/split_tree.npk -- Split pane binary tree (v0.5.2)
+// src/core/split_tree.npk -- Split pane binary tree (v0.5.3)
 //
 // Models the layout of panes within a single tab as a binary tree.
 // Each node is either a Leaf (terminal pane) or a Split (two children
@@ -41,7 +41,20 @@ int64[63]:g_val_d = [63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i
 // g_ms[2] = g_next_pane_id
 // g_ms[3] = g_layout_count
 // g_ms[4] = g_divider_count
+// g_ms[5] = g_is_maximized  (0=normal, 1=maximized)
+// g_ms[6] = g_maximized_pane_id
+// g_ms[7] = g_saved_node_count
 int64[8]:g_ms = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+
+// ===================================================================
+// Maximize snapshot: parallel save arrays (mirror of g_kind/val_a/b/c/d)
+// Populated by split_tree_save_and_maximize(); restored by split_tree_restore().
+// ===================================================================
+int64[63]:g_save_kind  = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[63]:g_save_val_a = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[63]:g_save_val_b = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[63]:g_save_val_c = [63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64];
+int64[63]:g_save_val_d = [63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64, 63i64];
 
 // Iterative DFS traversal stack (module-level; non-reentrant, single-threaded)
 // Holds up to 64 node indices.
@@ -358,6 +371,9 @@ pub func:split_tree_set_active = NIL(int64:pane_id) {
 /// dir: 0 = Horizontal (left|right), 1 = Vertical (top|bottom).
 /// Returns the new pane_id, or 63 (NONE sentinel) on failure.
 pub func:split_tree_split = int64(int64:target_pane, int32:dir) {
+    // Pane count limit: cap at 16 panes per tab (v0.5.3)
+    if (raw _count_leaves() >= 16i64) { pass(63i64); }
+
     // Find the existing leaf node
     int64:leaf_idx = raw _find_leaf(target_pane);
     if (leaf_idx >= 63i64) { pass(63i64); }
@@ -572,6 +588,136 @@ pub func:split_tree_find_pane_at = int64(int64:px, int64:py) {
         i = i + 1i64;
     }
     pass(found);
+};
+
+// ===================================================================
+// Public API: Maximize / Restore (v0.5.3)
+// ===================================================================
+
+/// Maximum number of panes allowed per tab.
+pub func:split_tree_pane_count_limit = int64() {
+    pass(16i64);
+};
+
+/// Returns 1 if a pane is currently maximized, 0 otherwise.
+pub func:split_tree_is_maximized = int64() {
+    pass(g_ms[5]);
+};
+
+/// Returns the pane_id of the maximized pane (valid only when is_maximized=1).
+pub func:split_tree_get_maximized_pane = int64() {
+    pass(g_ms[6]);
+};
+
+/// Snapshot the current tree into save arrays, then replace root with a
+/// single leaf showing only pane_id. The other panes remain in the pool
+/// but are unreachable until restore.
+pub func:split_tree_save_and_maximize = NIL(int64:pane_id) {
+    // If already maximized, do nothing (idempotent)
+    if (g_ms[5] != 0i64) { pass(NIL); }
+
+    // Copy live pool into save arrays
+    int64:nc = g_ms[0];  // node_count
+    int64:si = 0i64;
+    while (si < nc) {
+        g_save_kind[si]  = g_kind[si];
+        g_save_val_a[si] = g_val_a[si];
+        g_save_val_b[si] = g_val_b[si];
+        g_save_val_c[si] = g_val_c[si];
+        g_save_val_d[si] = g_val_d[si];
+        si = si + 1i64;
+    }
+    g_ms[7] = nc;  // saved node_count
+
+    // Replace tree with single leaf for pane_id
+    // Root is always node 0; set it as a Leaf and zero child pointers
+    g_ms[0]   = 1i64;   // node_count = 1
+    g_kind[0]  = 1i64;  // Leaf
+    g_val_a[0] = pane_id;
+    g_val_b[0] = 0i64;
+    g_val_c[0] = 63i64;
+    g_val_d[0] = 63i64;
+
+    // Record maximize state
+    g_ms[5] = 1i64;        // is_maximized = true
+    g_ms[6] = pane_id;     // maximized_pane_id
+    g_ms[1] = pane_id;     // keep focus on maximized pane
+    pass(NIL);
+};
+
+/// Restore the tree from save arrays (reverses save_and_maximize).
+/// If not currently maximized, does nothing.
+pub func:split_tree_restore = NIL() {
+    // If not maximized, do nothing (idempotent)
+    if (g_ms[5] == 0i64) { pass(NIL); }
+
+    // Copy save arrays back into live pool
+    int64:nc = g_ms[7];  // saved node_count
+    int64:ri = 0i64;
+    while (ri < nc) {
+        g_kind[ri]  = g_save_kind[ri];
+        g_val_a[ri] = g_save_val_a[ri];
+        g_val_b[ri] = g_save_val_b[ri];
+        g_val_c[ri] = g_save_val_c[ri];
+        g_val_d[ri] = g_save_val_d[ri];
+        ri = ri + 1i64;
+    }
+    g_ms[0] = nc;  // restore node_count
+
+    // Restore focus to the pane that was maximized
+    g_ms[1] = g_ms[6];
+
+    // Clear maximize state
+    g_ms[5] = 0i64;
+    g_ms[6] = 0i64;
+    g_ms[7] = 0i64;
+    pass(NIL);
+};
+
+// ===================================================================
+// Public API: Node topology accessors (v0.5.3)
+// Used by split_view._build_paned_tree for arbitrary-depth tree walking.
+// ===================================================================
+
+/// Return the root node index (always 0).
+pub func:split_tree_get_root_node = int64() {
+    pass(0i64);
+};
+
+/// Return the kind of node idx: 0=Empty, 1=Leaf, 2=Split.
+pub func:split_tree_get_node_kind = int64(int64:idx) {
+    if (idx >= 63i64) { pass(0i64); }
+    pass(g_kind[idx]);
+};
+
+/// Return the left child index of a Split node (63=none).
+pub func:split_tree_get_node_left = int64(int64:idx) {
+    if (idx >= 63i64) { pass(63i64); }
+    pass(g_val_c[idx]);
+};
+
+/// Return the right child index of a Split node (63=none).
+pub func:split_tree_get_node_right = int64(int64:idx) {
+    if (idx >= 63i64) { pass(63i64); }
+    pass(g_val_d[idx]);
+};
+
+/// Return the pane_id stored in a Leaf node.
+pub func:split_tree_get_node_pane_id = int64(int64:idx) {
+    if (idx >= 63i64) { pass(63i64); }
+    pass(g_val_a[idx]);
+};
+
+/// Return the split direction of a Split node (0=Horiz, 1=Vert).
+pub func:split_tree_get_node_dir = int64(int64:idx) {
+    if (idx >= 63i64) { pass(0i64); }
+    pass(g_val_a[idx]);
+};
+
+/// Return the ratio_mille of a Split node.
+pub func:split_tree_get_node_ratio = int64(int64:idx) {
+    if (idx >= 63i64) { pass(500i64); }
+    pass(g_val_b[idx]);
 };
 
 // ===================================================================

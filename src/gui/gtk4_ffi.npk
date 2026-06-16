@@ -451,5 +451,7 @@ extern "nitty_gtk4_shim" {
     // v0.5.2: Per-pane PTY terminal resize via TIOCSWINSZ
     // Call with explicit fd (from split_view pane pool) rather than pty.npk singleton.
     func:nitty_pty_set_winsize = int64(int64:fd, int64:rows, int64:cols, int64:xpix, int64:ypix);
-}
 
+    // v0.5.3: Brief toast notification (e.g. "Maximum pane count reached")
+    func:nitty_gtk4_show_notification = NIL(string:msg);
+}

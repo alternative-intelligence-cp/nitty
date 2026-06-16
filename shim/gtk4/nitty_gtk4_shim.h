@@ -481,6 +481,16 @@ void nitty_gtk4_box_append(int64_t box_ptr, int64_t child_ptr);
  */
 void nitty_gtk4_widget_set_expand(int64_t widget_ptr, int64_t fill_h, int64_t fill_v);
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.5.3: Notification toast
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Show a brief info message in the terminal title bar area.
+ * The message auto-dismisses after ~2 seconds.
+ */
+void nitty_gtk4_show_notification(const char *msg);
+
 #ifdef __cplusplus
 }
 #endif

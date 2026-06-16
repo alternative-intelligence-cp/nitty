@@ -134,6 +134,9 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
                 g_pane_event = 16; return TRUE; /* split horizontal */
             case GDK_KEY_o: case GDK_KEY_O:
                 g_pane_event = 17; return TRUE; /* split vertical */
+            /* v0.5.3: Ctrl+Shift+M: maximize / restore active pane */
+            case GDK_KEY_m: case GDK_KEY_M:
+                g_pane_event = 27; return TRUE; /* maximize_toggle */
             default: break;
         }
     }

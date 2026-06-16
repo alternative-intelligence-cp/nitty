@@ -358,6 +358,14 @@ flags = []
 link_libraries = []
 link_paths = []
 
+[target.test_split_maximize]
+type = "binary"
+sources = ["tests/test_split_maximize.npk"]
+deps = []
+flags = []
+link_libraries = []
+link_paths = []
+
 [target.test_split_layout]
 type = "binary"
 sources = ["tests/test_split_layout.npk"]

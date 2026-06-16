@@ -231,152 +231,110 @@ int64[128]:g_sv_bstk_slot   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                                 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                                 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
 
-/// Build the GtkPaned tree from split_tree layout output.
-/// Uses split_tree_get_layout_* to get per-pane positions, and
-/// split_tree_get_divider_* for orientation info.
-/// Returns the root GtkWidget ptr (a GtkPaned).
-///
-/// Algorithm: For a 2-pane horizontal split we get 1 divider.
-///   For a 3-pane split we get 2 dividers. Build the tree by:
-///   - Read total_w, total_h bounding box
-///   - Build from layout structure using split_tree's node pool accessors
-///
-/// For simplicity in v0.5.1: build a flat paned chain from layout order.
-/// Left/Top pane is always layout[0], split into start+end at divider[0].
+// Result array: widget ptr built for each node pool index (0..62)
+// Used by _build_paned_tree post-order DFS to link child widgets into parents.
+int64[63]:g_sv_node_wid = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+// Divider index counter used during _build_paned_tree DFS (for register_paned)
+int64[4]:g_sv_bpt_ms = [0i64, 0i64, 0i64, 0i64];  // [0]=di_idx during build
+
+/// Build the GtkPaned tree from split_tree node topology.
+/// Uses split_tree_get_node_* accessors for arbitrary-depth iterative DFS.
+/// Algorithm: post-order iterative DFS.
+///   Pass 1: push all nodes in DFS pre-order into g_sv_bstk_node (ordered list).
+///   Pass 2: process in reverse (post-order): for each leaf create a DA,
+///           for each Split create a GtkPaned with children from g_sv_node_wid.
+/// Returns the root GtkWidget ptr (a GtkPaned or DA).
 func:_build_paned_tree = int64(int64:total_w, int64:total_h) {
-    int64:dcount = raw split_tree_get_divider_count();
-    int64:lcount = raw split_tree_get_layout_count();
-
-    // Degenerate: 0 dividers means only 1 pane — shouldn't happen here
-    if (dcount == 0i64) {
-        int64:pid0 = raw split_tree_get_layout_pane_id(0i64);
-        int64:da0  = raw _get_or_create_da(pid0);
-        pass(da0);
+    // Clear result array
+    int64:ci = 0i64;
+    while (ci < 63i64) {
+        g_sv_node_wid[ci] = 0i64;
+        ci = ci + 1i64;
     }
 
-    // Build a left-to-right / top-to-bottom chain of GtkPaned widgets.
-    // This correctly handles trees produced by split_tree's binary structure
-    // because split_tree_layout outputs leaves in DFS left-to-right order.
-    //
-    // Strategy: group panes by dividers.
-    //   - Divider i separates layout entries [0..i] (start) from [i+1..] (end)
-    //   - Create a paned for each divider, nesting from the outermost split inward.
-    //
-    // For now (v0.5.1), implement the common cases:
-    //   1 divider → 2 panes: single GtkPaned
-    //   2 dividers → 3 panes: two nested GtkPaned
-    //
-    // The outermost GtkPaned splits the two halves.
-    // Compute it using the first divider geometry.
+    // Reset divider index counter
+    g_sv_bpt_ms[0i64] = 0i64;
 
-    // Get first divider direction and position
-    int64:d0_w = raw split_tree_get_divider_w(0i64);
-    int64:d0_h = raw split_tree_get_divider_h(0i64);
-    int64:d0_x = raw split_tree_get_divider_x(0i64);
-    int64:d0_y = raw split_tree_get_divider_y(0i64);
-
-    // GTK orientation convention:
-    //   GTK_ORIENTATION_HORIZONTAL (0) = side by side (left|right)
-    //     → split_tree uses Horizontal split → divider is tall (dw < dh)
-    //   GTK_ORIENTATION_VERTICAL (1) = stacked (top|bottom)
-    //     → split_tree uses Vertical split → divider is wide (dw > dh)
-    int64:orient0 = 0i64;  // default: horizontal (side by side)
-    if (d0_w > d0_h) { orient0 = 1i64; }  // wide divider → vertical paned (top/bottom)
-
-    int64:root_paned = raw nitty_gtk4_paned_new(orient0);
-    if (root_paned == 0i64) { pass(0i64); }
-
-    // Set position from layout geometry
-    int64:pos0 = 0i64;
-    if (orient0 == 0i64) { pos0 = d0_x; }
-    if (orient0 == 1i64) { pos0 = d0_y; }
-    drop(nitty_gtk4_paned_set_position(root_paned, pos0));
-
-    // Find the split point: which layout entries go into start vs end
-    // For the first divider, entries with x < d0_x (horiz) or y < d0_y (vert)
-    // go into start; the rest go into end.
-    // For dcount=1: start = layout[0], end = layout[1]
-    if (dcount == 1i64) {
-        int64:pid_s = raw split_tree_get_layout_pane_id(0i64);
-        int64:pid_e = raw split_tree_get_layout_pane_id(1i64);
-        int64:da_s  = raw _get_or_create_da(pid_s);
-        int64:da_e  = raw _get_or_create_da(pid_e);
-        drop(nitty_gtk4_widget_set_expand(da_s, 1i64, 1i64));
-        drop(nitty_gtk4_widget_set_expand(da_e, 1i64, 1i64));
-        drop(nitty_gtk4_paned_set_start_child(root_paned, da_s));
-        drop(nitty_gtk4_paned_set_end_child(root_paned, da_e));
-        pass(root_paned);
+    // === Pass 1: collect nodes in pre-order via DFS ===
+    // g_sv_bstk_node[0..sp-1] will hold nodes in pre-order
+    int64:sp    = 0i64;   // stack pointer for DFS
+    int64:order_sp = 0i64;  // how many nodes collected in order list
+    // Push root
+    g_sv_bstk_node[0i64] = raw split_tree_get_root_node();
+    sp = 1i64;
+    while (sp > 0i64 && order_sp < 127i64) {
+        sp = sp - 1i64;
+        int64:idx = g_sv_bstk_node[sp];
+        if (idx < 63i64) {
+            // Record in order list (use parent array as order storage)
+            g_sv_bstk_parent[order_sp] = idx;
+            order_sp = order_sp + 1i64;
+            int64:knd = raw split_tree_get_node_kind(idx);
+            if (knd == 2i64) {
+                // Split node: push RIGHT then LEFT (so LEFT is processed first)
+                int64:rchild = raw split_tree_get_node_right(idx);
+                int64:lchild = raw split_tree_get_node_left(idx);
+                if (sp < 126i64) {
+                    g_sv_bstk_node[sp] = rchild;
+                    sp = sp + 1i64;
+                    g_sv_bstk_node[sp] = lchild;
+                    sp = sp + 1i64;
+                }
+            }
+        }
     }
 
-    // dcount >= 2: nested panes
-    // Second divider splits one of the two halves further.
-    // Build a second paned for the inner split, then pack into root.
-    if (dcount >= 2i64) {
-        int64:d1_w = raw split_tree_get_divider_w(1i64);
-        int64:d1_h = raw split_tree_get_divider_h(1i64);
-        int64:d1_x = raw split_tree_get_divider_x(1i64);
-        int64:d1_y = raw split_tree_get_divider_y(1i64);
+    // === Pass 2: process in reverse (post-order) ===
+    int64:pi = order_sp - 1i64;
+    while (pi >= 0i64) {
+        int64:nidx = g_sv_bstk_parent[pi];
+        int64:nknd = raw split_tree_get_node_kind(nidx);
 
-        int64:orient1 = 0i64;  // default: horizontal
-        if (d1_w > d1_h) { orient1 = 1i64; }  // wide divider → vertical paned
-
-        int64:inner_paned = raw nitty_gtk4_paned_new(orient1);
-
-        int64:pos1 = 0i64;
-        if (orient1 == 0i64) { pos1 = d1_x; }
-        if (orient1 == 1i64) { pos1 = d1_y; }
-        drop(nitty_gtk4_paned_set_position(inner_paned, pos1));
-
-        // Determine which side of root the inner paned goes.
-        // If d1 is in the "end" region of root (after the root divider):
-        //   start side of root → layout[0]
-        //   end side → inner_paned(layout[1], layout[2])
-        int64:in_end = 0i64;
-        if (orient0 == 0i64) {
-            if (d1_x > d0_x) { in_end = 1i64; }
-        }
-        if (orient0 == 1i64) {
-            if (d1_y > d0_y) { in_end = 1i64; }
+        if (nknd == 1i64) {
+            // Leaf: create/get DrawingArea
+            int64:pid = raw split_tree_get_node_pane_id(nidx);
+            int64:da  = raw _get_or_create_da(pid);
+            drop(nitty_gtk4_widget_set_expand(da, 1i64, 1i64));
+            g_sv_node_wid[nidx] = da;
         }
 
-        if (in_end != 0i64) {
-            // start = layout[0], end = inner(layout[1], layout[2])
-            int64:pid0a = raw split_tree_get_layout_pane_id(0i64);
-            int64:pid1a = raw split_tree_get_layout_pane_id(1i64);
-            int64:pid2a = raw split_tree_get_layout_pane_id(2i64);
-            int64:da0a  = raw _get_or_create_da(pid0a);
-            int64:da1a  = raw _get_or_create_da(pid1a);
-            int64:da2a  = raw _get_or_create_da(pid2a);
-            drop(nitty_gtk4_widget_set_expand(da0a, 1i64, 1i64));
-            drop(nitty_gtk4_widget_set_expand(da1a, 1i64, 1i64));
-            drop(nitty_gtk4_widget_set_expand(da2a, 1i64, 1i64));
-            drop(nitty_gtk4_paned_set_start_child(inner_paned, da1a));
-            drop(nitty_gtk4_paned_set_end_child(inner_paned, da2a));
-            drop(nitty_gtk4_paned_set_start_child(root_paned, da0a));
-            drop(nitty_gtk4_paned_set_end_child(root_paned, inner_paned));
+        if (nknd == 2i64) {
+            // Split: create GtkPaned with left+right child widgets
+            int64:lc  = raw split_tree_get_node_left(nidx);
+            int64:rc  = raw split_tree_get_node_right(nidx);
+            int64:dir = raw split_tree_get_node_dir(nidx);
+            // dir: 0=Horiz(side-by-side) → GTK_ORIENTATION_HORIZONTAL(0)
+            //      1=Vert(top-bottom)    → GTK_ORIENTATION_VERTICAL(1)
+            int64:orient = dir;  // 0=H, 1=V (same convention)
+            int64:paned  = raw nitty_gtk4_paned_new(orient);
+
+            // Set position from ratio + total dimension
+            int64:ratio = raw split_tree_get_node_ratio(nidx);
+            int64:pos   = 0i64;
+            if (orient == 0i64) { pos = (total_w * ratio) / 1000i64; }  // horiz
+            if (orient == 1i64) { pos = (total_h * ratio) / 1000i64; }  // vert
+            drop(nitty_gtk4_paned_set_position(paned, pos));
+
+            // Pack children
+            int64:wl = g_sv_node_wid[lc];
+            int64:wr = g_sv_node_wid[rc];
+            if (wl != 0i64) { drop(nitty_gtk4_paned_set_start_child(paned, wl)); }
+            if (wr != 0i64) { drop(nitty_gtk4_paned_set_end_child(paned, wr)); }
+
+            // Register paned ptr for keyboard-resize and drag sync (v0.5.2+)
+            int64:di = g_sv_bpt_ms[0i64];
+            drop(split_view_register_paned(di, paned));
+            g_sv_bpt_ms[0i64] = di + 1i64;
+
+            g_sv_node_wid[nidx] = paned;
         }
 
-        if (in_end == 0i64) {
-            // start = inner(layout[0], layout[1]), end = layout[2]
-            int64:pid0b = raw split_tree_get_layout_pane_id(0i64);
-            int64:pid1b = raw split_tree_get_layout_pane_id(1i64);
-            int64:pid2b = raw split_tree_get_layout_pane_id(2i64);
-            int64:da0b  = raw _get_or_create_da(pid0b);
-            int64:da1b  = raw _get_or_create_da(pid1b);
-            int64:da2b  = raw _get_or_create_da(pid2b);
-            drop(nitty_gtk4_widget_set_expand(da0b, 1i64, 1i64));
-            drop(nitty_gtk4_widget_set_expand(da1b, 1i64, 1i64));
-            drop(nitty_gtk4_widget_set_expand(da2b, 1i64, 1i64));
-            drop(nitty_gtk4_paned_set_start_child(inner_paned, da0b));
-            drop(nitty_gtk4_paned_set_end_child(inner_paned, da1b));
-            drop(nitty_gtk4_paned_set_start_child(root_paned, inner_paned));
-            drop(nitty_gtk4_paned_set_end_child(root_paned, da2b));
-        }
-
-        pass(root_paned);
+        pi = pi - 1i64;
     }
 
-    pass(root_paned);
+    // Return root widget
+    int64:root_nidx = raw split_tree_get_root_node();
+    pass(g_sv_node_wid[root_nidx]);
 };
 
 // ═══════════════════════════════════════════════════════════════════════

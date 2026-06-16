@@ -1545,3 +1545,48 @@ void nitty_gtk4_widget_set_expand(int64_t widget_ptr, int64_t fill_h, int64_t fi
     gtk_widget_set_hexpand(w, fill_h != 0);
     gtk_widget_set_vexpand(w, fill_v != 0);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.5.3: Notification toast
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Timeout callback: hides and destroys the notification window */
+static gboolean _notify_dismiss_cb(gpointer data)
+{
+    GtkWidget *win = (GtkWidget *)data;
+    if (win != NULL) {
+        gtk_window_destroy(GTK_WINDOW(win));
+    }
+    return G_SOURCE_REMOVE;
+}
+
+void nitty_gtk4_show_notification(const char *msg)
+{
+    if (msg == NULL) return;
+
+    /* Create a transient child window styled as a toast */
+    GtkWidget *parent = g_main_window;
+    GtkWidget *popup  = gtk_window_new();
+    if (popup == NULL) return;
+
+    gtk_window_set_decorated(GTK_WINDOW(popup), FALSE);
+    gtk_window_set_resizable(GTK_WINDOW(popup), FALSE);
+    gtk_window_set_default_size(GTK_WINDOW(popup), 320, 40);
+    if (parent != NULL) {
+        gtk_window_set_transient_for(GTK_WINDOW(popup), GTK_WINDOW(parent));
+        gtk_window_set_modal(GTK_WINDOW(popup), FALSE);
+    }
+
+    GtkWidget *label = gtk_label_new(msg);
+    gtk_widget_set_margin_start(label, 12);
+    gtk_widget_set_margin_end(label, 12);
+    gtk_widget_set_margin_top(label, 8);
+    gtk_widget_set_margin_bottom(label, 8);
+    gtk_window_set_child(GTK_WINDOW(popup), label);
+
+    gtk_widget_set_visible(popup, TRUE);
+
+    /* Auto-dismiss after 2000ms */
+    g_timeout_add(2000, _notify_dismiss_cb, popup);
+}
+
