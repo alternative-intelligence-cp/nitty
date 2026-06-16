@@ -1,0 +1,375 @@
+// src/ssh/sftp_transfer.npk — Async File Transfer Engine (v0.8.5)
+//
+// Manages a queue of SFTP download and upload jobs, advancing each job
+// one XFER_CHUNK-byte chunk per xfer_tick() call.
+//
+// API:
+//   xfer_init()                              — call from app_init()
+//   xfer_enqueue(pane, dir, local, remote)   — queue a job; returns slot
+//   xfer_tick(pane_slot)                     — advance one chunk per frame
+//   xfer_cancel(job_slot)                    — cancel a job
+//   xfer_state/pct/label/summary             — progress getters
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/src/nitpick_ssh.npk".*;
+use "/home/randy/Workspace/REPOS/nitty/src/core/pane.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+use "/home/randy/Workspace/REPOS/nitty/src/ssh/ssh_sftp.npk".*;
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+pub fixed int64:XFER_MAX          = 16i64;
+pub fixed int64:XFER_CHUNK        = 4096i64;
+
+pub fixed int64:XFER_DIR_DOWNLOAD = 0i64;
+pub fixed int64:XFER_DIR_UPLOAD   = 1i64;
+
+pub fixed int64:XFER_STATE_IDLE    = 0i64;
+pub fixed int64:XFER_STATE_PENDING = 1i64;
+pub fixed int64:XFER_STATE_ACTIVE  = 2i64;
+pub fixed int64:XFER_STATE_DONE    = 3i64;
+pub fixed int64:XFER_STATE_ERROR   = 4i64;
+pub fixed int64:XFER_STATE_CANCEL  = 5i64;
+
+// Internal sub-states
+fixed int64:_XS_OPEN_SENT  = 10i64;  // OPEN request sent
+fixed int64:_XS_TRANSFER   = 11i64;  // reading/writing chunks
+fixed int64:_XS_CLOSE_SENT = 12i64;  // CLOSE request sent
+
+// ── Module state ──────────────────────────────────────────────────────────────
+
+int64[16]:g_xfer_pane_slot      = [-1i64,-1i64,-1i64,-1i64,-1i64,-1i64,-1i64,-1i64,-1i64,-1i64,-1i64,-1i64,-1i64,-1i64,-1i64,-1i64];
+int64[16]:g_xfer_direction      = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+string[16]:g_xfer_local_path    = ["","","","","","","","","","","","","","","",""];
+string[16]:g_xfer_remote_path   = ["","","","","","","","","","","","","","","",""];
+int64[16]:g_xfer_total_bytes    = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+int64[16]:g_xfer_done_bytes     = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+int64[16]:g_xfer_state          = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+int64[16]:g_xfer_sub_state      = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+int64[16]:g_xfer_sftp_fh        = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];  // SFTP file handle buffer
+string[16]:g_xfer_accum         = ["","","","","","","","","","","","","","","",""];  // download text accumulator
+string[16]:g_xfer_upload_data   = ["","","","","","","","","","","","","","","",""];  // local file data (text-safe)
+int64[16]:g_xfer_upload_len     = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];  // byte length of upload data
+string[16]:g_xfer_error_msg     = ["","","","","","","","","","","","","","","",""];
+int64:g_xfer_count = 0i64;
+
+// FFI declaration for npk_string_byte_at (runtime intrinsic)
+extern func:npk_string_byte_at = int64(string:s, int64:i);
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+func:_xfer_alloc = int64() {
+    int64:i = 0i64;
+    while (i < XFER_MAX) {
+        if (g_xfer_state[i] == XFER_STATE_IDLE) { pass(i); }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+// Extract basename from a path (last segment after '/')
+func:_xfer_basename = string(string:path) {
+    int64:len = string_length(path);
+    int64:i   = len - 1i64;
+    while (i >= 0i64) {
+        if (npk_string_byte_at(path, i) == 47i64) {  // '/'
+            pass(string_substring(path, i + 1i64, len));
+        }
+        i = i - 1i64;
+    }
+    pass(path);
+};
+
+// Send an SFTP message over a pane's SFTP channel.
+func:_xfer_sftp_send = NIL(int64:session, int64:pane_slot, int64:sftp_msg) {
+    int64:chan_id  = raw sftp_get_channel_id(pane_slot);
+    int64:data_msg = raw SSH_channel_data_msg(session, chan_id, sftp_msg);
+    drop(raw SSH_send_packet(session, data_msg));
+    drop(raw SSH_buf_free(data_msg));
+    pass(NIL);
+};
+
+// Read the next SFTP packet from a pane's SFTP channel (0 if none ready).
+func:_xfer_sftp_recv = int64(int64:session, int64:pane_slot) {
+    int64:chan_id = raw sftp_get_channel_id(pane_slot);
+    pass(raw SSH_channel_read_buf(session, chan_id));
+};
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+pub func:xfer_init = NIL() {
+    int64:i = 0i64;
+    while (i < XFER_MAX) {
+        g_xfer_pane_slot[i]    = -1i64;
+        g_xfer_state[i]        = XFER_STATE_IDLE;
+        g_xfer_sftp_fh[i]      = 0i64;
+        g_xfer_accum[i]        = "";
+        g_xfer_upload_data[i]  = "";
+        g_xfer_error_msg[i]    = "";
+        i = i + 1i64;
+    }
+    g_xfer_count = 0i64;
+    pass(NIL);
+};
+
+/// Queue a new transfer. Returns job slot (-1 if queue full).
+pub func:xfer_enqueue = int64(int64:pane_slot, int64:direction,
+                               string:local_path, string:remote_path) {
+    int64:slot = raw _xfer_alloc();
+    if (slot == -1i64) { pass(-1i64); }
+
+    g_xfer_pane_slot[slot]   = pane_slot;
+    g_xfer_direction[slot]   = direction;
+    g_xfer_local_path[slot]  = local_path;
+    g_xfer_remote_path[slot] = remote_path;
+    g_xfer_total_bytes[slot] = 0i64;
+    g_xfer_done_bytes[slot]  = 0i64;
+    g_xfer_state[slot]       = XFER_STATE_PENDING;
+    g_xfer_sub_state[slot]   = 0i64;
+    g_xfer_sftp_fh[slot]     = 0i64;
+    g_xfer_accum[slot]       = "";
+    g_xfer_error_msg[slot]   = "";
+
+    if (direction == XFER_DIR_UPLOAD) {
+        if (raw fs_exists(local_path) == 1i32) {
+            string:data     = raw fs_read_file(local_path);
+            int64:data_len  = raw fs_read_length();
+            g_xfer_upload_data[slot] = data;
+            g_xfer_upload_len[slot]  = data_len;
+            g_xfer_total_bytes[slot] = data_len;
+        }
+        if (raw fs_exists(local_path) != 1i32) {
+            g_xfer_state[slot]     = XFER_STATE_ERROR;
+            g_xfer_error_msg[slot] = "local file not found";
+        }
+    }
+
+    if (g_xfer_count < XFER_MAX) { g_xfer_count = g_xfer_count + 1i64; }
+    pass(slot);
+};
+
+/// Cancel a transfer.
+pub func:xfer_cancel = NIL(int64:job_slot) {
+    if (job_slot < 0i64 || job_slot >= XFER_MAX) { pass(NIL); }
+    if (g_xfer_state[job_slot] == XFER_STATE_IDLE) { pass(NIL); }
+    if (g_xfer_sftp_fh[job_slot] != 0i64) {
+        drop(raw SSH_buf_free(g_xfer_sftp_fh[job_slot]));
+        g_xfer_sftp_fh[job_slot] = 0i64;
+    }
+    g_xfer_state[job_slot]      = XFER_STATE_CANCEL;
+    g_xfer_upload_data[job_slot] = "";
+    g_xfer_accum[job_slot]      = "";
+    pass(NIL);
+};
+
+// ── Getters ───────────────────────────────────────────────────────────────────
+
+pub func:xfer_count = int64() { pass g_xfer_count; };
+
+pub func:xfer_state = int64(int64:i) {
+    if (i < 0i64 || i >= XFER_MAX) { pass XFER_STATE_IDLE; }
+    pass(g_xfer_state[i]);
+};
+
+pub func:xfer_pct = int64(int64:i) {
+    if (i < 0i64 || i >= XFER_MAX) { pass 0i64; }
+    int64:total = g_xfer_total_bytes[i];
+    if (total <= 0i64) { pass 0i64; }
+    pass((g_xfer_done_bytes[i] * 100i64) / total);
+};
+
+pub func:xfer_label = string(int64:i) {
+    if (i < 0i64 || i >= XFER_MAX) { pass ""; }
+    int64:st = g_xfer_state[i];
+    if (st == XFER_STATE_IDLE || st == XFER_STATE_CANCEL) { pass ""; }
+    string:arrow = is (g_xfer_direction[i] == XFER_DIR_DOWNLOAD) : "\u2193 " : "\u2191 ";
+    string:name  = raw _xfer_basename(g_xfer_remote_path[i]);
+    if (st == XFER_STATE_DONE) { pass string_concat(arrow, string_concat(name, " done")); }
+    if (st == XFER_STATE_ERROR) {
+        pass string_concat(arrow, string_concat(name,
+            string_concat(" ERR: ", g_xfer_error_msg[i])));
+    }
+    string:pct_s = string_concat(string_from_int(raw xfer_pct(i)), "%");
+    pass(string_concat(arrow, string_concat(name, string_concat(" ", pct_s))));
+};
+
+pub func:xfer_error_msg = string(int64:i) {
+    if (i < 0i64 || i >= XFER_MAX) { pass ""; }
+    pass(g_xfer_error_msg[i]);
+};
+
+/// Return a combined status string for all active transfers on a pane.
+pub func:xfer_summary = string(int64:pane_slot) {
+    string:result = "";
+    int64:i = 0i64;
+    while (i < XFER_MAX) {
+        if (g_xfer_pane_slot[i] == pane_slot) {
+            int64:st = g_xfer_state[i];
+            if (st == XFER_STATE_ACTIVE || st == XFER_STATE_PENDING ||
+                st == XFER_STATE_DONE   || st == XFER_STATE_ERROR) {
+                string:lbl = raw xfer_label(i);
+                if (string_length(lbl) > 0i64) {
+                    if (string_length(result) > 0i64) { result = string_concat(result, "  "); }
+                    result = string_concat(result, lbl);
+                }
+            }
+        }
+        i = i + 1i64;
+    }
+    pass(result);
+};
+
+// ── Transfer tick ─────────────────────────────────────────────────────────────
+
+/// Advance the oldest PENDING or ACTIVE transfer for pane_slot by one chunk.
+pub func:xfer_tick = NIL(int64:pane_slot) {
+    // Find first PENDING or ACTIVE job for this pane
+    int64:slot = -1i64;
+    int64:i    = 0i64;
+    while (i < XFER_MAX) {
+        int64:st = g_xfer_state[i];
+        if (g_xfer_pane_slot[i] == pane_slot &&
+            (st == XFER_STATE_PENDING || st == XFER_STATE_ACTIVE)) {
+            slot = i;
+            i = XFER_MAX;  // break
+        }
+        i = i + 1i64;
+    }
+    if (slot == -1i64) { pass(NIL); }
+
+    int64:session  = raw pane_get_ssh_session(pane_slot);
+    int64:sftp     = raw sftp_get_handle(pane_slot);
+    int64:sub_st   = g_xfer_sub_state[slot];
+
+    // ── PENDING → send OPEN request ───────────────────────────────────────────
+    if (g_xfer_state[slot] == XFER_STATE_PENDING) {
+        int64:open_msg = 0i64;
+        if (g_xfer_direction[slot] == XFER_DIR_DOWNLOAD) {
+            open_msg = raw SSH_sftp_open_msg(sftp, g_xfer_remote_path[slot],
+                            @cast_unchecked<int32>(SFTP_OPEN_READ));
+        }
+        if (g_xfer_direction[slot] == XFER_DIR_UPLOAD) {
+            // WRITE | CREAT | TRUNC
+            open_msg = raw SSH_sftp_open_msg(sftp, g_xfer_remote_path[slot],
+                            @cast_unchecked<int32>(2i64 + 8i64 + 16i64));
+        }
+        drop(raw _xfer_sftp_send(session, pane_slot, open_msg));
+        drop(raw SSH_buf_free(open_msg));
+        g_xfer_state[slot]     = XFER_STATE_ACTIVE;
+        g_xfer_sub_state[slot] = _XS_OPEN_SENT;
+        pass(NIL);
+    }
+
+    // ── OPEN_SENT → wait for FXP_HANDLE (102) ────────────────────────────────
+    if (sub_st == _XS_OPEN_SENT) {
+        int64:raw_buf = raw _xfer_sftp_recv(session, pane_slot);
+        if (raw_buf == 0i64) { pass(NIL); }
+        int64:pkt_type = @cast_unchecked<int64>(raw ssh_sftp_packet_type(raw_buf));
+        if (pkt_type == 102i64) {  // SSH_FXP_HANDLE
+            g_xfer_sftp_fh[slot]   = raw SSH_sftp_parse_handle(raw_buf);
+            g_xfer_sub_state[slot] = _XS_TRANSFER;
+            // Download: send first READ
+            if (g_xfer_direction[slot] == XFER_DIR_DOWNLOAD) {
+                int64:read_msg = raw SSH_sftp_read_msg(sftp, g_xfer_sftp_fh[slot],
+                                    0i64, XFER_CHUNK);
+                drop(raw _xfer_sftp_send(session, pane_slot, read_msg));
+                drop(raw SSH_buf_free(read_msg));
+            }
+        }
+        if (pkt_type != 102i64) {
+            g_xfer_state[slot]     = XFER_STATE_ERROR;
+            g_xfer_error_msg[slot] = "remote open failed";
+        }
+        drop(raw SSH_buf_free(raw_buf));
+        pass(NIL);
+    }
+
+    // ── TRANSFER ─────────────────────────────────────────────────────────────
+    if (sub_st == _XS_TRANSFER) {
+
+        // ── Download ──────────────────────────────────────────────────────────
+        if (g_xfer_direction[slot] == XFER_DIR_DOWNLOAD) {
+            int64:raw_buf = raw _xfer_sftp_recv(session, pane_slot);
+            if (raw_buf == 0i64) { pass(NIL); }
+            int64:pkt_type = @cast_unchecked<int64>(raw ssh_sftp_packet_type(raw_buf));
+            if (pkt_type == 103i64) {  // SSH_FXP_DATA
+                int64:data_buf  = raw SSH_sftp_parse_data(raw_buf);
+                int64:data_len  = raw SSH_buf_len(data_buf);
+                // Append data as string to accumulator (text-safe)
+                string:chunk    = raw SSH_buf_extract_str(data_buf, 0i64, data_len);
+                g_xfer_accum[slot]      = string_concat(g_xfer_accum[slot], chunk);
+                g_xfer_done_bytes[slot] = g_xfer_done_bytes[slot] + data_len;
+                drop(raw SSH_buf_free(data_buf));
+                // Request next chunk
+                int64:read_msg = raw SSH_sftp_read_msg(sftp, g_xfer_sftp_fh[slot],
+                                    g_xfer_done_bytes[slot], XFER_CHUNK);
+                drop(raw _xfer_sftp_send(session, pane_slot, read_msg));
+                drop(raw SSH_buf_free(read_msg));
+            }
+            if (pkt_type == 101i64) {  // SSH_FXP_STATUS
+                int64:sc = @cast_unchecked<int64>(raw ssh_sftp_parse_status(raw_buf));
+                if (sc == 1i64) {  // SSH_FX_EOF — complete
+                    drop(raw fs_write_file(g_xfer_local_path[slot], g_xfer_accum[slot]));
+                    g_xfer_total_bytes[slot] = g_xfer_done_bytes[slot];
+                    int64:close_msg = raw SSH_sftp_close_msg(sftp, g_xfer_sftp_fh[slot]);
+                    drop(raw _xfer_sftp_send(session, pane_slot, close_msg));
+                    drop(raw SSH_buf_free(close_msg));
+                    drop(raw SSH_buf_free(g_xfer_sftp_fh[slot]));
+                    g_xfer_sftp_fh[slot]   = 0i64;
+                    g_xfer_sub_state[slot] = _XS_CLOSE_SENT;
+                }
+                if (sc != 1i64) {
+                    g_xfer_state[slot]     = XFER_STATE_ERROR;
+                    g_xfer_error_msg[slot] = "download read error";
+                }
+            }
+            drop(raw SSH_buf_free(raw_buf));
+            pass(NIL);
+        }
+
+        // ── Upload ────────────────────────────────────────────────────────────
+        if (g_xfer_direction[slot] == XFER_DIR_UPLOAD) {
+            int64:offset = g_xfer_done_bytes[slot];
+            int64:total  = g_xfer_upload_len[slot];
+            if (offset >= total) {
+                // All data sent — close remote file
+                int64:close_msg = raw SSH_sftp_close_msg(sftp, g_xfer_sftp_fh[slot]);
+                drop(raw _xfer_sftp_send(session, pane_slot, close_msg));
+                drop(raw SSH_buf_free(close_msg));
+                drop(raw SSH_buf_free(g_xfer_sftp_fh[slot]));
+                g_xfer_sftp_fh[slot]   = 0i64;
+                g_xfer_sub_state[slot] = _XS_CLOSE_SENT;
+                pass(NIL);
+            }
+            // Build data buffer from string slice
+            int64:chunk_len = XFER_CHUNK;
+            if (offset + chunk_len > total) { chunk_len = total - offset; }
+            // string_substring(str, start, end) where end is exclusive index
+            string:chunk = string_substring(g_xfer_upload_data[slot],
+                                            offset, offset + chunk_len);
+            int64:data_buf = raw SSH_buf_create(chunk_len);
+            // Write the chunk slice into the data buffer
+            data_buf = raw SSH_buf_write_str(data_buf, chunk);
+            int64:write_msg = raw SSH_sftp_write_msg(sftp, g_xfer_sftp_fh[slot],
+                                                      offset, data_buf);
+            drop(raw _xfer_sftp_send(session, pane_slot, write_msg));
+            drop(raw SSH_buf_free(write_msg));
+            drop(raw SSH_buf_free(data_buf));
+            g_xfer_done_bytes[slot] = offset + chunk_len;
+            // Fire-and-forget per chunk: no STATUS wait (fire + next frame tick)
+            pass(NIL);
+        }
+    }
+
+    // ── CLOSE_SENT → wait for final STATUS, mark done ────────────────────────
+    if (sub_st == _XS_CLOSE_SENT) {
+        int64:raw_buf = raw _xfer_sftp_recv(session, pane_slot);
+        if (raw_buf == 0i64) { pass(NIL); }
+        drop(raw SSH_buf_free(raw_buf));
+        g_xfer_state[slot]       = XFER_STATE_DONE;
+        g_xfer_upload_data[slot] = "";  // release memory
+        g_xfer_accum[slot]       = "";
+        pass(NIL);
+    }
+
+    pass(NIL);
+};

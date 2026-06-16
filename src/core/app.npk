@@ -47,6 +47,7 @@ use "../gui/connection_manager.npk".*;   // v0.8.3: connection manager sidebar
 use "../gui/profile_editor.npk".*;       // v0.8.3: profile editor dialog
 use "../ssh/ssh_forward.npk".{fwd_init}; // v0.8.4: port forward state init
 use "../ssh/ssh_jump.npk".{jump_init};   // v0.8.4: jump host state init
+use "../gui/sftp_browser.npk".{sftp_browser_init}; // v0.8.5: SFTP browser panel
 
 // fd 1 = stdout
 int64:STDOUT = 1i64;
@@ -89,7 +90,9 @@ pub func:app_init = NIL() {
     // v0.8.4: Initialize port forwarding and jump host state
     drop(fwd_init());
     drop(jump_init());
-    drop(write_stdout("Nitty v0.8.4 initializing...\n"));
+    // v0.8.5: Initialize SFTP browser (session pool + transfer queue only —
+    // UI widget created in app_run after DrawingArea exists)
+    drop(write_stdout("Nitty v0.8.5 initializing...\n"));
     pass(NIL);
 };
 
@@ -168,6 +171,11 @@ pub func:app_run = NIL() {
 
     // v0.8.3: Create connection manager sidebar (after window is configured)
     drop(cm_init_ui());
+
+    // v0.8.5: Create SFTP browser panel (right-side panel, hidden initially)
+    // Needs the DrawingArea pointer to attach to the correct paned layout.
+    int64:sftp_win_ptr = nitty_gtk4_get_main_window();
+    drop(sftp_browser_init(sftp_win_ptr, da));
 
     // ── Configure and run the GTK window ────────────────────────────────────
     drop(write_stdout("Nitty: starting GTK4 main loop with shell\n"));
@@ -281,5 +289,5 @@ pub func:app_shutdown = NIL() {
 };
 
 pub func:app_version = string() {
-    pass("0.8.4");
+    pass("0.8.5");
 };

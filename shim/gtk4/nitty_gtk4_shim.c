@@ -3680,3 +3680,379 @@ int64_t     nitty_gtk4_profile_editor_get_port(void)     { return g_pe_port; }
 const char *nitty_gtk4_profile_editor_get_user(void)     { return g_pe_user; }
 const char *nitty_gtk4_profile_editor_get_auth(void)     { return g_pe_auth; }
 const char *nitty_gtk4_profile_editor_get_key_path(void) { return g_pe_key_path; }
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/* v0.8.5 — SFTP Browser Panel                                               */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Event codes (must match constants in nitty_gtk4_shim.h) */
+#define SFTP_EV_NONE       0
+#define SFTP_EV_ACTIVATE   1   /* entry double-clicked / Enter */
+#define SFTP_EV_REFRESH    2
+#define SFTP_EV_DOWNLOAD   3
+#define SFTP_EV_UPLOAD     4
+#define SFTP_EV_RENAME     5
+#define SFTP_EV_DELETE     6
+#define SFTP_EV_MKDIR      7
+#define SFTP_EV_UP         8   /* navigate to parent directory */
+
+/* Per-panel state */
+typedef struct {
+    GtkWidget *vbox;          /* outer container returned to Nitpick */
+    GtkWidget *path_label;    /* current path display */
+    GtkWidget *list_box;      /* GtkListBox for file entries */
+    GtkWidget *status_label;  /* "N items" / error text */
+    GtkWidget *xfer_label;    /* "↓ file.txt 42%" */
+    GtkWidget *scroll;        /* GtkScrolledWindow around list_box */
+    /* event ring */
+    int64_t ev_buf[32];
+    int     ev_head;
+    int     ev_tail;
+    int64_t ev_last_row;      /* row index of last activate event */
+} SftpPanel;
+
+/* Only one panel exists at a time (single-window app) */
+static SftpPanel g_sftp;
+static int       g_sftp_initialized = 0;
+
+/* Right-hand GtkPaned (SFTP panel on the right of the terminal) */
+static GtkWidget *g_sftp_paned     = NULL;
+static int        g_sftp_visible   = 0;
+static int        g_sftp_paned_pos = 280;   /* default panel width */
+
+/* ── Helpers ──────────────────────────────────────────────────────────────── */
+
+static void sftp_push_event(SftpPanel *p, int64_t code, int64_t row)
+{
+    int next = (p->ev_tail + 1) % 32;
+    if (next != p->ev_head) {
+        p->ev_buf[p->ev_tail] = code;
+        p->ev_tail = next;
+        p->ev_last_row = row;
+    }
+}
+
+/* Context menu callbacks */
+static void on_sftp_menu_download(GtkWidget *w, gpointer data)
+{
+    (void)w;
+    SftpPanel *p = (SftpPanel *)data;
+    int64_t sel = -1;
+    GtkListBoxRow *row = gtk_list_box_get_selected_row(GTK_LIST_BOX(p->list_box));
+    if (row) sel = (int64_t)gtk_list_box_row_get_index(row);
+    sftp_push_event(p, SFTP_EV_DOWNLOAD, sel);
+}
+static void on_sftp_menu_upload(GtkWidget *w, gpointer data)
+{
+    (void)w;
+    SftpPanel *p = (SftpPanel *)data;
+    sftp_push_event(p, SFTP_EV_UPLOAD, -1);
+}
+static void on_sftp_menu_rename(GtkWidget *w, gpointer data)
+{
+    (void)w;
+    SftpPanel *p = (SftpPanel *)data;
+    int64_t sel = -1;
+    GtkListBoxRow *row = gtk_list_box_get_selected_row(GTK_LIST_BOX(p->list_box));
+    if (row) sel = (int64_t)gtk_list_box_row_get_index(row);
+    sftp_push_event(p, SFTP_EV_RENAME, sel);
+}
+static void on_sftp_menu_delete(GtkWidget *w, gpointer data)
+{
+    (void)w;
+    SftpPanel *p = (SftpPanel *)data;
+    int64_t sel = -1;
+    GtkListBoxRow *row = gtk_list_box_get_selected_row(GTK_LIST_BOX(p->list_box));
+    if (row) sel = (int64_t)gtk_list_box_row_get_index(row);
+    sftp_push_event(p, SFTP_EV_DELETE, sel);
+}
+static void on_sftp_menu_mkdir(GtkWidget *w, gpointer data)
+{
+    (void)w;
+    SftpPanel *p = (SftpPanel *)data;
+    sftp_push_event(p, SFTP_EV_MKDIR, -1);
+}
+
+static void on_sftp_row_activated(GtkListBox *lb, GtkListBoxRow *row, gpointer data)
+{
+    (void)lb;
+    SftpPanel *p = (SftpPanel *)data;
+    int64_t idx = row ? (int64_t)gtk_list_box_row_get_index(row) : -1;
+    sftp_push_event(p, SFTP_EV_ACTIVATE, idx);
+}
+
+/* Right-click → show context menu */
+static void on_sftp_list_right_click(GtkGestureClick *gesture, int n_press,
+                                      double x, double y, gpointer data)
+{
+    (void)n_press; (void)x; (void)y;
+    SftpPanel *p = (SftpPanel *)data;
+
+    GtkWidget *menu = gtk_popover_menu_new_from_model(NULL);
+
+    GMenu *gm = g_menu_new();
+    GMenuItem *dl  = g_menu_item_new("Download",   NULL);
+    GMenuItem *ul  = g_menu_item_new("Upload here", NULL);
+    GMenuItem *ren = g_menu_item_new("Rename",      NULL);
+    GMenuItem *del = g_menu_item_new("Delete",      NULL);
+    GMenuItem *mkd = g_menu_item_new("New Folder",  NULL);
+    g_menu_append_item(gm, dl);
+    g_menu_append_item(gm, ul);
+    g_menu_append_item(gm, ren);
+    g_menu_append_item(gm, del);
+    g_menu_append_item(gm, mkd);
+    g_object_unref(dl); g_object_unref(ul); g_object_unref(ren);
+    g_object_unref(del); g_object_unref(mkd);
+
+    /* Use a simple GtkPopover with manual buttons instead of GMenuModel
+     * (avoids needing GActions wired up) */
+    g_object_unref(gm);
+    gtk_widget_unparent(menu);
+
+    /* Build a simple popover with buttons */
+    GtkWidget *pop = gtk_popover_new();
+    gtk_widget_set_parent(pop, p->list_box);
+    GdkRectangle rect = { (int)x, (int)y, 1, 1 };
+    gtk_popover_set_pointing_to(GTK_POPOVER(pop), &rect);
+    gtk_popover_set_has_arrow(GTK_POPOVER(pop), FALSE);
+
+    GtkWidget *btnbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_set_margin_start(btnbox, 4);
+    gtk_widget_set_margin_end(btnbox, 4);
+    gtk_widget_set_margin_top(btnbox, 4);
+    gtk_widget_set_margin_bottom(btnbox, 4);
+
+    struct { const char *label; GCallback cb; } items[] = {
+        { "Download",    G_CALLBACK(on_sftp_menu_download) },
+        { "Upload here", G_CALLBACK(on_sftp_menu_upload)   },
+        { "Rename",      G_CALLBACK(on_sftp_menu_rename)   },
+        { "Delete",      G_CALLBACK(on_sftp_menu_delete)   },
+        { "New Folder",  G_CALLBACK(on_sftp_menu_mkdir)    },
+    };
+    for (int i = 0; i < 5; i++) {
+        GtkWidget *b = gtk_button_new_with_label(items[i].label);
+        gtk_button_set_has_frame(GTK_BUTTON(b), FALSE);
+        g_signal_connect(b, "clicked", items[i].cb, p);
+        /* Dismiss popover after click */
+        g_signal_connect_swapped(b, "clicked", G_CALLBACK(gtk_popover_popdown), pop);
+        gtk_box_append(GTK_BOX(btnbox), b);
+    }
+
+    gtk_popover_set_child(GTK_POPOVER(pop), btnbox);
+    gtk_popover_popup(GTK_POPOVER(pop));
+
+    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+}
+
+static void on_sftp_up_clicked(GtkButton *btn, gpointer data)
+{
+    (void)btn;
+    SftpPanel *p = (SftpPanel *)data;
+    sftp_push_event(p, SFTP_EV_UP, -1);
+}
+static void on_sftp_refresh_clicked(GtkButton *btn, gpointer data)
+{
+    (void)btn;
+    SftpPanel *p = (SftpPanel *)data;
+    sftp_push_event(p, SFTP_EV_REFRESH, -1);
+}
+
+/* ── Public API ───────────────────────────────────────────────────────────── */
+
+int64_t nitty_gtk4_sftp_create(void)
+{
+    SftpPanel *p = &g_sftp;
+    memset(p, 0, sizeof(*p));
+    g_sftp_initialized = 1;
+
+    /* Outer vertical box */
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_size_request(vbox, g_sftp_paned_pos, -1);
+
+    /* ── Header: path label + Up/Refresh buttons ── */
+    GtkWidget *hdr = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+    gtk_widget_set_margin_start(hdr, 4);
+    gtk_widget_set_margin_end(hdr, 4);
+    gtk_widget_set_margin_top(hdr, 4);
+    gtk_widget_set_margin_bottom(hdr, 2);
+
+    GtkWidget *path_lbl = gtk_label_new("/");
+    gtk_label_set_ellipsize(GTK_LABEL(path_lbl), PANGO_ELLIPSIZE_START);
+    gtk_label_set_xalign(GTK_LABEL(path_lbl), 0.0f);
+    gtk_widget_set_hexpand(path_lbl, TRUE);
+    p->path_label = path_lbl;
+
+    GtkWidget *btn_up  = gtk_button_new_with_label("↑");
+    GtkWidget *btn_ref = gtk_button_new_with_label("⟳");
+    gtk_widget_set_tooltip_text(btn_up,  "Go up");
+    gtk_widget_set_tooltip_text(btn_ref, "Refresh");
+    g_signal_connect(btn_up,  "clicked", G_CALLBACK(on_sftp_up_clicked),      p);
+    g_signal_connect(btn_ref, "clicked", G_CALLBACK(on_sftp_refresh_clicked),  p);
+
+    gtk_box_append(GTK_BOX(hdr), path_lbl);
+    gtk_box_append(GTK_BOX(hdr), btn_up);
+    gtk_box_append(GTK_BOX(hdr), btn_ref);
+    gtk_box_append(GTK_BOX(vbox), hdr);
+    gtk_box_append(GTK_BOX(vbox), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+
+    /* ── File list ── */
+    GtkWidget *sw = gtk_scrolled_window_new();
+    gtk_widget_set_vexpand(sw, TRUE);
+    p->scroll = sw;
+
+    GtkWidget *lb = gtk_list_box_new();
+    gtk_list_box_set_selection_mode(GTK_LIST_BOX(lb), GTK_SELECTION_SINGLE);
+    g_signal_connect(lb, "row-activated", G_CALLBACK(on_sftp_row_activated), p);
+    p->list_box = lb;
+
+    /* Right-click gesture on the list box */
+    GtkGesture *rclick = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(rclick), 3); /* right button */
+    g_signal_connect(rclick, "pressed", G_CALLBACK(on_sftp_list_right_click), p);
+    gtk_widget_add_controller(lb, GTK_EVENT_CONTROLLER(rclick));
+
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw), lb);
+    gtk_box_append(GTK_BOX(vbox), sw);
+
+    /* ── Footer: status label + xfer label ── */
+    gtk_box_append(GTK_BOX(vbox), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+
+    GtkWidget *footer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_margin_start(footer, 4);
+    gtk_widget_set_margin_end(footer, 4);
+    gtk_widget_set_margin_top(footer, 2);
+    gtk_widget_set_margin_bottom(footer, 4);
+
+    GtkWidget *status_lbl = gtk_label_new("Connecting…");
+    gtk_label_set_xalign(GTK_LABEL(status_lbl), 0.0f);
+    gtk_label_set_ellipsize(GTK_LABEL(status_lbl), PANGO_ELLIPSIZE_END);
+    p->status_label = status_lbl;
+
+    GtkWidget *xfer_lbl = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(xfer_lbl), 0.0f);
+    gtk_label_set_ellipsize(GTK_LABEL(xfer_lbl), PANGO_ELLIPSIZE_END);
+    p->xfer_label = xfer_lbl;
+
+    gtk_box_append(GTK_BOX(footer), status_lbl);
+    gtk_box_append(GTK_BOX(footer), xfer_lbl);
+    gtk_box_append(GTK_BOX(vbox), footer);
+
+    p->vbox = vbox;
+    return (int64_t)(uintptr_t)vbox;
+}
+
+/* Attach the SFTP panel on the RIGHT side of the terminal drawing area.
+ * If sidebar_attach already created a GtkPaned (left sidebar), we nest
+ * another GtkPaned inside the end-child of that one.
+ * If no sidebar exists yet, we wrap the drawing area directly. */
+void nitty_gtk4_sftp_panel_attach(int64_t win, int64_t drawing_area,
+                                   int64_t sftp_panel)
+{
+    GtkWindow *window  = GTK_WINDOW((GtkWidget *)(uintptr_t)win);
+    GtkWidget *da      = (GtkWidget *)(uintptr_t)drawing_area;
+    GtkWidget *panel   = (GtkWidget *)(uintptr_t)sftp_panel;
+
+    /* Find the widget that currently contains the drawing area:
+     * either the window's direct child or the end-child of a GtkPaned
+     * (created by sidebar_attach). */
+    GtkWidget *root_child = gtk_window_get_child(window);
+
+    if (root_child && GTK_IS_PANED(root_child)) {
+        /* Sidebar paned exists — insert a second paned inside its end-child */
+        GtkWidget *existing_end = gtk_paned_get_end_child(GTK_PANED(root_child));
+        if (existing_end == da) {
+            g_object_ref(da);
+            gtk_paned_set_end_child(GTK_PANED(root_child), NULL);
+
+            GtkWidget *paned2 = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+            gtk_paned_set_start_child(GTK_PANED(paned2), da);
+            gtk_paned_set_end_child(GTK_PANED(paned2), panel);
+            gtk_paned_set_position(GTK_PANED(paned2), 10000); /* start maximised */
+            gtk_paned_set_shrink_start_child(GTK_PANED(paned2), FALSE);
+            gtk_paned_set_resize_start_child(GTK_PANED(paned2), TRUE);
+            gtk_paned_set_resize_end_child(GTK_PANED(paned2), FALSE);
+
+            gtk_paned_set_end_child(GTK_PANED(root_child), paned2);
+            g_sftp_paned = paned2;
+            g_object_unref(da);
+            return;
+        }
+    }
+
+    /* No sidebar — wrap drawing area directly */
+    if (root_child == da) {
+        g_object_ref(da);
+        gtk_window_set_child(window, NULL);
+    }
+
+    GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_paned_set_start_child(GTK_PANED(paned), da);
+    gtk_paned_set_end_child(GTK_PANED(paned), panel);
+    gtk_paned_set_position(GTK_PANED(paned), 10000);
+    gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
+    gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
+    gtk_paned_set_resize_end_child(GTK_PANED(paned), FALSE);
+
+    gtk_window_set_child(window, paned);
+    g_sftp_paned = paned;
+
+    if (root_child == da) g_object_unref(da);
+}
+
+void nitty_gtk4_sftp_panel_set_visible(int32_t visible)
+{
+    if (!g_sftp_initialized) return;
+    gtk_widget_set_visible(g_sftp.vbox, visible ? TRUE : FALSE);
+    g_sftp_visible = visible;
+    if (g_sftp_paned) {
+        if (visible) {
+            /* Restore panel: shrink terminal by panel width */
+            int total = gtk_widget_get_width(g_sftp_paned);
+            int pos   = (total > g_sftp_paned_pos + 80) ? (total - g_sftp_paned_pos) : total - 240;
+            gtk_paned_set_position(GTK_PANED(g_sftp_paned), pos > 0 ? pos : total);
+        } else {
+            /* Hide: push paned position to full width (end-child collapses) */
+            gtk_paned_set_position(GTK_PANED(g_sftp_paned), 100000);
+        }
+    }
+}
+
+/* Sub-widget accessors */
+int64_t nitty_gtk4_sftp_path_label(int64_t sftp_widget)
+{
+    (void)sftp_widget;
+    return g_sftp_initialized ? (int64_t)(uintptr_t)g_sftp.path_label : 0;
+}
+int64_t nitty_gtk4_sftp_list_box(int64_t sftp_widget)
+{
+    (void)sftp_widget;
+    return g_sftp_initialized ? (int64_t)(uintptr_t)g_sftp.list_box : 0;
+}
+int64_t nitty_gtk4_sftp_status_label(int64_t sftp_widget)
+{
+    (void)sftp_widget;
+    return g_sftp_initialized ? (int64_t)(uintptr_t)g_sftp.status_label : 0;
+}
+int64_t nitty_gtk4_sftp_xfer_label(int64_t sftp_widget)
+{
+    (void)sftp_widget;
+    return g_sftp_initialized ? (int64_t)(uintptr_t)g_sftp.xfer_label : 0;
+}
+
+/* Event poll — returns next event code (0 = none) */
+int64_t nitty_gtk4_sftp_event_poll(int64_t sftp_widget)
+{
+    (void)sftp_widget;
+    if (!g_sftp_initialized) return SFTP_EV_NONE;
+    SftpPanel *p = &g_sftp;
+    if (p->ev_head == p->ev_tail) return SFTP_EV_NONE;
+    int64_t ev = p->ev_buf[p->ev_head];
+    p->ev_head = (p->ev_head + 1) % 32;
+    return ev;
+}
+
+/* Row index of the last activate / context-menu event */
+int64_t nitty_gtk4_sftp_event_row(void)
+{
+    return g_sftp_initialized ? g_sftp.ev_last_row : -1;
+}

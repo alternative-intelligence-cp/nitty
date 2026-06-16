@@ -331,6 +331,7 @@ pub func:hotkeys_init_defaults = NIL() {
     drop(_hk_add("app.settings",        44i64,  3i64, 0i64, 0i64, 1i64));  // , = 44
     drop(_hk_add("app.quit",            113i64, 3i64, 0i64, 0i64, 1i64));  // q = 113
     drop(_hk_add("connection.manager",  98i64,  3i64, 0i64, 0i64, 1i64));  // b = 98
+    drop(_hk_add("sftp.browser",       115i64, 3i64, 0i64, 0i64, 1i64));  // s = 115 (Ctrl+Shift+S)
 
     pass(NIL);
 };

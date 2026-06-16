@@ -700,5 +700,26 @@ extern "nitty_gtk4_shim" {
     func:nitty_gtk4_profile_editor_get_user     = string();
     func:nitty_gtk4_profile_editor_get_auth     = string();
     func:nitty_gtk4_profile_editor_get_key_path = string();
+
+    // ── v0.8.5: SFTP Browser Panel ──────────────────────────────────────────
+    // Create SFTP browser composite widget (path label, list, status bar).
+    func:nitty_gtk4_sftp_create = int64();
+
+    // Attach SFTP panel to the right of the terminal drawing area.
+    func:nitty_gtk4_sftp_panel_attach      = NIL(int64:win, int64:drawing_area, int64:sftp_panel);
+    func:nitty_gtk4_sftp_panel_set_visible = NIL(int32:visible);
+
+    // Sub-widget accessors (sftp_widget = pointer returned by sftp_create).
+    func:nitty_gtk4_sftp_path_label   = int64(int64:sftp_widget);
+    func:nitty_gtk4_sftp_list_box     = int64(int64:sftp_widget);
+    func:nitty_gtk4_sftp_status_label = int64(int64:sftp_widget);
+    func:nitty_gtk4_sftp_xfer_label   = int64(int64:sftp_widget);
+
+    // Event polling:
+    //   0=none  1=activate  2=refresh  3=download  4=upload
+    //   5=rename  6=delete  7=new folder  8=up
+    func:nitty_gtk4_sftp_event_poll = int64(int64:sftp_widget);
+    func:nitty_gtk4_sftp_event_row  = int64();  // row index of last activate/context event
 }
+
 

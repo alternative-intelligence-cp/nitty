@@ -1,0 +1,495 @@
+// src/ssh/ssh_sftp.npk — SFTP Session Manager & Directory Operations (v0.8.5)
+//
+// Manages SFTP subsystem sessions multiplexed over existing SSH connections.
+// Each pane's SSH session can open one SFTP subsystem channel. File operations
+// are sent as SFTP packets; responses are processed in sftp_tick() each frame.
+//
+// API Summary:
+//   sftp_init()                      — call from app_init()
+//   sftp_session_open(pane_slot)     — open SFTP subsystem over active SSH
+//   sftp_tick(pane_slot)             — advance state machine (call each frame)
+//   sftp_session_state(pane_slot)    — returns SFTP_STATE_*
+//   sftp_list_dir(pane_slot, path)   — start directory listing
+//   sftp_entry_count(pane_slot)      — how many entries after listing completes
+//   sftp_entry_name/is_dir/size/...  — read individual entry fields
+//   sftp_mkdir/rename/delete/rmdir   — remote file operations
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/src/nitpick_ssh.npk".*;
+use "/home/randy/Workspace/REPOS/nitty/src/core/pane.npk".*;
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+pub fixed int64:SFTP_MAX           = 8i64;
+pub fixed int64:SFTP_ENTRY_MAX     = 512i64;
+
+pub fixed int64:SFTP_STATE_NONE    = 0i64;  // no session
+pub fixed int64:SFTP_STATE_OPENING = 1i64;  // channel open sent, waiting confirm
+pub fixed int64:SFTP_STATE_SUBSYS  = 2i64;  // subsystem request sent, waiting success
+pub fixed int64:SFTP_STATE_INIT    = 3i64;  // FXP_INIT sent, waiting FXP_VERSION
+pub fixed int64:SFTP_STATE_READY   = 4i64;  // ready for file operations
+pub fixed int64:SFTP_STATE_LISTING = 5i64;  // OPENDIR/READDIR loop in progress
+pub fixed int64:SFTP_STATE_ERROR   = 6i64;  // terminal error — session must be closed
+
+// SFTP open flags (SSH_FXF_* constants)
+pub fixed int64:SFTP_OPEN_READ    = 1i64;
+pub fixed int64:SFTP_OPEN_WRITE   = 2i64;
+pub fixed int64:SFTP_OPEN_APPEND  = 4i64;
+pub fixed int64:SFTP_OPEN_CREAT   = 8i64;
+pub fixed int64:SFTP_OPEN_TRUNC   = 16i64;
+
+// Directory listing sub-states
+fixed int64:_LS_IDLE          = 0i64;
+fixed int64:_LS_OPENDIR_SENT  = 1i64;
+fixed int64:_LS_READDIR_LOOP  = 2i64;
+fixed int64:_LS_CLOSEDIR_SENT = 3i64;
+
+// ── Module state ──────────────────────────────────────────────────────────────
+
+int64[8]:g_sftp_pane_slot         = [-1i64,-1i64,-1i64,-1i64,-1i64,-1i64,-1i64,-1i64];  // pane owning this slot (-1 = free)
+int64[8]:g_sftp_state             = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];   // SFTP_STATE_*
+int64[8]:g_sftp_handle            = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];   // sftp ahash (ssh_sftp_init result)
+int64[8]:g_sftp_channel_id        = [-1i64,-1i64,-1i64,-1i64,-1i64,-1i64,-1i64,-1i64];  // SSH channel id
+string[8]:g_sftp_cwd              = ["/","/","/","/","/","/","/","/"];    // current directory
+string[8]:g_sftp_error            = ["","","","","","","",""];     // last error string
+int64[8]:g_sftp_ls_state          = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];   // _LS_* listing sub-state
+int64[8]:g_sftp_ls_dir_handle     = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];   // dir handle buf during listing
+int64[8]:g_sftp_ls_entry_count    = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];   // entries so far in current listing
+
+// Entry listing results: 2D as 1D, idx = slot * SFTP_ENTRY_MAX + i
+string[4096]:g_sftp_entry_name;              // 8 slots * 512 entries
+string[4096]:g_sftp_entry_path;
+int64[4096]:g_sftp_entry_size;
+int64[4096]:g_sftp_entry_perms;
+int64[4096]:g_sftp_entry_mtime;
+int64[4096]:g_sftp_entry_is_dir;
+int64[8]:g_sftp_entry_count       = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+func:_sftp_slot_for_pane = int64(int64:pane_slot) {
+    int64:i = 0i64;
+    while (i < SFTP_MAX) {
+        if (g_sftp_pane_slot[i] == pane_slot) { pass(i); }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+func:_sftp_alloc_slot = int64(int64:pane_slot) {
+    int64:i = 0i64;
+    while (i < SFTP_MAX) {
+        if (g_sftp_pane_slot[i] == -1i64) {
+            g_sftp_pane_slot[i]      = pane_slot;
+            g_sftp_state[i]          = SFTP_STATE_NONE;
+            g_sftp_handle[i]         = 0i64;
+            g_sftp_channel_id[i]     = -1i64;
+            g_sftp_cwd[i]            = "/";
+            g_sftp_error[i]          = "";
+            g_sftp_ls_state[i]       = _LS_IDLE;
+            g_sftp_entry_count[i]    = 0i64;
+            g_sftp_ls_entry_count[i] = 0i64;
+            pass(i);
+        }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+// Append entries from current ssh_sftp_parse_name() results into slot's arrays.
+func:_sftp_append_entries = NIL(int64:slot) {
+    int64:base = slot * SFTP_ENTRY_MAX;
+    int64:cur  = g_sftp_ls_entry_count[slot];
+    int64:n    = raw SSH_sftp_name_count();
+    string:cwd = g_sftp_cwd[slot];
+    int64:i    = 0i64;
+    while (i < n) {
+        if ((cur + i) >= SFTP_ENTRY_MAX) { i = n; }  // force exit
+        if (i < n) {
+        string:fname = raw SSH_sftp_name_get(i);
+        int64:skip = is (fname == "." || fname == "..") : 1i64 : 0i64;
+        if (skip == 0i64) {
+        int64:idx = base + cur;
+        string:sep = is (string_length(cwd) > 1i64) : "/" : "";
+        g_sftp_entry_name[idx]   = fname;
+        g_sftp_entry_path[idx]   = string_concat(cwd, string_concat(sep, fname));
+        g_sftp_entry_size[idx]   = raw SSH_sftp_name_fsize(i);
+        g_sftp_entry_perms[idx]  = raw SSH_sftp_name_perms(i);
+        g_sftp_entry_mtime[idx]  = raw SSH_sftp_name_mtime(i);
+        g_sftp_entry_is_dir[idx] = raw SSH_sftp_name_is_dir(i);
+        cur = cur + 1i64;
+        }  // end if skip
+        i = i + 1i64;
+        }  // end bounds check
+    }
+    g_sftp_ls_entry_count[slot] = cur;
+    pass(NIL);
+};
+
+// Send an SFTP message over the session's SFTP channel.
+// Wraps the SFTP packet in SSH_MSG_CHANNEL_DATA and sends it.
+func:_sftp_send = NIL(int64:session, int64:slot, int64:sftp_msg) {
+    int64:chan_id   = g_sftp_channel_id[slot];
+    int64:data_msg  = raw SSH_channel_data_msg(session, chan_id, sftp_msg);
+    drop(raw SSH_send_packet(session, data_msg));
+    drop(raw SSH_buf_free(data_msg));
+    pass(NIL);
+};
+
+// Read the next incoming SFTP packet from the channel (returns 0 if none ready).
+func:_sftp_recv = int64(int64:session, int64:slot) {
+    int64:chan_id = g_sftp_channel_id[slot];
+    int64:raw_buf = raw SSH_channel_read_buf(session, chan_id);
+    pass(raw_buf);
+};
+
+// ── Public API — Session lifecycle ────────────────────────────────────────────
+
+pub func:sftp_init = NIL() {
+    int64:i = 0i64;
+    while (i < SFTP_MAX) {
+        g_sftp_pane_slot[i]   = -1i64;
+        g_sftp_state[i]       = SFTP_STATE_NONE;
+        g_sftp_handle[i]      = 0i64;
+        g_sftp_channel_id[i]  = -1i64;
+        i = i + 1i64;
+    }
+    pass(NIL);
+};
+
+/// Open a new SFTP session on the given pane_slot's SSH connection.
+/// Call sftp_tick() each frame to advance the handshake.
+pub func:sftp_session_open = NIL(int64:pane_slot) {
+    int64:session = raw pane_get_ssh_session(pane_slot);
+    if (session == 0i64) { pass(NIL); }
+
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64) { slot = raw _sftp_alloc_slot(pane_slot); }
+    if (slot == -1i64) { pass(NIL); }  // no free slots
+
+    // Open a new "session" channel for the SFTP subsystem
+    int64:chan_open_msg = raw SSH_channel_open(session, "session");
+    drop(raw SSH_send_packet(session, chan_open_msg));
+    drop(raw SSH_buf_free(chan_open_msg));
+
+    // Channel id will be assigned when CHANNEL_OPEN_CONFIRMATION is received
+    int64:chan_id = raw SSH_channel_last_id(session);
+    g_sftp_channel_id[slot] = chan_id;
+    g_sftp_handle[slot]     = raw SSH_sftp_init(session);
+    g_sftp_state[slot]      = SFTP_STATE_OPENING;
+    pass(NIL);
+};
+
+/// Close the SFTP session for the given pane_slot.
+pub func:sftp_session_close = NIL(int64:pane_slot) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64) { pass(NIL); }
+    if (g_sftp_ls_dir_handle[slot] != 0i64) {
+        drop(raw SSH_buf_free(g_sftp_ls_dir_handle[slot]));
+        g_sftp_ls_dir_handle[slot] = 0i64;
+    }
+    g_sftp_pane_slot[slot]         = -1i64;
+    g_sftp_state[slot]             = SFTP_STATE_NONE;
+    g_sftp_channel_id[slot]        = -1i64;
+    g_sftp_handle[slot]            = 0i64;
+    g_sftp_ls_state[slot]          = _LS_IDLE;
+    g_sftp_ls_entry_count[slot]    = 0i64;
+    g_sftp_entry_count[slot]       = 0i64;
+    pass(NIL);
+};
+
+pub func:sftp_session_state = int64(int64:pane_slot) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64) { pass SFTP_STATE_NONE; }
+    pass(g_sftp_state[slot]);
+};
+
+pub func:sftp_session_get_cwd = string(int64:pane_slot) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64) { pass ""; }
+    pass(g_sftp_cwd[slot]);
+};
+
+pub func:sftp_session_error = string(int64:pane_slot) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64) { pass ""; }
+    pass(g_sftp_error[slot]);
+};
+
+/// Return the channel id for use by sftp_transfer.npk.
+pub func:sftp_get_channel_id = int64(int64:pane_slot) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64) { pass -1i64; }
+    pass(g_sftp_channel_id[slot]);
+};
+
+/// Return the SFTP state hash for use by sftp_transfer.npk.
+pub func:sftp_get_handle = int64(int64:pane_slot) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64) { pass 0i64; }
+    pass(g_sftp_handle[slot]);
+};
+
+// ── Public API — Directory operations ─────────────────────────────────────────
+
+/// Begin listing the remote directory at `path`.
+/// Poll sftp_session_state() each frame; returns SFTP_STATE_READY when done.
+pub func:sftp_list_dir = NIL(int64:pane_slot, string:path) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64 || g_sftp_state[slot] != SFTP_STATE_READY) { pass(NIL); }
+    int64:session = raw pane_get_ssh_session(pane_slot);
+    int64:sftp    = g_sftp_handle[slot];
+    int64:msg     = raw SSH_sftp_opendir_msg(sftp, path);
+    drop(raw _sftp_send(session, slot, msg));
+    drop(raw SSH_buf_free(msg));
+    g_sftp_cwd[slot]            = path;
+    g_sftp_ls_state[slot]       = _LS_OPENDIR_SENT;
+    g_sftp_ls_entry_count[slot] = 0i64;
+    g_sftp_entry_count[slot]    = 0i64;
+    g_sftp_state[slot]          = SFTP_STATE_LISTING;
+    pass(NIL);
+};
+
+pub func:sftp_mkdir = NIL(int64:pane_slot, string:path) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64 || g_sftp_state[slot] != SFTP_STATE_READY) { pass(NIL); }
+    int64:session = raw pane_get_ssh_session(pane_slot);
+    int64:msg = raw SSH_sftp_mkdir_msg(g_sftp_handle[slot], path);
+    drop(raw _sftp_send(session, slot, msg));
+    drop(raw SSH_buf_free(msg));
+    pass(NIL);
+};
+
+pub func:sftp_rmdir = NIL(int64:pane_slot, string:path) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64 || g_sftp_state[slot] != SFTP_STATE_READY) { pass(NIL); }
+    int64:session = raw pane_get_ssh_session(pane_slot);
+    int64:msg = raw SSH_sftp_rmdir_msg(g_sftp_handle[slot], path);
+    drop(raw _sftp_send(session, slot, msg));
+    drop(raw SSH_buf_free(msg));
+    pass(NIL);
+};
+
+pub func:sftp_delete = NIL(int64:pane_slot, string:path) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64 || g_sftp_state[slot] != SFTP_STATE_READY) { pass(NIL); }
+    int64:session = raw pane_get_ssh_session(pane_slot);
+    int64:msg = raw SSH_sftp_remove_msg(g_sftp_handle[slot], path);
+    drop(raw _sftp_send(session, slot, msg));
+    drop(raw SSH_buf_free(msg));
+    pass(NIL);
+};
+
+pub func:sftp_rename = NIL(int64:pane_slot, string:src, string:dst) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64 || g_sftp_state[slot] != SFTP_STATE_READY) { pass(NIL); }
+    int64:session = raw pane_get_ssh_session(pane_slot);
+    int64:msg = raw SSH_sftp_rename_msg(g_sftp_handle[slot], src, dst);
+    drop(raw _sftp_send(session, slot, msg));
+    drop(raw SSH_buf_free(msg));
+    pass(NIL);
+};
+
+// ── Public API — Entry listing getters ────────────────────────────────────────
+
+pub func:sftp_entry_count = int64(int64:pane_slot) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64) { pass 0i64; }
+    pass(g_sftp_entry_count[slot]);
+};
+
+pub func:sftp_entry_name = string(int64:pane_slot, int64:i) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64 || i < 0i64 || i >= g_sftp_entry_count[slot]) { pass ""; }
+    pass(g_sftp_entry_name[slot * SFTP_ENTRY_MAX + i]);
+};
+
+pub func:sftp_entry_path = string(int64:pane_slot, int64:i) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64 || i < 0i64 || i >= g_sftp_entry_count[slot]) { pass ""; }
+    pass(g_sftp_entry_path[slot * SFTP_ENTRY_MAX + i]);
+};
+
+pub func:sftp_entry_is_dir = int64(int64:pane_slot, int64:i) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64 || i < 0i64 || i >= g_sftp_entry_count[slot]) { pass 0i64; }
+    pass(g_sftp_entry_is_dir[slot * SFTP_ENTRY_MAX + i]);
+};
+
+pub func:sftp_entry_size = int64(int64:pane_slot, int64:i) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64 || i < 0i64 || i >= g_sftp_entry_count[slot]) { pass 0i64; }
+    pass(g_sftp_entry_size[slot * SFTP_ENTRY_MAX + i]);
+};
+
+pub func:sftp_entry_perms = int64(int64:pane_slot, int64:i) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64 || i < 0i64 || i >= g_sftp_entry_count[slot]) { pass 0i64; }
+    pass(g_sftp_entry_perms[slot * SFTP_ENTRY_MAX + i]);
+};
+
+pub func:sftp_entry_mtime = int64(int64:pane_slot, int64:i) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64 || i < 0i64 || i >= g_sftp_entry_count[slot]) { pass 0i64; }
+    pass(g_sftp_entry_mtime[slot * SFTP_ENTRY_MAX + i]);
+};
+
+/// Return a display label for an entry: "[D] dirname" or "    filename  42 KB"
+pub func:sftp_entry_label = string(int64:pane_slot, int64:i) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64 || i < 0i64 || i >= g_sftp_entry_count[slot]) { pass ""; }
+    int64:base = slot * SFTP_ENTRY_MAX + i;
+    string:name = g_sftp_entry_name[base];
+    if (g_sftp_entry_is_dir[base] == 1i64) {
+        pass(string_concat("[D] ", name));
+    }
+    int64:sz = g_sftp_entry_size[base];
+    string:sz_label = "";
+    if (sz < 1024i64) {
+        sz_label = string_concat(string_from_int(sz), " B");
+    }
+    if (sz >= 1024i64 && sz < 1048576i64) {
+        sz_label = string_concat(string_from_int(sz / 1024i64), " KB");
+    }
+    if (sz >= 1048576i64) {
+        sz_label = string_concat(string_from_int(sz / 1048576i64), " MB");
+    }
+    pass(string_concat("    ", string_concat(name, string_concat("  ", sz_label))));
+};
+
+// ── Frame tick — SFTP connection state machine ────────────────────────────────
+
+/// Called every frame from tw_on_draw() for SSH panes.
+/// Advances the SFTP handshake and directory listing state machines.
+pub func:sftp_tick = NIL(int64:pane_slot) {
+    int64:slot = raw _sftp_slot_for_pane(pane_slot);
+    if (slot == -1i64) { pass(NIL); }
+    int64:state   = g_sftp_state[slot];
+    int64:session = raw pane_get_ssh_session(pane_slot);
+
+    // ── OPENING: wait for SSH_MSG_CHANNEL_OPEN_CONFIRMATION ──────────────────
+    if (state == SFTP_STATE_OPENING) {
+        int64:resp_buf = raw SSH_recv_packet(session);
+        if (resp_buf == 0i64) { pass(NIL); }
+        int64:sftp_ok = @cast_unchecked<int64>(raw SSH_channel_open_confirm(session, resp_buf));
+        drop(raw SSH_buf_free(resp_buf));
+        if (sftp_ok == 1i64) {
+            // Send SSH_MSG_CHANNEL_REQUEST "subsystem" sftp
+            int64:sub_msg = raw SSH_channel_request_subsystem(session, g_sftp_channel_id[slot], "sftp");
+            drop(raw SSH_send_packet(session, sub_msg));
+            drop(raw SSH_buf_free(sub_msg));
+            g_sftp_state[slot] = SFTP_STATE_SUBSYS;
+        }
+        if (sftp_ok != 1i64) {
+            g_sftp_error[slot] = "channel open failed";
+            g_sftp_state[slot] = SFTP_STATE_ERROR;
+        }
+        pass(NIL);
+    }
+
+    // ── SUBSYS: wait for CHANNEL_SUCCESS (99) ────────────────────────────────
+    if (state == SFTP_STATE_SUBSYS) {
+        int64:resp_buf = raw SSH_recv_packet(session);
+        if (resp_buf == 0i64) { pass(NIL); }
+        int64:req_ok = @cast_unchecked<int64>(raw SSH_channel_request_response(session, resp_buf));
+        drop(raw SSH_buf_free(resp_buf));
+        if (req_ok == 1i64) {
+            // Send SSH_FXP_INIT
+            int64:init_msg = raw SSH_sftp_init_msg();
+            drop(raw _sftp_send(session, slot, init_msg));
+            drop(raw SSH_buf_free(init_msg));
+            g_sftp_state[slot] = SFTP_STATE_INIT;
+        }
+        if (req_ok != 1i64) {
+            g_sftp_error[slot] = "subsystem request failed";
+            g_sftp_state[slot] = SFTP_STATE_ERROR;
+        }
+        pass(NIL);
+    }
+
+    // ── INIT: wait for SSH_FXP_VERSION ───────────────────────────────────────
+    if (state == SFTP_STATE_INIT) {
+        int64:raw_buf = raw _sftp_recv(session, slot);
+        if (raw_buf == 0i64) { pass(NIL); }
+        int64:pkt_type = @cast_unchecked<int64>(raw ssh_sftp_packet_type(raw_buf));
+        if (pkt_type == 2i64) {  // SSH_FXP_VERSION
+            drop(raw SSH_sftp_parse_version(raw_buf));
+            g_sftp_state[slot] = SFTP_STATE_READY;
+        }
+        if (pkt_type != 2i64) {
+            g_sftp_error[slot] = "expected FXP_VERSION";
+            g_sftp_state[slot] = SFTP_STATE_ERROR;
+        }
+        drop(raw SSH_buf_free(raw_buf));
+        pass(NIL);
+    }
+
+    // ── LISTING: process OPENDIR → READDIR loop → CLOSEDIR ───────────────────
+    if (state == SFTP_STATE_LISTING) {
+        int64:raw_buf = raw _sftp_recv(session, slot);
+        if (raw_buf == 0i64) { pass(NIL); }
+        int64:pkt_type = @cast_unchecked<int64>(raw ssh_sftp_packet_type(raw_buf));
+        int64:ls_s = g_sftp_ls_state[slot];
+
+        // Waiting for FXP_HANDLE (102) after OPENDIR
+        if (ls_s == _LS_OPENDIR_SENT) {
+            if (pkt_type == 102i64) {  // SSH_FXP_HANDLE
+                int64:dir_h = raw SSH_sftp_parse_handle(raw_buf);
+                g_sftp_ls_dir_handle[slot] = dir_h;
+                // Send first READDIR
+                int64:rd_msg = raw SSH_sftp_readdir_msg(g_sftp_handle[slot], dir_h);
+                drop(raw _sftp_send(session, slot, rd_msg));
+                drop(raw SSH_buf_free(rd_msg));
+                g_sftp_ls_state[slot] = _LS_READDIR_LOOP;
+            }
+            if (pkt_type != 102i64) {
+                g_sftp_error[slot] = "opendir failed";
+                g_sftp_state[slot] = SFTP_STATE_READY;
+            }
+            drop(raw SSH_buf_free(raw_buf));
+            pass(NIL);
+        }
+
+        // READDIR loop: FXP_NAME (104) → accumulate, FXP_STATUS EOF (101) → done
+        if (ls_s == _LS_READDIR_LOOP) {
+            if (pkt_type == 104i64) {  // SSH_FXP_NAME
+                drop(raw SSH_sftp_parse_name(raw_buf));
+                drop(raw _sftp_append_entries(slot));
+                // Send next READDIR
+                int64:rd_msg = raw SSH_sftp_readdir_msg(g_sftp_handle[slot], g_sftp_ls_dir_handle[slot]);
+                drop(raw _sftp_send(session, slot, rd_msg));
+                drop(raw SSH_buf_free(rd_msg));
+            }
+            if (pkt_type == 101i64) {  // SSH_FXP_STATUS
+                int64:sc = @cast_unchecked<int64>(raw ssh_sftp_parse_status(raw_buf));
+                if (sc == 1i64) {  // SSH_FX_EOF — listing complete
+                    int64:close_msg = raw SSH_sftp_close_msg(g_sftp_handle[slot], g_sftp_ls_dir_handle[slot]);
+                    drop(raw _sftp_send(session, slot, close_msg));
+                    drop(raw SSH_buf_free(close_msg));
+                    drop(raw SSH_buf_free(g_sftp_ls_dir_handle[slot]));
+                    g_sftp_ls_dir_handle[slot] = 0i64;
+                    g_sftp_ls_state[slot]      = _LS_CLOSEDIR_SENT;
+                }
+            if (pkt_type != 104i64 && pkt_type != 101i64) {
+                    g_sftp_error[slot] = "readdir error";
+                    g_sftp_state[slot] = SFTP_STATE_READY;
+                }
+            }
+            drop(raw SSH_buf_free(raw_buf));
+            pass(NIL);
+        }
+
+        // CLOSEDIR: any response → listing committed
+        if (ls_s == _LS_CLOSEDIR_SENT) {
+            drop(raw SSH_buf_free(raw_buf));
+            g_sftp_entry_count[slot] = g_sftp_ls_entry_count[slot];
+            g_sftp_ls_state[slot]    = _LS_IDLE;
+            g_sftp_state[slot]       = SFTP_STATE_READY;
+            pass(NIL);
+        }
+
+        drop(raw SSH_buf_free(raw_buf));
+        pass(NIL);
+    }
+
+    pass(NIL);
+};

@@ -928,6 +928,31 @@ const char *nitty_gtk4_profile_editor_get_user(void);
 const char *nitty_gtk4_profile_editor_get_auth(void);
 const char *nitty_gtk4_profile_editor_get_key_path(void);
 
+
+/* ── SFTP Browser panel (v0.8.5) ─────────────────────────────────────────── */
+
+/* Create SFTP browser composite widget (GtkBox with path label, list box,
+ * status label, xfer label). Returns widget pointer. */
+int64_t nitty_gtk4_sftp_create(void);
+
+/* Attach SFTP panel to the right side of the window (second GtkPaned). */
+void    nitty_gtk4_sftp_panel_attach(int64_t win, int64_t drawing_area,
+                                      int64_t sftp_panel);
+void    nitty_gtk4_sftp_panel_set_visible(int32_t visible);
+
+/* Accessors for internal sub-widgets */
+int64_t nitty_gtk4_sftp_path_label(int64_t sftp_widget);
+int64_t nitty_gtk4_sftp_list_box(int64_t sftp_widget);
+int64_t nitty_gtk4_sftp_status_label(int64_t sftp_widget);
+int64_t nitty_gtk4_sftp_xfer_label(int64_t sftp_widget);
+
+/* Event polling — returns event code each frame:
+ *   0 = none, 1 = activate entry, 2 = refresh, 3 = download,
+ *   4 = upload here, 5 = rename, 6 = delete, 7 = new folder, 8 = up
+ */
+int64_t nitty_gtk4_sftp_event_poll(int64_t sftp_widget);
+int64_t nitty_gtk4_sftp_event_row(void);   /* row index of last event */
+
 #ifdef __cplusplus
 }
 #endif

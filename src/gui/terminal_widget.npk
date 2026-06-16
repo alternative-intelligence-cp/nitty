@@ -83,6 +83,7 @@ use "../ssh/ssh_session.npk".{ssh_poll_read, ssh_get_state}; // v0.8.3: SSH data
 use "../ssh/ssh_forward.npk".{fwd_local_tick, fwd_dynamic_tick}; // v0.8.4: port forward relay
 use "../ssh/ssh_jump.npk".{jump_relay_tick, jump_is_active};      // v0.8.4: jump host relay
 use "../core/pane.npk".{pane_get_type, PANE_TYPE_SSH};            // v0.8.4: pane type check
+use "sftp_browser.npk".*;                                         // v0.8.5: SFTP browser panel
 
 // v0.8.4: Built-in string byte accessor (Nitpick runtime)
 extern func:npk_string_byte_at = int64(string:s, int64:i);
@@ -270,6 +271,11 @@ func:dispatch_action = NIL(string:action, int64:rows, int64:cols) {
         ("app.quit")     { drop(nitty_gtk4_window_close(nitty_gtk4_get_main_window())); },
         // v0.8.3: Connection Manager toggle
         ("connection.manager") { drop(cm_toggle()); },
+        // v0.8.5: SFTP browser toggle
+        ("sftp.browser") {
+            int64:sftp_active_pane = raw split_tree_get_active();
+            drop(sftp_browser_toggle(sftp_active_pane));
+        },
         // v0.6.3: Quake mode toggle
         ("quake.toggle") { drop(quake_toggle()); },
         (*) { }  // unknown action — no-op
@@ -330,6 +336,13 @@ pub func:tw_on_draw = NIL() {
 
     // v0.8.3 Step 0c: Poll connection manager sidebar events each frame
     drop(cm_tick());
+
+    // v0.8.5 Step 0d: Advance SFTP session + transfer state machines for active SSH pane
+    int64:sftp_pane_id = raw split_tree_get_active();
+    if (raw pane_get_type(sftp_pane_id) == PANE_TYPE_SSH) {
+        drop(sftp_browser_tick(sftp_pane_id));
+    }
+    drop(sftp_browser_poll_events());
 
     // Step 0: Focus change reporting (DECSET 1004)
     int64:cur_focused = nitty_gtk4_get_focused();
