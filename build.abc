@@ -33,6 +33,16 @@ flags = ["-fPIC", "-O2", "-Wall", "-Wextra"]
 output = "libnitty_pty_shim.a"
 deps = []
 
+# ── Serial C FFI shim (v0.9.0) ───────────────────────────────────────────────
+
+[target.serial_shim]
+type = "c_library"
+sources = ["shim/serial/nitty_serial_shim.c"]
+compiler = "gcc"
+flags = ["-fPIC", "-O2", "-Wall", "-Wextra", "-D_GNU_SOURCE"]
+output = "libnitty_serial_shim.a"
+deps = []
+
 # ── SSH C shim (nitpick-ssh package shim, pre-built) ─────────────────────────────────
 # Uses the pre-compiled libnitpick_ssh_shim.a from the nitpick-ssh package.
 # No recompilation needed; reference via link_paths.
@@ -42,9 +52,9 @@ deps = []
 [target.nitty]
 type = "binary"
 sources = ["src/main.npk"]
-deps = ["gtk4_shim", "pty_shim"]
+deps = ["gtk4_shim", "pty_shim", "serial_shim"]
 flags = ["-O2"]
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib"]
 
 # ── Test suite ────────────────────────────────────────────────────────────────
@@ -629,3 +639,21 @@ deps = []
 flags = []
 link_libraries = ["nitpick_ssh_shim", "nitpick_env_shim", "nitpick_fs_shim", "nitpick_toml_shim", "nitpick_socket", "nitpick_libc_net"]
 link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-libc/shim"]
+
+# v0.8.6: End-to-end SSH verification (X11 + vault + compression + Zmodem)
+[target.test_ssh_e2e]
+type = "binary"
+sources = ["tests/ssh/test_ssh_e2e.npk"]
+deps = []
+flags = []
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_ssh_shim", "nitpick_env_shim", "nitpick_fs_shim", "nitpick_toml_shim", "ssl", "crypto", "z", "gtk-4", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim"]
+
+# v0.9.0: Serial port foundation unit tests
+[target.test_serial_port]
+type = "binary"
+sources = ["tests/serial/test_serial_port.npk"]
+deps = ["serial_shim"]
+flags = []
+link_libraries = ["nitty_serial_shim"]
+link_paths = [".nitpick_make/build"]

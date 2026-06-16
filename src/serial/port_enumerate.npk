@@ -1,0 +1,74 @@
+// src/serial/port_enumerate.npk — Serial port discovery (v0.9.0)
+//
+// Scans /dev/ for serial port devices and reads sysfs attributes for
+// USB serial adapters to provide human-readable descriptions.
+//
+// API:
+//   SerialPortInfo — struct holding device path + description
+//   serial_enumerate() → int64        — scan and return count (0..64)
+//   serial_port_count() → int64       — number of found ports
+//   serial_port_get_device(i) → string — device path (e.g. "/dev/ttyUSB0")
+//   serial_port_get_desc(i) → string   — description (e.g. "FTDI FT232R")
+//   serial_port_label(i) → string      — combined label for UI display
+//
+// Implementation delegates to nitty_serial_enumerate() C shim which handles
+// the directory scan and sysfs attribute reads.
+
+use "../../src/serial/serial_ffi.npk".*;
+
+// ── SerialPortInfo struct ────────────────────────────────────────────────────
+
+/// Information about a discovered serial port.
+pub struct:SerialPortInfo = {
+    string:device;       // e.g. "/dev/ttyUSB0"
+    string:description;  // e.g. "FTDI FT232R" or "Serial port" or ""
+};
+
+// ── Public API ───────────────────────────────────────────────────────────────
+
+/// Scan /dev/ for available serial ports.
+/// Finds ttyUSB*, ttyACM*, ttyS[0-7] and reads sysfs for USB device info.
+/// Returns the number of ports found (0..64).
+pub func:serial_enumerate = int64() {
+    int64:count = nitty_serial_enumerate();
+    pass(count);
+};
+
+/// Return the number of ports found by the last serial_enumerate() call.
+pub func:serial_port_count = int64() {
+    int64:n = nitty_serial_port_count();
+    pass(n);
+};
+
+/// Return the device path for port at index i (0-based).
+/// Returns "" if i is out of range.
+pub func:serial_port_get_device = string(int64:i) {
+    string:name = nitty_serial_port_name(i);
+    pass(name);
+};
+
+/// Return the description for port at index i (0-based).
+/// Returns "" if unknown or i is out of range.
+pub func:serial_port_get_desc = string(int64:i) {
+    string:desc = nitty_serial_port_desc(i);
+    pass(desc);
+};
+
+/// Return a human-readable label for port i suitable for UI display.
+/// Format: "/dev/ttyUSB0 — FTDI FT232R"  or  "/dev/ttyS0 — Serial port"
+/// If description is empty: just returns the device path.
+pub func:serial_port_label = string(int64:i) {
+    string:dev  = nitty_serial_port_name(i);
+    string:desc = nitty_serial_port_desc(i);
+    if (string_is_empty(desc)) {
+        pass(dev);
+    }
+    pass(string_concat(dev, string_concat(" \xe2\x80\x94 ", desc)));
+};
+
+/// Build a SerialPortInfo for port at index i.
+pub func:serial_port_info = SerialPortInfo(int64:i) {
+    string:dev  = nitty_serial_port_name(i);
+    string:desc = nitty_serial_port_desc(i);
+    pass(SerialPortInfo{device: dev, description: desc});
+};

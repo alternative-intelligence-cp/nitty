@@ -48,6 +48,9 @@ use "../gui/profile_editor.npk".*;       // v0.8.3: profile editor dialog
 use "../ssh/ssh_forward.npk".{fwd_init}; // v0.8.4: port forward state init
 use "../ssh/ssh_jump.npk".{jump_init};   // v0.8.4: jump host state init
 use "../gui/sftp_browser.npk".{sftp_browser_init}; // v0.8.5: SFTP browser panel
+use "../ssh/ssh_x11.npk".{x11_init};            // v0.8.6: X11 forwarding
+use "../ssh/ssh_vault.npk".{vault_init};             // v0.8.6: encrypted vault
+use "../ssh/ssh_zmodem.npk".{zmodem_init};           // v0.8.6: Zmodem file transfer
 
 // fd 1 = stdout
 int64:STDOUT = 1i64;
@@ -92,7 +95,11 @@ pub func:app_init = NIL() {
     drop(jump_init());
     // v0.8.5: Initialize SFTP browser (session pool + transfer queue only —
     // UI widget created in app_run after DrawingArea exists)
-    drop(write_stdout("Nitty v0.8.5 initializing...\n"));
+    // v0.8.6: Initialize X11 forwarding, vault, and Zmodem modules
+    drop(x11_init());
+    drop(vault_init());
+    drop(zmodem_init());
+    drop(write_stdout("Nitty v0.9.0 initializing...\n"));
     pass(NIL);
 };
 
@@ -289,5 +296,5 @@ pub func:app_shutdown = NIL() {
 };
 
 pub func:app_version = string() {
-    pass("0.8.5");
+    pass("0.8.6");
 };
