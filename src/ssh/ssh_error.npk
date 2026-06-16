@@ -1,0 +1,55 @@
+// src/ssh/ssh_error.npk — SSH error codes and helper functions (v0.8.0)
+//
+// Error/result code constants for the SSH subsystem.
+// These mirror the spec's Task 6b requirements, adapted to the nitpick-ssh
+// state-machine model (which uses string states rather than libssh2 int codes).
+//
+// Import with: use "../../src/ssh/ssh_error.npk".*;
+
+// ── SSH Result Codes ────────────────────────────────────────────────────────
+// Returned by session/channel operations. 0 = success, negative = error.
+
+pub func:SSH_OK     = int64() { pass(0i64);   };   // Success
+pub func:SSH_ERROR  = int64() { pass(-1i64);  };   // General error
+pub func:SSH_EAGAIN = int64() { pass(-37i64); };   // Would block (non-blocking mode)
+
+// ── SSH Auth Method Flags ───────────────────────────────────────────────────
+// Bitmask values for advertised authentication methods.
+
+pub func:SSH_AUTH_NONE      = int64() { pass(0i64); };
+pub func:SSH_AUTH_PASSWORD  = int64() { pass(1i64); };
+pub func:SSH_AUTH_PUBLICKEY = int64() { pass(2i64); };
+pub func:SSH_AUTH_AGENT     = int64() { pass(4i64); };
+
+// ── ssh_error_name — map error code to human-readable name ─────────────────
+
+pub func:ssh_error_name = string(int64:code) {
+    if (code == 0i64)   { pass("SSH_OK"); }
+    if (code == -1i64)  { pass("SSH_ERROR"); }
+    if (code == -37i64) { pass("SSH_EAGAIN"); }
+    // Channel-level result codes
+    if (code == -2i64)  { pass("SSH_ERROR_CHANNEL_CLOSED"); }
+    if (code == -3i64)  { pass("SSH_ERROR_AUTH_FAILED"); }
+    if (code == -4i64)  { pass("SSH_ERROR_CONNECT_FAILED"); }
+    if (code == -5i64)  { pass("SSH_ERROR_HANDSHAKE_FAILED"); }
+    if (code == -6i64)  { pass("SSH_ERROR_KEX_FAILED"); }
+    if (code == -7i64)  { pass("SSH_ERROR_BAD_HOST_KEY"); }
+    pass("SSH_ERROR_UNKNOWN");
+};
+
+// ── ssh_is_error — check if a return code indicates an error ───────────────
+
+pub func:ssh_is_error = int64(int64:code) {
+    if (code != 0i64) { pass(1i64); }
+    pass(0i64);
+};
+
+// ── ssh_auth_method_name — map auth method flag to name ────────────────────
+
+pub func:ssh_auth_method_name = string(int64:method) {
+    if (method == 0i64) { pass("none"); }
+    if (method == 1i64) { pass("password"); }
+    if (method == 2i64) { pass("publickey"); }
+    if (method == 4i64) { pass("agent"); }
+    pass("unknown");
+};

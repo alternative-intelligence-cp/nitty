@@ -1,0 +1,152 @@
+// tests/ssh/test_libssh2_ffi.npk — SSH library lifecycle tests (v0.8.0)
+//
+// Tests the nitpick-ssh integration via ssh_error.npk.
+// All tests are pure library lifecycle — no network connections required.
+//
+// Functions are imported from nitpick_ssh.npk with the module prefix SSH_
+// (the compiler prefixes wildcard imports from non-pub modules with the
+// module name: nitpick_ssh.npk → SSH_<funcname>).
+//
+// Tests:
+//   T01: SSH_version_string() returns a non-empty string
+//   T02: SSH_session_create() returns a non-zero handle
+//   T03: SSH_session_state() on a fresh session returns "created"
+//   T04: SSH_buf_create() + SSH_buf_len() + SSH_buf_free() — lifecycle, no crash
+//   T05: SSH_encode_uint32() + SSH_decode_uint32() roundtrip
+//   T06: ssh_error_name(SSH_ERROR) returns a non-empty string
+//   T07: ssh_is_error(0) = false, ssh_is_error(-1) = true
+//   T08: SSH_session_error() on a fresh session returns empty string
+//   T09: SSH_AUTH_PASSWORD and SSH_AUTH_PUBLICKEY constants are distinct
+//   T10: ssh_auth_method_name() returns correct strings
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/src/nitpick_ssh.npk".*;
+use "../../src/ssh/ssh_error.npk".*;
+
+int64:STDOUT = 1i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check_int = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        drop(write_stdout(string_concat("[PASS] ", string_concat(name, "\n"))));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    drop(write_stdout(string_concat("[FAIL] ", string_concat(name,
+        string_concat(" expected=", string_concat(string_from_int(expected),
+        string_concat(" got=", string_concat(string_from_int(got), "\n"))))))));
+    pass(NIL);
+};
+
+func:check_str = NIL(string:name, string:expected, string:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        drop(write_stdout(string_concat("[PASS] ", string_concat(name, "\n"))));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    drop(write_stdout(string_concat("[FAIL] ", string_concat(name,
+        string_concat(" expected=\"", string_concat(expected,
+        string_concat("\" got=\"", string_concat(got, "\"\n"))))))));
+    pass(NIL);
+};
+
+func:check_nonempty = NIL(string:name, string:got) {
+    int64:len = string_length(got);
+    if (len > 0i64) {
+        g_pass = g_pass + 1i64;
+        drop(write_stdout(string_concat("[PASS] ", string_concat(name, "\n"))));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    drop(write_stdout(string_concat("[FAIL] ", string_concat(name, " — empty string\n"))));
+    pass(NIL);
+};
+
+func:check_nonzero = NIL(string:name, int64:got) {
+    if (got != 0i64) {
+        g_pass = g_pass + 1i64;
+        drop(write_stdout(string_concat("[PASS] ", string_concat(name, "\n"))));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    drop(write_stdout(string_concat("[FAIL] ", string_concat(name, " — got zero\n"))));
+    pass(NIL);
+};
+
+func:main = int32() {
+
+    // ── T01: SSH_version_string() is non-empty ──────────────────────────────
+    string:ver = raw SSH_version_string();
+    drop(check_nonempty("T01 ssh_version_string non-empty", ver));
+
+    // ── T02: SSH_session_create() returns non-zero handle ──────────────────
+    int64:sess = raw SSH_session_create();
+    drop(check_nonzero("T02 ssh_session_create returns handle", sess));
+
+    // ── T03: fresh session state = "created" ───────────────────────────────
+    string:state = raw SSH_session_state(sess);
+    drop(check_str("T03 initial session state", "created", state));
+
+    // ── T04: buffer lifecycle — create/len/free, no crash ──────────────────
+    int64:buf = raw SSH_buf_create(256i64);
+    drop(check_nonzero("T04a ssh_buf_create returns handle", buf));
+    int64:blen = raw SSH_buf_len(buf);
+    drop(check_int("T04b fresh buf len = 0", 0i64, blen));
+    drop(SSH_buf_free(buf));
+    g_pass = g_pass + 1i64;
+    drop(write_stdout("[PASS] T04c ssh_buf_free no crash\n"));
+
+    // ── T05: encode/decode uint32 roundtrip ────────────────────────────────
+    int64:enc_buf = raw SSH_buf_create(32i64);
+    int64:val_in = 0xDEADBEEFi64;
+    int64:enc_buf2 = raw SSH_encode_uint32(enc_buf, val_in);
+    int64:val_out = raw SSH_decode_uint32(enc_buf2, 0i64);
+    drop(check_int("T05 encode/decode uint32 roundtrip", val_in, val_out));
+    drop(SSH_buf_free(enc_buf2));
+
+    // ── T06: ssh_error_name(SSH_ERROR) is non-empty ────────────────────────
+    int64:ec = raw SSH_ERROR();
+    string:ename = raw ssh_error_name(ec);
+    drop(check_nonempty("T06a ssh_error_name(SSH_ERROR) non-empty", ename));
+    drop(check_str("T06b ssh_error_name value", "SSH_ERROR", ename));
+
+    // ── T07: ssh_is_error predicate ─────────────────────────────────────────
+    int64:ok_err  = raw ssh_is_error(0i64);
+    int64:neg_err = raw ssh_is_error(-1i64);
+    drop(check_int("T07a ssh_is_error(0) = false", 0i64, ok_err));
+    drop(check_int("T07b ssh_is_error(-1) = true", 1i64, neg_err));
+
+    // ── T08: SSH_session_error() on fresh session = empty ──────────────────
+    string:sess_err = raw SSH_session_error(sess);
+    drop(check_str("T08 fresh session error = empty", "", sess_err));
+
+    // ── T09: auth constants are distinct ────────────────────────────────────
+    int64:pw = raw SSH_AUTH_PASSWORD();
+    int64:pk = raw SSH_AUTH_PUBLICKEY();
+    int64:ag = raw SSH_AUTH_AGENT();
+    drop(check_int("T09a SSH_AUTH_PASSWORD = 1", 1i64, pw));
+    drop(check_int("T09b SSH_AUTH_PUBLICKEY = 2", 2i64, pk));
+    drop(check_int("T09c SSH_AUTH_AGENT = 4", 4i64, ag));
+
+    // ── T10: ssh_auth_method_name() returns correct strings ─────────────────
+    drop(check_str("T10a password method", "password",  raw ssh_auth_method_name(1i64)));
+    drop(check_str("T10b publickey method", "publickey", raw ssh_auth_method_name(2i64)));
+    drop(check_str("T10c agent method", "agent",     raw ssh_auth_method_name(4i64)));
+    drop(check_str("T10d none method", "none",      raw ssh_auth_method_name(0i64)));
+
+    // Report
+    drop(write_stdout(string_concat("Result: ", string_concat(
+        string_from_int(g_pass), string_concat(" passed, ",
+        string_concat(string_from_int(g_fail), " failed\n"))))));
+    if (g_fail != 0i64) { exit 1i32; }
+    exit 0i32;
+};

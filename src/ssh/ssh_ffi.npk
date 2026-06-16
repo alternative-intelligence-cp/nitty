@@ -1,0 +1,21 @@
+// src/ssh/ssh_ffi.npk — Nitty SSH FFI layer (v0.8.0)
+//
+// Re-exports the nitpick-ssh v1.0.0 package as Nitty's SSH backend.
+// nitpick-ssh is a pure Nitpick SSH-2.0 implementation backed by a minimal
+// C shim for binary buffer operations and cryptographic primitives.
+//
+// Import with: use "../../src/ssh/ssh_ffi.npk".*;
+//
+// Provides:
+//   Session management:  ssh_session_create, ssh_session_state, ssh_session_error
+//   Key exchange:        ssh_kexinit_build, ssh_kex_dh_init, ssh_kex_dh_reply
+//   Authentication:      ssh_auth_password, ssh_auth_publickey_sign, ssh_auth_none
+//   Channels:            ssh_channel_open, ssh_channel_request_pty, ssh_channel_request_shell
+//   I/O:                 ssh_channel_read, ssh_channel_data_msg
+//   Network:             ssh_net_connect, ssh_net_close, ssh_net_send_buf, ssh_net_recv_exact
+//   Known hosts:         ssh_known_hosts_load, ssh_known_hosts_check, ssh_known_hosts_add
+//   Buffers:             ssh_buf_create, ssh_buf_free, ssh_buf_len, ssh_buf_clear
+//   Wire format:         ssh_encode_uint32, ssh_decode_uint32, ssh_encode_string, ssh_packet_encode
+//   State constants:     SSH_STATE_*, SSH_MSG_*
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/src/nitpick_ssh.npk".*;

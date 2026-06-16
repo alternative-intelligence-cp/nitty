@@ -33,6 +33,10 @@ flags = ["-fPIC", "-O2", "-Wall", "-Wextra"]
 output = "libnitty_pty_shim.a"
 deps = []
 
+# ── SSH C shim (nitpick-ssh package shim, pre-built) ─────────────────────────────────
+# Uses the pre-compiled libnitpick_ssh_shim.a from the nitpick-ssh package.
+# No recompilation needed; reference via link_paths.
+
 # ── Main binary ───────────────────────────────────────────────────────────────
 
 [target.nitty]
@@ -40,8 +44,8 @@ type = "binary"
 sources = ["src/main.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = ["-O2"]
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib"]
 
 # ── Test suite ────────────────────────────────────────────────────────────────
 
@@ -562,3 +566,12 @@ flags = []
 link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
 
+
+# v0.8.0: SSH lifecycle integration tests (uses nitpick-ssh via nitpick_ssh_shim)
+[target.test_libssh2_ffi]
+type = "binary"
+sources = ["tests/ssh/test_libssh2_ffi.npk"]
+deps = []
+flags = []
+link_libraries = ["nitpick_ssh_shim"]
+link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib"]
