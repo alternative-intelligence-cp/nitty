@@ -686,3 +686,58 @@ pub func:tm_close_to_right = NIL(int64:from_idx) {
 
     pass(NIL);
 };
+
+// ===================================================================
+// v0.5.5: Fd-transfer helpers for explode/combine
+// ===================================================================
+
+/// Add a new tab using an existing PTY fd — does NOT spawn a new shell.
+/// Used by explode_panes to promote a pane's existing shell to a tab.
+/// Returns the new tab ID, or 0 on failure (tab limit reached).
+pub func:tm_add_tab_with_fd = int64(int64:fd, int64:pid, string:title) {
+    if (g_tm_count >= 16i64) { pass(0i64); }
+    int64:slot  = g_tm_count;
+    int64:new_id = g_tm_next_id;
+    g_tm_next_id = g_tm_next_id + 1i64;
+    // Deactivate current active tab
+    drop(tab_set_active(g_tm_active_index, 0i64));
+    // Create slot with provided fd/pid
+    drop(tab_create(slot, new_id, fd, pid));
+    // Set title via accessor
+    drop(tab_set_title(slot, title));
+    // Mark as inactive (not focused)
+    drop(tab_set_active(slot, 0i64));
+    // Register for shell completion polling
+    drop(nitty_gtk4_register_tab_pid(slot, pid));
+    g_tm_count = g_tm_count + 1i64;
+    // Do NOT change active tab — caller decides
+    pass(new_id);
+};
+
+/// Remove a tab slot at the given index WITHOUT killing its PTY.
+/// Used by combine_next_tab to absorb a tab's shell as a pane.
+/// Shifts all subsequent slots left using the public tab_swap accessor.
+pub func:tm_detach_tab = NIL(int64:idx) {
+    if (idx < 0i64) { pass(NIL); }
+    if (idx >= g_tm_count) { pass(NIL); }
+    // Unregister completion polling
+    drop(nitty_gtk4_unregister_tab_pid(idx));
+    // Shift subsequent slots left by swapping pairs (same as tm_remove_tab)
+    int64:di = idx;
+    while (di < g_tm_count - 1i64) {
+        drop(tab_swap(di, di + 1i64));
+        di = di + 1i64;
+    }
+    // Destroy the now-duplicate last slot
+    drop(tab_destroy(g_tm_count - 1i64));
+    g_tm_count = g_tm_count - 1i64;
+    // Clamp active index
+    if (g_tm_active_index >= g_tm_count) {
+        g_tm_active_index = g_tm_count - 1i64;
+        if (g_tm_active_index < 0i64) { g_tm_active_index = 0i64; }
+    }
+    if (g_tm_count > 0i64) {
+        drop(tab_set_active(g_tm_active_index, 1i64));
+    }
+    pass(NIL);
+};

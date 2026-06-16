@@ -1,0 +1,323 @@
+// src/config/config.npk — Configuration engine (v0.6.0)
+//
+// Loads, validates, merges defaults, and exposes Nitty configuration.
+// Config file: ~/.config/nitty/nitty.toml  (TOML format via nitpick-toml)
+//
+// Call config_load() once at startup (in app_init). All cfg_*() getters
+// are safe to call any time after that and return stable defaults even
+// if config_load() hasn't been called yet.
+//
+// No structs, no List<T> — all resolved values live as module-level globals.
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/src/nitpick_toml.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
+use "schema.npk".*;
+use "paths.npk".*;
+
+// ── Resolved config globals ───────────────────────────────────────────────────
+// Defaults match schema_init() defaults. Populated by config_load().
+
+string:g_cfg_font_family     = "Monospace";
+int64:g_cfg_font_size        = 12i64;
+int64:g_cfg_scrollback_lines = 3000i64;
+string:g_cfg_shell           = "";
+int64:g_cfg_columns          = 80i64;
+int64:g_cfg_rows             = 24i64;
+string:g_cfg_cursor_style    = "block";
+int64:g_cfg_cursor_blink     = 1i64;
+int64:g_cfg_opacity          = 1000i64;  // x1000 fixed-point (1000 = 1.0)
+string:g_cfg_theme           = "default";
+int64:g_cfg_close_on_exit    = 1i64;
+int64:g_cfg_confirm_on_close = 1i64;
+
+// State flags
+int64:g_cfg_is_default = 1i64;  // 1 if no config file found; 0 if loaded from disk
+int64:g_cfg_loaded     = 0i64;  // set to 1 after config_load() completes
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+/// Apply defaults from schema (used when no config file exists).
+func:_load_defaults = NIL() {
+    g_cfg_font_family     = "Monospace";
+    g_cfg_font_size       = 12i64;
+    g_cfg_scrollback_lines = 3000i64;
+    g_cfg_shell           = "";
+    g_cfg_columns         = 80i64;
+    g_cfg_rows            = 24i64;
+    g_cfg_cursor_style    = "block";
+    g_cfg_cursor_blink    = 1i64;
+    g_cfg_opacity         = 1000i64;
+    g_cfg_theme           = "default";
+    g_cfg_close_on_exit   = 1i64;
+    g_cfg_confirm_on_close = 1i64;
+    pass(NIL);
+};
+
+/// Read all config values from an already-parsed TOML document.
+/// For each key, validate; fall back to default if missing or invalid.
+func:_read_from_toml = NIL() {
+    // terminal.font_family
+    int32:has_ff = raw Toml.has_key("terminal.font_family");
+    if (has_ff == 1i32) {
+        string:v = raw Toml.get_string("terminal.font_family");
+        if (string_length(v) > 0i64) { g_cfg_font_family = v; }
+    }
+
+    // terminal.font_size
+    int32:has_fs = raw Toml.has_key("terminal.font_size");
+    if (has_fs == 1i32) {
+        int64:v = raw Toml.get_int("terminal.font_size");
+        int32:is_ok = raw schema_validate_int("terminal.font_size", v);
+        if (is_ok == 1i32) { g_cfg_font_size = v; }
+        if (is_ok == 0i32) { g_cfg_font_size = raw schema_clamp_int("terminal.font_size", v); }
+    }
+
+    // terminal.scrollback_lines
+    int32:has_sb = raw Toml.has_key("terminal.scrollback_lines");
+    if (has_sb == 1i32) {
+        int64:v = raw Toml.get_int("terminal.scrollback_lines");
+        int64:vc = raw schema_clamp_int("terminal.scrollback_lines", v);
+        g_cfg_scrollback_lines = vc;
+    }
+
+    // terminal.shell
+    int32:has_sh = raw Toml.has_key("terminal.shell");
+    if (has_sh == 1i32) {
+        string:v = raw Toml.get_string("terminal.shell");
+        g_cfg_shell = v;
+    }
+
+    // terminal.columns
+    int32:has_co = raw Toml.has_key("terminal.columns");
+    if (has_co == 1i32) {
+        int64:v = raw Toml.get_int("terminal.columns");
+        int64:vc = raw schema_clamp_int("terminal.columns", v);
+        g_cfg_columns = vc;
+    }
+
+    // terminal.rows
+    int32:has_ro = raw Toml.has_key("terminal.rows");
+    if (has_ro == 1i32) {
+        int64:v = raw Toml.get_int("terminal.rows");
+        int64:vc = raw schema_clamp_int("terminal.rows", v);
+        g_cfg_rows = vc;
+    }
+
+    // terminal.cursor_style (Enum: block/underline/bar)
+    int32:has_cs = raw Toml.has_key("terminal.cursor_style");
+    if (has_cs == 1i32) {
+        string:v  = raw Toml.get_string("terminal.cursor_style");
+        int32:is_ok  = raw schema_validate_string("terminal.cursor_style", v);
+        if (is_ok == 1i32) { g_cfg_cursor_style = v; }
+    }
+
+    // terminal.cursor_blink (Bool)
+    int32:has_cb = raw Toml.has_key("terminal.cursor_blink");
+    if (has_cb == 1i32) {
+        int32:v = raw Toml.get_bool("terminal.cursor_blink");
+        if (v == 1i32) { g_cfg_cursor_blink = 1i64; }
+        if (v == 0i32) { g_cfg_cursor_blink = 0i64; }
+    }
+
+    // appearance.opacity (stored as int x1000; clamp 100–1000)
+    int32:has_op = raw Toml.has_key("appearance.opacity");
+    if (has_op == 1i32) {
+        int64:v  = raw Toml.get_int("appearance.opacity");
+        int64:vc = raw schema_clamp_int("appearance.opacity", v);
+        g_cfg_opacity = vc;
+    }
+
+    // appearance.theme
+    int32:has_th = raw Toml.has_key("appearance.theme");
+    if (has_th == 1i32) {
+        string:v = raw Toml.get_string("appearance.theme");
+        if (string_length(v) > 0i64) { g_cfg_theme = v; }
+    }
+
+    // general.close_on_exit (Bool)
+    int32:has_ce = raw Toml.has_key("general.close_on_exit");
+    if (has_ce == 1i32) {
+        int32:v = raw Toml.get_bool("general.close_on_exit");
+        if (v == 1i32) { g_cfg_close_on_exit = 1i64; }
+        if (v == 0i32) { g_cfg_close_on_exit = 0i64; }
+    }
+
+    // general.confirm_on_close (Bool)
+    int32:has_cc = raw Toml.has_key("general.confirm_on_close");
+    if (has_cc == 1i32) {
+        int32:v = raw Toml.get_bool("general.confirm_on_close");
+        if (v == 1i32) { g_cfg_confirm_on_close = 1i64; }
+        if (v == 0i32) { g_cfg_confirm_on_close = 0i64; }
+    }
+
+    pass(NIL);
+};
+
+// ── Default config file content ───────────────────────────────────────────────
+
+/// Build the well-commented default nitty.toml content string.
+func:_default_toml_text = string() {
+    string:t = "";
+
+    // Header comment
+    t = string_concat(t, "# Nitty terminal emulator configuration\n");
+    t = string_concat(t, "# Generated by Nitty v0.6.0\n");
+    t = string_concat(t, "# Edit and relaunch to apply changes.\n");
+    t = string_concat(t, "\n");
+
+    // [terminal] section
+    t = string_concat(t, "[terminal]\n");
+    t = string_concat(t, "# Font family name (Pango font descriptor)\n");
+    t = string_concat(t, "font_family = \"Monospace\"\n");
+    t = string_concat(t, "\n");
+    t = string_concat(t, "# Font size in points (6–72)\n");
+    t = string_concat(t, "font_size = 12\n");
+    t = string_concat(t, "\n");
+    t = string_concat(t, "# Scrollback buffer lines (0–3000)\n");
+    t = string_concat(t, "scrollback_lines = 3000\n");
+    t = string_concat(t, "\n");
+    t = string_concat(t, "# Shell executable path (empty = use $SHELL)\n");
+    t = string_concat(t, "shell = \"\"\n");
+    t = string_concat(t, "\n");
+    t = string_concat(t, "# Initial terminal columns (10–500)\n");
+    t = string_concat(t, "columns = 80\n");
+    t = string_concat(t, "\n");
+    t = string_concat(t, "# Initial terminal rows (5–200)\n");
+    t = string_concat(t, "rows = 24\n");
+    t = string_concat(t, "\n");
+    t = string_concat(t, "# Cursor shape: block, underline, or bar\n");
+    t = string_concat(t, "cursor_style = \"block\"\n");
+    t = string_concat(t, "\n");
+    t = string_concat(t, "# Cursor blinking (true/false)\n");
+    t = string_concat(t, "cursor_blink = true\n");
+    t = string_concat(t, "\n");
+
+    // [appearance] section
+    t = string_concat(t, "[appearance]\n");
+    t = string_concat(t, "# Window opacity x1000 (100=10%, 1000=100%)\n");
+    t = string_concat(t, "opacity = 1000\n");
+    t = string_concat(t, "\n");
+    t = string_concat(t, "# Color theme name\n");
+    t = string_concat(t, "theme = \"default\"\n");
+    t = string_concat(t, "\n");
+
+    // [general] section
+    t = string_concat(t, "[general]\n");
+    t = string_concat(t, "# Close window when the last shell exits\n");
+    t = string_concat(t, "close_on_exit = true\n");
+    t = string_concat(t, "\n");
+    t = string_concat(t, "# Ask for confirmation before closing window\n");
+    t = string_concat(t, "confirm_on_close = true\n");
+
+    pass(t);
+};
+
+// ── Public API — Lifecycle ────────────────────────────────────────────────────
+
+/// Full config load pipeline:
+///   1. Initialize schema + paths
+///   2. Ensure directories exist
+///   3. If config file missing: load defaults + write default file
+///   4. Parse TOML file + validate each key + store in globals
+pub func:config_load = NIL() {
+    if (g_cfg_loaded == 1i64) { pass(NIL); }  // idempotent
+
+    drop(schema_init());
+    drop(paths_init());
+    drop(ensure_dirs());
+
+    string:path    = raw config_file_path();
+    int32:file_exists = raw fs_exists(path);
+
+    // No config file found — use defaults and seed the file
+    if (file_exists == 0i32) {
+        drop(_load_defaults());
+        g_cfg_is_default = 1i64;
+        drop(config_write_defaults());
+        g_cfg_loaded = 1i64;
+        pass(NIL);
+    }
+
+    // File exists — parse it
+    g_cfg_is_default = 0i64;
+    drop(_load_defaults());         // start from defaults (merge pattern)
+    drop(Toml.clear());
+    int32:parsed = raw Toml.parse_file(path);
+    if (parsed >= 0i32) {
+        drop(_read_from_toml());
+    }
+    // If parse failed, we keep the defaults already loaded above
+
+    g_cfg_loaded = 1i64;
+    pass(NIL);
+};
+
+/// Write the current config values back to disk (atomic write via .tmp rename).
+/// Returns 1 on success, 0 on failure.
+pub func:config_save = int32() {
+    drop(Toml.clear());
+
+    // Write all values into TOML document
+    drop(Toml.set_string("terminal.font_family",      g_cfg_font_family));
+    drop(Toml.set_int("terminal.font_size",            g_cfg_font_size));
+    drop(Toml.set_int("terminal.scrollback_lines",     g_cfg_scrollback_lines));
+    drop(Toml.set_string("terminal.shell",             g_cfg_shell));
+    drop(Toml.set_int("terminal.columns",              g_cfg_columns));
+    drop(Toml.set_int("terminal.rows",                 g_cfg_rows));
+    drop(Toml.set_string("terminal.cursor_style",      g_cfg_cursor_style));
+    drop(Toml.set_bool("terminal.cursor_blink",        @cast_unchecked<int32>(g_cfg_cursor_blink)));
+    drop(Toml.set_int("appearance.opacity",            g_cfg_opacity));
+    drop(Toml.set_string("appearance.theme",           g_cfg_theme));
+    drop(Toml.set_bool("general.close_on_exit",        @cast_unchecked<int32>(g_cfg_close_on_exit)));
+    drop(Toml.set_bool("general.confirm_on_close",     @cast_unchecked<int32>(g_cfg_confirm_on_close)));
+
+    string:text      = raw Toml.serialize();
+    string:path      = raw config_file_path();
+    string:tmp_path  = string_concat(path, ".tmp");
+
+    int32:wrote = raw fs_write_file(tmp_path, text);
+    if (wrote == 0i32) { pass(0i32); }
+
+    int32:renamed = raw fs_rename(tmp_path, path);
+    pass(renamed);
+};
+
+/// Write a well-commented default config file to the config path.
+/// Returns 1 on success, 0 on failure.
+pub func:config_write_defaults = int32() {
+    string:path = raw config_file_path();
+    string:text = raw _default_toml_text();
+    int32:wrote = raw fs_write_file(path, text);
+    pass(wrote);
+};
+
+/// Returns 1 if no config file was found at startup, 0 if loaded from disk.
+pub func:config_is_default = int64() {
+    pass(g_cfg_is_default);
+};
+
+// ── Public API — Typed getters ────────────────────────────────────────────────
+
+pub func:cfg_font_family      = string() { pass(g_cfg_font_family); };
+pub func:cfg_font_size        = int64()  { pass(g_cfg_font_size); };
+pub func:cfg_scrollback_lines = int64()  { pass(g_cfg_scrollback_lines); };
+pub func:cfg_shell            = string() { pass(g_cfg_shell); };
+pub func:cfg_columns          = int64()  { pass(g_cfg_columns); };
+pub func:cfg_rows             = int64()  { pass(g_cfg_rows); };
+pub func:cfg_cursor_style     = string() { pass(g_cfg_cursor_style); };
+pub func:cfg_cursor_blink     = int64()  { pass(g_cfg_cursor_blink); };
+pub func:cfg_opacity          = int64()  { pass(g_cfg_opacity); };
+pub func:cfg_theme            = string() { pass(g_cfg_theme); };
+pub func:cfg_close_on_exit    = int64()  { pass(g_cfg_close_on_exit); };
+pub func:cfg_confirm_on_close = int64()  { pass(g_cfg_confirm_on_close); };
+
+// ── Setters (for runtime config changes) ─────────────────────────────────────
+
+pub func:cfg_set_font_family  = NIL(string:v) { g_cfg_font_family = v; pass(NIL); };
+pub func:cfg_set_font_size    = NIL(int64:v)  { g_cfg_font_size = v;   pass(NIL); };
+pub func:cfg_set_shell        = NIL(string:v) { g_cfg_shell = v;       pass(NIL); };
+pub func:cfg_set_cursor_style = NIL(string:v) { g_cfg_cursor_style = v; pass(NIL); };
+pub func:cfg_set_cursor_blink = NIL(int64:v)  { g_cfg_cursor_blink = v; pass(NIL); };
+pub func:cfg_set_opacity      = NIL(int64:v)  { g_cfg_opacity = v;     pass(NIL); };
+pub func:cfg_set_theme        = NIL(string:v) { g_cfg_theme = v;       pass(NIL); };

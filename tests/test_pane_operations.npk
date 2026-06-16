@@ -1,0 +1,212 @@
+// tests/test_pane_operations.npk — v0.5.5 Advanced Pane Operations tests
+//
+// Tests:
+//   T01: split_tree_swap_panes basic: IDs cross after swap
+//   T02: split_tree_swap_panes self-swap: returns 0 (no-op)
+//   T03: split_tree_swap_panes invalid pane: returns 0
+//   T04: split_tree_reset_to_pane: resets tree to single leaf
+//
+// Note: split_view swap mode and tab_manager fd-transfer tests are not
+// included because they transitively require the GTK4 shim at link time.
+// Those code paths are covered by the integration test suite.
+
+use "../src/core/split_tree.npk".*;
+
+func:failsafe = int32(tbb32:_code) { exit 1i32; };
+
+// ─────────────────────────────────────────────────────────────────────
+// Test harness
+// ─────────────────────────────────────────────────────────────────────
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (expected != got)")));
+    pass(NIL);
+};
+
+func:check32 = NIL(string:name, int32:expected, int32:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (i32 expected != got)")));
+    pass(NIL);
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// Helper: 2-pane tree (pane 0 split → pane 1)
+// ─────────────────────────────────────────────────────────────────────
+
+func:setup_two_pane_tree = NIL() {
+    drop(raw split_tree_init());
+    int64:p1 = raw split_tree_split(0i64, 0i32);
+    drop(p1);
+    pass(NIL);
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// T01: swap_panes basic — IDs cross after swap
+// ─────────────────────────────────────────────────────────────────────
+
+func:test_swap_panes_basic = NIL() {
+    print("T01: swap_panes basic");
+    drop(setup_two_pane_tree());
+
+    // Layout before swap: slot 0 = pane 0, slot 1 = pane 1
+    drop(split_tree_layout(0i64, 0i64, 800i64, 600i64));
+    int64:before_id0 = raw split_tree_get_layout_pane_id(0i64);
+    int64:before_id1 = raw split_tree_get_layout_pane_id(1i64);
+
+    int32:swap_ok = raw split_tree_swap_panes(0i64, 1i64);
+    drop(check32("T01: swap_panes returns 1", 1i32, swap_ok));
+
+    // Layout after swap: slot 0 should now have what was in slot 1
+    drop(split_tree_layout(0i64, 0i64, 800i64, 600i64));
+    int64:after_id0 = raw split_tree_get_layout_pane_id(0i64);
+    int64:after_id1 = raw split_tree_get_layout_pane_id(1i64);
+
+    drop(check("T01: slot0 has old slot1 pane_id", before_id1, after_id0));
+    drop(check("T01: slot1 has old slot0 pane_id", before_id0, after_id1));
+    pass(NIL);
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// T02: swap_panes self-swap — returns 0 (no-op, pane_a == pane_b)
+// ─────────────────────────────────────────────────────────────────────
+
+func:test_swap_panes_self = NIL() {
+    print("T02: swap_panes self-swap");
+    drop(setup_two_pane_tree());
+    int32:swap_ok = raw split_tree_swap_panes(0i64, 0i64);
+    drop(check32("T02: self-swap returns 0", 0i32, swap_ok));
+    pass(NIL);
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// T03: swap_panes invalid pane — returns 0
+// ─────────────────────────────────────────────────────────────────────
+
+func:test_swap_panes_invalid = NIL() {
+    print("T03: swap_panes invalid pane");
+    drop(setup_two_pane_tree());
+    int32:swap_ok = raw split_tree_swap_panes(0i64, 99i64);
+    drop(check32("T03: invalid dst returns 0", 0i32, swap_ok));
+    pass(NIL);
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// T04: reset_to_pane — collapses multi-pane tree to single leaf
+// ─────────────────────────────────────────────────────────────────────
+
+func:test_reset_to_pane = NIL() {
+    print("T04: reset_to_pane");
+    drop(setup_two_pane_tree());
+    drop(check("T04: pane_count=2 before reset", 2i64, raw split_tree_pane_count()));
+
+    // Reset to pane 0 only
+    drop(split_tree_reset_to_pane(0i64));
+    drop(check("T04: pane_count=1 after reset", 1i64, raw split_tree_pane_count()));
+
+    // Layout: the single remaining pane should be pane 0
+    drop(split_tree_layout(0i64, 0i64, 800i64, 600i64));
+    int64:pid = raw split_tree_get_layout_pane_id(0i64);
+    drop(check("T04: only pane is pane_id=0", 0i64, pid));
+
+    // Layout count should be 1
+    int64:lc = raw split_tree_get_layout_count();
+    drop(check("T04: layout_count=1", 1i64, lc));
+    pass(NIL);
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// T05: double swap — swap A↔B then B↔A restores original order
+// ─────────────────────────────────────────────────────────────────────
+
+func:test_double_swap = NIL() {
+    print("T05: double swap restores original order");
+    drop(setup_two_pane_tree());
+
+    drop(split_tree_layout(0i64, 0i64, 800i64, 600i64));
+    int64:orig0 = raw split_tree_get_layout_pane_id(0i64);
+    int64:orig1 = raw split_tree_get_layout_pane_id(1i64);
+
+    // First swap
+    int32:s1 = raw split_tree_swap_panes(orig0, orig1);
+    drop(check32("T05: first swap ok", 1i32, s1));
+
+    // Second swap (same IDs)
+    int32:s2 = raw split_tree_swap_panes(orig0, orig1);
+    drop(check32("T05: second swap ok", 1i32, s2));
+
+    drop(split_tree_layout(0i64, 0i64, 800i64, 600i64));
+    int64:final0 = raw split_tree_get_layout_pane_id(0i64);
+    int64:final1 = raw split_tree_get_layout_pane_id(1i64);
+
+    drop(check("T05: slot0 restored", orig0, final0));
+    drop(check("T05: slot1 restored", orig1, final1));
+    pass(NIL);
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// T06: reset preserves monotonic counter — next split gives new valid pane_id
+// ─────────────────────────────────────────────────────────────────────
+
+func:test_reset_then_split = NIL() {
+    print("T06: reset then split");
+
+    // Build 3-pane tree: pane 0, 1, 2
+    drop(raw split_tree_init());
+    int64:p1 = raw split_tree_split(0i64, 0i32);
+    int64:p2 = raw split_tree_split(0i64, 1i32);
+    drop(p1);
+    drop(p2);
+    drop(check("T06: pane_count=3 before reset", 3i64, raw split_tree_pane_count()));
+
+    // Reset to pane 0
+    drop(split_tree_reset_to_pane(0i64));
+    drop(check("T06: pane_count=1 after reset", 1i64, raw split_tree_pane_count()));
+
+    // Now split again — pane_id counter is NOT reset so we get pane_id=3
+    // (monotonically incremented past the 2 previous splits)
+    int64:new_p = raw split_tree_split(0i64, 0i32);
+    drop(check("T06: pane_count=2 after re-split", 2i64, raw split_tree_pane_count()));
+    // Verify the new pane_id is strictly positive (valid), not -1 or 63 (errors)
+    int64:valid = 0i64;
+    if (new_p > 0i64) { valid = 1i64; }
+    if (new_p == 63i64) { valid = 0i64; }
+    drop(check("T06: new pane_id is valid (>0, not 63)", 1i64, valid));
+    pass(NIL);
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// Main
+// ─────────────────────────────────────────────────────────────────────
+
+pub func:main = int32() {
+    print("=== test_pane_operations: v0.5.5 Advanced Pane Tests ===");
+
+    drop(test_swap_panes_basic());
+    drop(test_swap_panes_self());
+    drop(test_swap_panes_invalid());
+    drop(test_reset_to_pane());
+    drop(test_double_swap());
+    drop(test_reset_then_split());
+
+    print("=== RESULTS ===");
+    if (g_fail == 0i64) {
+        print("ALL PASS");
+        exit 0i32;
+    }
+    print("SOME FAILURES");
+    exit 1i32;
+};

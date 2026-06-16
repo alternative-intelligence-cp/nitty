@@ -1,5 +1,6 @@
 // src/core/app.npk — Application lifecycle for Nitty
 //
+// v0.6.0: Configuration engine — config_load() wired into app_init().
 // v0.5.1: Split pane support: wire split_view_init after tab manager + session restore.
 // v0.4.4: Session persistence (save/restore via session.npk).
 //
@@ -30,6 +31,9 @@ use "../terminal/resize.npk".*;
 use "tab_manager.npk".*;
 use "../gui/tab_bar.npk".*;
 use "session.npk".*;
+use "../config/config.npk".*;
+use "../gui/font_config.npk".*;
+use "../terminal/scrollback.npk".*;
 
 // fd 1 = stdout
 int64:STDOUT = 1i64;
@@ -58,14 +62,23 @@ pub func:app_set_no_restore = NIL() {
 };
 
 pub func:app_init = NIL() {
-    drop(write_stdout("Nitty v0.4.4 initializing...\n"));
+    drop(config_load());                              // v0.6.0: load config first
+    drop(write_stdout("Nitty v0.6.0 initializing...\n"));
     pass(NIL);
 };
 
 pub func:app_run = NIL() {
-    // ── Initialize Nitpick terminal pipeline + renderer ──────────────────────────
-    drop(write_stdout("Nitty: initializing terminal widget (Monospace 12)\n"));
-    drop(tw_init(24i64, 80i64, "Monospace 12"));
+    // ── Build font descriptor from config ─────────────────────────────────────
+    string:cfg_family = raw cfg_font_family();
+    int64:cfg_size    = raw cfg_font_size();
+    int64:cfg_rows_v  = raw cfg_rows();
+    int64:cfg_cols_v  = raw cfg_columns();
+    string:font_desc  = string_concat(cfg_family, " ");
+    font_desc         = string_concat(font_desc, int64_to_string(cfg_size));
+
+    // ── Initialize Nitpick terminal pipeline + renderer ────────────────────────
+    drop(write_stdout("Nitty: initializing terminal widget (font from config)\n"));
+    drop(tw_init(cfg_rows_v, cfg_cols_v, font_desc));
 
     // ── Initialize tab manager ─────────────────────────────────────────────
     drop(write_stdout("Nitty: initializing tab manager\n"));
@@ -77,7 +90,7 @@ pub func:app_run = NIL() {
         drop(write_stdout("Nitty: attempting session restore\n"));
         int32:loaded = raw session_load();
         if (loaded == 1i32) {
-            restored = raw session_restore(24i64, 80i64);
+            restored = raw session_restore(cfg_rows_v, cfg_cols_v);
         }
     }
 
@@ -87,16 +100,24 @@ pub func:app_run = NIL() {
         drop(tm_activate(default_tab_id));
     }
 
+    // ── v0.6.0: Apply config to font subsystem ────────────────────────────────
+    drop(font_config_set_family(cfg_family));
+    drop(font_config_set_size(cfg_size));
+    drop(font_config_apply());
+
+    // ── v0.6.0: Apply scrollback limit from config ────────────────────────────
+    drop(scrollback_set_max_lines(raw cfg_scrollback_lines()));
+
     // ── Initialize split view for the active tab ───────────────────────────
     // At this point the active tab's PTY hasn't spawned yet (that happens in
     // on_activate when g_use_terminal fires). We initialize split_view with
     // placeholder fd=-1 / pid=-1; the real fd is set after terminal_enable().
     drop(write_stdout("Nitty: initializing split view\n"));
-    drop(split_view_init(24i64, 80i64, -1i64, -1i64));
+    drop(split_view_init(cfg_rows_v, cfg_cols_v, -1i64, -1i64));
 
     // ── Enable the legacy terminal grid (C-side VT parser, still active in v0.3.0) ──
-    drop(write_stdout("Nitty: enabling terminal grid (Monospace 12)\n"));
-    drop(grid_enable("Monospace 12"));
+    drop(write_stdout("Nitty: enabling terminal grid (font from config)\n"));
+    drop(grid_enable(font_desc));
 
     // ── Create the DrawingArea ──────────────────────────────────────────
     Result<int64>:da_r = renderer_init_drawing_area();
@@ -161,5 +182,5 @@ pub func:app_shutdown = NIL() {
 };
 
 pub func:app_version = string() {
-    pass("0.5.4");
+    pass("0.6.0");
 };

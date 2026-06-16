@@ -1,4 +1,4 @@
-// src/terminal/scrollback.npk — Scrollback ring buffer (v0.3.4)
+// src/terminal/scrollback.npk — Scrollback ring buffer (v0.3.4 / v0.6.0)
 //
 // Stores terminal rows that have scrolled off the top of the active screen.
 // Implemented as three parallel flat int64 ring-buffer arrays (cp, attrs, flags),
@@ -33,8 +33,12 @@ use "cell.npk".*;
 // Constants
 // ═══════════════════════════════════════════════════════════════════════
 
-pub func:SB_MAX_LINES = int64() { pass(3000i64); };
+pub func:SB_MAX_LINES = int64() { pass(g_sb_max_lines_cfg); };  // v0.6.0: configurable
 pub func:SB_MAX_COLS  = int64() { pass(200i64); };
+
+// v0.6.0: Configurable scrollback cap — set by config_load() via scrollback_set_max_lines().
+// The static arrays are sized for 3000 lines; this var can only reduce the effective limit.
+int64:g_sb_max_lines_cfg = 3000i64;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Storage — three parallel ring-buffer arrays
@@ -91,6 +95,24 @@ pub func:scrollback_init = NIL(int64:cols) {
 pub func:scrollback_set_cols = NIL(int64:cols) {
     drop(scrollback_init(cols));
     pass(NIL);
+};
+
+/// v0.6.0: Set the configurable scrollback limit (from config).
+/// Value is clamped to 0..3000 (static array capacity).
+pub func:scrollback_set_max_lines = NIL(int64:n) {
+    int64:capped = n;
+    if (capped > 3000i64) { capped = 3000i64; }
+    if (capped < 0i64)    { capped = 0i64; }
+    g_sb_max_lines_cfg = capped;
+    // Reset the ring buffer to prevent stale indices beyond the new cap
+    sb_head  = 0i64;
+    sb_count = 0i64;
+    pass(NIL);
+};
+
+/// v0.6.0: Return the current configurable scrollback limit.
+pub func:scrollback_get_max_lines = int64() {
+    pass(g_sb_max_lines_cfg);
 };
 
 // ═══════════════════════════════════════════════════════════════════════

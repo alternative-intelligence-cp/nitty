@@ -1,0 +1,239 @@
+// src/config/schema.npk — Configuration schema definitions (v0.6.0)
+//
+// Defines all valid Nitty config keys, their types, defaults, constraints,
+// and valid enum values. Uses flat parallel arrays — no structs, no List<T>.
+//
+// Type codes:
+//   0 = String     (any string)
+//   1 = Int        (integer, optional min/max)
+//   2 = Bool       (stored as "0" or "1")
+//   3 = Enum       (string constrained to g_sch_enum_vals)
+//   4 = FloatX1000 (int64 x1000 fixed-point, e.g. 1000 = 1.0)
+
+// ── Schema table (parallel arrays, capacity 32) ──────────────────────────────
+
+int64:g_sch_count = 0i64;
+
+// Index arrays — one slot per schema entry (up to 32)
+string[32]:g_sch_key     = ["", "", "", "", "", "", "", "",
+                             "", "", "", "", "", "", "", "",
+                             "", "", "", "", "", "", "", "",
+                             "", "", "", "", "", "", "", ""];
+int64[32]:g_sch_type     = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+string[32]:g_sch_default = ["", "", "", "", "", "", "", "",
+                             "", "", "", "", "", "", "", "",
+                             "", "", "", "", "", "", "", "",
+                             "", "", "", "", "", "", "", ""];
+int64[32]:g_sch_min      = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[32]:g_sch_max      = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+
+// Enum valid values: up to 4 per entry, stored in a flat 32×4 grid
+// Access: g_sch_enum_vals[entry_idx * 4 + val_idx]
+string[128]:g_sch_enum_vals  = ["", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", ""];
+int64[32]:g_sch_enum_count   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+/// Add a String/Int/Bool/FloatX1000 entry (no enum values)
+func:_sch_add = NIL(string:key, int64:typ, string:def, int64:mn, int64:mx) {
+    if (g_sch_count >= 32i64) { pass(NIL); }
+    int64:i = g_sch_count;
+    g_sch_key[i]     = key;
+    g_sch_type[i]    = typ;
+    g_sch_default[i] = def;
+    g_sch_min[i]     = mn;
+    g_sch_max[i]     = mx;
+    g_sch_count      = g_sch_count + 1i64;
+    pass(NIL);
+};
+
+/// Add an Enum entry with up to 4 valid values
+func:_sch_add_enum = NIL(string:key, string:def,
+                         string:v0, string:v1, string:v2, string:v3,
+                         int64:nvals) {
+    if (g_sch_count >= 32i64) { pass(NIL); }
+    int64:i = g_sch_count;
+    g_sch_key[i]     = key;
+    g_sch_type[i]    = 3i64;  // Enum
+    g_sch_default[i] = def;
+    g_sch_min[i]     = 0i64;
+    g_sch_max[i]     = 0i64;
+
+    int64:base       = i * 4i64;
+    g_sch_enum_vals[base + 0i64] = v0;
+    g_sch_enum_vals[base + 1i64] = v1;
+    g_sch_enum_vals[base + 2i64] = v2;
+    g_sch_enum_vals[base + 3i64] = v3;
+    g_sch_enum_count[i] = nvals;
+
+    g_sch_count = g_sch_count + 1i64;
+    pass(NIL);
+};
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/// Populate the 12 schema entries. Safe to call multiple times (idempotent via
+/// guard on g_sch_count).
+pub func:schema_init = NIL() {
+    if (g_sch_count > 0i64) { pass(NIL); }  // already initialized
+
+    // Type constants for readability
+    int64:T_STR  = 0i64;
+    int64:T_INT  = 1i64;
+    int64:T_BOOL = 2i64;
+    int64:T_FLT  = 4i64;  // FloatX1000
+
+    // terminal.*
+    drop(_sch_add("terminal.font_family",     T_STR,  "Monospace", 0i64,    0i64));
+    drop(_sch_add("terminal.font_size",       T_INT,  "12",        6i64,    72i64));
+    drop(_sch_add("terminal.scrollback_lines",T_INT,  "3000",      0i64,    3000i64));
+    drop(_sch_add("terminal.shell",           T_STR,  "",          0i64,    0i64));
+    drop(_sch_add("terminal.columns",         T_INT,  "80",        10i64,   500i64));
+    drop(_sch_add("terminal.rows",            T_INT,  "24",        5i64,    200i64));
+    // terminal.cursor_style: Enum ["block", "underline", "bar"]
+    drop(_sch_add_enum("terminal.cursor_style", "block",
+                       "block", "underline", "bar", "",
+                       3i64));
+    drop(_sch_add("terminal.cursor_blink",    T_BOOL, "1",         0i64,    0i64));
+
+    // appearance.*
+    drop(_sch_add("appearance.opacity",       T_FLT,  "1000",      100i64,  1000i64));
+    drop(_sch_add("appearance.theme",         T_STR,  "default",   0i64,    0i64));
+
+    // general.*
+    drop(_sch_add("general.close_on_exit",    T_BOOL, "1",         0i64,    0i64));
+    drop(_sch_add("general.confirm_on_close", T_BOOL, "1",         0i64,    0i64));
+
+    pass(NIL);
+};
+
+/// Number of schema entries.
+pub func:schema_count = int64() {
+    pass(g_sch_count);
+};
+
+/// Index of key in schema, or -1 if not found.
+pub func:schema_find = int64(string:key) {
+    int64:i = 0i64;
+    while (i < g_sch_count) {
+        if (g_sch_key[i] == key) { pass(i); }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+/// Key string at schema index i.
+pub func:schema_get_key = string(int64:i) {
+    if (i < 0i64) { pass(""); }
+    if (i >= g_sch_count) { pass(""); }
+    pass(g_sch_key[i]);
+};
+
+/// Type code at schema index i.
+pub func:schema_get_type = int64(int64:i) {
+    if (i < 0i64) { pass(0i64); }
+    if (i >= g_sch_count) { pass(0i64); }
+    pass(g_sch_type[i]);
+};
+
+/// Serialized default value for key (as stored in config file / used for merge).
+pub func:schema_get_default = string(string:key) {
+    int64:i = raw schema_find(key);
+    if (i < 0i64) { pass(""); }
+    pass(g_sch_default[i]);
+};
+
+/// Min constraint for key (0 if unconstrained).
+pub func:schema_get_min = int64(string:key) {
+    int64:i = raw schema_find(key);
+    if (i < 0i64) { pass(0i64); }
+    pass(g_sch_min[i]);
+};
+
+/// Max constraint for key (0 if unconstrained).
+pub func:schema_get_max = int64(string:key) {
+    int64:i = raw schema_find(key);
+    if (i < 0i64) { pass(0i64); }
+    pass(g_sch_max[i]);
+};
+
+/// Validate an integer value against schema min/max for key.
+/// Returns 1 if valid, 0 if invalid or key not found.
+pub func:schema_validate_int = int32(string:key, int64:val) {
+    int64:i = raw schema_find(key);
+    if (i < 0i64) { pass(0i32); }
+
+    int64:mn = g_sch_min[i];
+    int64:mx = g_sch_max[i];
+
+    // Only apply min/max if they are non-zero (0 means unconstrained)
+    if (mn != 0i64) {
+        if (val < mn) { pass(0i32); }
+    }
+    if (mx != 0i64) {
+        if (val > mx) { pass(0i32); }
+    }
+    pass(1i32);
+};
+
+/// Validate a string value against schema enum constraints for key.
+/// For non-Enum keys, any string is valid.
+/// Returns 1 if valid, 0 if invalid.
+pub func:schema_validate_string = int32(string:key, string:val) {
+    int64:i = raw schema_find(key);
+    if (i < 0i64) { pass(0i32); }
+
+    // Non-enum types: any string is acceptable
+    int64:typ = g_sch_type[i];
+    if (typ != 3i64) { pass(1i32); }
+
+    // Enum: check if val is in valid_values
+    int64:nv   = g_sch_enum_count[i];
+    int64:base = i * 4i64;
+    int64:vi   = 0i64;
+    while (vi < nv) {
+        if (g_sch_enum_vals[base + vi] == val) { pass(1i32); }
+        vi = vi + 1i64;
+    }
+    pass(0i32);
+};
+
+/// Clamp an integer value to the schema min/max range for key.
+/// Returns the clamped value.
+pub func:schema_clamp_int = int64(string:key, int64:val) {
+    int64:i = raw schema_find(key);
+    if (i < 0i64) { pass(val); }
+    int64:mn = g_sch_min[i];
+    int64:mx = g_sch_max[i];
+    int64:out = val;
+    if (mn != 0i64) { if (out < mn) { out = mn; } }
+    if (mx != 0i64) { if (out > mx) { out = mx; } }
+    pass(out);
+};

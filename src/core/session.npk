@@ -14,6 +14,7 @@ use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpic
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
 use "tab_manager.npk".*;
 use "tab.npk".*;
+use "split_tree.npk".*;           // v0.5.5: for split_tree_pane_count()
 use "../gui/gtk4_ffi.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════
@@ -63,6 +64,14 @@ int64:g_sess_custom_6  = 0i64; int64:g_sess_custom_7  = 0i64; int64:g_sess_custo
 int64:g_sess_custom_9  = 0i64; int64:g_sess_custom_10 = 0i64; int64:g_sess_custom_11 = 0i64;
 int64:g_sess_custom_12 = 0i64; int64:g_sess_custom_13 = 0i64; int64:g_sess_custom_14 = 0i64;
 int64:g_sess_custom_15 = 0i64;
+
+// v0.5.5: Per-tab split pane count (default 1 = single pane)
+int64:g_sess_pcount_0  = 1i64; int64:g_sess_pcount_1  = 1i64; int64:g_sess_pcount_2  = 1i64;
+int64:g_sess_pcount_3  = 1i64; int64:g_sess_pcount_4  = 1i64; int64:g_sess_pcount_5  = 1i64;
+int64:g_sess_pcount_6  = 1i64; int64:g_sess_pcount_7  = 1i64; int64:g_sess_pcount_8  = 1i64;
+int64:g_sess_pcount_9  = 1i64; int64:g_sess_pcount_10 = 1i64; int64:g_sess_pcount_11 = 1i64;
+int64:g_sess_pcount_12 = 1i64; int64:g_sess_pcount_13 = 1i64; int64:g_sess_pcount_14 = 1i64;
+int64:g_sess_pcount_15 = 1i64;
 
 // ═══════════════════════════════════════════════════════════════════
 // Helper: build session file path (~/.config/nitty/session.toml)
@@ -264,6 +273,46 @@ func:_sess_set_custom = NIL(int64:i, int64:v) {
     pass(NIL);
 };
 
+// v0.5.5: pane_count helpers
+func:_sess_get_pcount = int64(int64:i) {
+    if (i == 0i64)  { pass(g_sess_pcount_0);  }
+    if (i == 1i64)  { pass(g_sess_pcount_1);  }
+    if (i == 2i64)  { pass(g_sess_pcount_2);  }
+    if (i == 3i64)  { pass(g_sess_pcount_3);  }
+    if (i == 4i64)  { pass(g_sess_pcount_4);  }
+    if (i == 5i64)  { pass(g_sess_pcount_5);  }
+    if (i == 6i64)  { pass(g_sess_pcount_6);  }
+    if (i == 7i64)  { pass(g_sess_pcount_7);  }
+    if (i == 8i64)  { pass(g_sess_pcount_8);  }
+    if (i == 9i64)  { pass(g_sess_pcount_9);  }
+    if (i == 10i64) { pass(g_sess_pcount_10); }
+    if (i == 11i64) { pass(g_sess_pcount_11); }
+    if (i == 12i64) { pass(g_sess_pcount_12); }
+    if (i == 13i64) { pass(g_sess_pcount_13); }
+    if (i == 14i64) { pass(g_sess_pcount_14); }
+    pass(g_sess_pcount_15);
+};
+
+func:_sess_set_pcount = NIL(int64:i, int64:v) {
+    if (i == 0i64)  { g_sess_pcount_0  = v; pass(NIL); }
+    if (i == 1i64)  { g_sess_pcount_1  = v; pass(NIL); }
+    if (i == 2i64)  { g_sess_pcount_2  = v; pass(NIL); }
+    if (i == 3i64)  { g_sess_pcount_3  = v; pass(NIL); }
+    if (i == 4i64)  { g_sess_pcount_4  = v; pass(NIL); }
+    if (i == 5i64)  { g_sess_pcount_5  = v; pass(NIL); }
+    if (i == 6i64)  { g_sess_pcount_6  = v; pass(NIL); }
+    if (i == 7i64)  { g_sess_pcount_7  = v; pass(NIL); }
+    if (i == 8i64)  { g_sess_pcount_8  = v; pass(NIL); }
+    if (i == 9i64)  { g_sess_pcount_9  = v; pass(NIL); }
+    if (i == 10i64) { g_sess_pcount_10 = v; pass(NIL); }
+    if (i == 11i64) { g_sess_pcount_11 = v; pass(NIL); }
+    if (i == 12i64) { g_sess_pcount_12 = v; pass(NIL); }
+    if (i == 13i64) { g_sess_pcount_13 = v; pass(NIL); }
+    if (i == 14i64) { g_sess_pcount_14 = v; pass(NIL); }
+    g_sess_pcount_15 = v;
+    pass(NIL);
+};
+
 // ═══════════════════════════════════════════════════════════════════
 // Helper: build TOML key for tab.N.field
 // ═══════════════════════════════════════════════════════════════════
@@ -339,6 +388,10 @@ pub func:session_save = int32() {
             drop(Toml.set_bool(raw _tab_key(n, "custom_title"), @cast<int32>(custom)));
             drop(Toml.set_bool(raw _tab_key(n, "active"),       is_active));
             drop(Toml.set_string(raw _tab_key(n, "cwd"),    cwd));
+            // v0.5.5: save pane_count for active tab, 1 for others
+            int64:pcount_save = 1i64;
+            if (i == active_idx) { pcount_save = raw split_tree_pane_count(); }
+            drop(Toml.set_int(raw _tab_key(n, "pane_count"), pcount_save));
 
             i = i + 1i64;
         }
@@ -406,6 +459,17 @@ pub func:session_load = int32() {
                 drop(_sess_set_color(i, color));
                 drop(_sess_set_custom(i, @cast<int64>(custom)));
                 if (active == 1i32) { g_sess_active_idx = i; }
+                // v0.5.5: load pane_count (default to 1 if key absent)
+                string:pc_key = raw _tab_key(n2, "pane_count");
+                int32:has_pc  = raw Toml.has_key(pc_key);
+                if (has_pc == 1i32) {
+                    int64:pc = raw Toml.get_int(pc_key);
+                    if (pc < 1i64) { pc = 1i64; }
+                    drop(_sess_set_pcount(i, pc));
+                }
+                if (has_pc == 0i32) {
+                    drop(_sess_set_pcount(i, 1i64));
+                }
 
                 i = i + 1i64;
             }

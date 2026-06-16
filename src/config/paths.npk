@@ -1,0 +1,129 @@
+// src/config/paths.npk — XDG Base Directory path resolution (v0.6.0)
+//
+// Resolves config/data/cache directories per the XDG Base Directory spec:
+//   config:  $XDG_CONFIG_HOME/nitty/   or  $HOME/.config/nitty/
+//   data:    $XDG_DATA_HOME/nitty/     or  $HOME/.local/share/nitty/
+//   cache:   $XDG_CACHE_HOME/nitty/    or  $HOME/.cache/nitty/
+//
+// Call paths_init() once at startup before using any path functions.
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+
+// ── Cached resolved paths ─────────────────────────────────────────────────────
+
+string:g_cfg_dir = "";
+string:g_dat_dir = "";
+string:g_cch_dir = "";
+int64:g_paths_ready = 0i64;
+
+// ── Internal resolution helpers ───────────────────────────────────────────────
+
+/// Resolve XDG config dir: $XDG_CONFIG_HOME/nitty/ or $HOME/.config/nitty/
+func:_resolve_config_dir = string() {
+    int32:has_xdg = raw has("XDG_CONFIG_HOME");
+    if (has_xdg == 1i32) {
+        string:xdg = raw get("XDG_CONFIG_HOME");
+        if (string_length(xdg) > 0i64) {
+            pass(string_concat(xdg, "/nitty/"));
+        }
+    }
+    string:h = raw home();
+    pass(string_concat(h, "/.config/nitty/"));
+};
+
+/// Resolve XDG data dir: $XDG_DATA_HOME/nitty/ or $HOME/.local/share/nitty/
+func:_resolve_data_dir = string() {
+    int32:has_xdg = raw has("XDG_DATA_HOME");
+    if (has_xdg == 1i32) {
+        string:xdg = raw get("XDG_DATA_HOME");
+        if (string_length(xdg) > 0i64) {
+            pass(string_concat(xdg, "/nitty/"));
+        }
+    }
+    string:h = raw home();
+    pass(string_concat(h, "/.local/share/nitty/"));
+};
+
+/// Resolve XDG cache dir: $XDG_CACHE_HOME/nitty/ or $HOME/.cache/nitty/
+func:_resolve_cache_dir = string() {
+    int32:has_xdg = raw has("XDG_CACHE_HOME");
+    if (has_xdg == 1i32) {
+        string:xdg = raw get("XDG_CACHE_HOME");
+        if (string_length(xdg) > 0i64) {
+            pass(string_concat(xdg, "/nitty/"));
+        }
+    }
+    string:h = raw home();
+    pass(string_concat(h, "/.cache/nitty/"));
+};
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/// Resolve and cache all three XDG directories. Must be called before any
+/// path getter. Safe to call multiple times (idempotent).
+pub func:paths_init = NIL() {
+    if (g_paths_ready == 1i64) { pass(NIL); }
+    g_cfg_dir = raw _resolve_config_dir();
+    g_dat_dir = raw _resolve_data_dir();
+    g_cch_dir = raw _resolve_cache_dir();
+    g_paths_ready = 1i64;
+    pass(NIL);
+};
+
+/// Config directory path (trailing slash included).
+/// e.g. "/home/user/.config/nitty/"
+pub func:config_dir = string() {
+    if (g_paths_ready == 0i64) { drop(paths_init()); }
+    pass(g_cfg_dir);
+};
+
+/// Full path to the main config file.
+/// e.g. "/home/user/.config/nitty/nitty.toml"
+pub func:config_file_path = string() {
+    if (g_paths_ready == 0i64) { drop(paths_init()); }
+    pass(string_concat(g_cfg_dir, "nitty.toml"));
+};
+
+/// Data directory path.
+/// e.g. "/home/user/.local/share/nitty/"
+pub func:data_dir = string() {
+    if (g_paths_ready == 0i64) { drop(paths_init()); }
+    pass(g_dat_dir);
+};
+
+/// Cache directory path.
+/// e.g. "/home/user/.cache/nitty/"
+pub func:cache_dir = string() {
+    if (g_paths_ready == 0i64) { drop(paths_init()); }
+    pass(g_cch_dir);
+};
+
+/// Create all three XDG directories if they don't exist.
+/// Returns 1 if all dirs exist or were created successfully, 0 on any failure.
+pub func:ensure_dirs = int32() {
+    if (g_paths_ready == 0i64) { drop(paths_init()); }
+
+    // Config dir
+    int32:cfg_ok = raw fs_is_dir(g_cfg_dir);
+    if (cfg_ok == 0i32) {
+        cfg_ok = raw fs_mkdir(g_cfg_dir);
+        if (cfg_ok == 0i32) { pass(0i32); }
+    }
+
+    // Data dir
+    int32:dat_ok = raw fs_is_dir(g_dat_dir);
+    if (dat_ok == 0i32) {
+        dat_ok = raw fs_mkdir(g_dat_dir);
+        if (dat_ok == 0i32) { pass(0i32); }
+    }
+
+    // Cache dir
+    int32:cch_ok = raw fs_is_dir(g_cch_dir);
+    if (cch_ok == 0i32) {
+        cch_ok = raw fs_mkdir(g_cch_dir);
+        if (cch_ok == 0i32) { pass(0i32); }
+    }
+
+    pass(1i32);
+};

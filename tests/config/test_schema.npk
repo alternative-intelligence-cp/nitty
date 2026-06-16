@@ -1,0 +1,125 @@
+// tests/config/test_schema.npk — Unit tests for schema.npk (v0.6.0)
+//
+// No external test library — uses the inline check/check32/check_str pattern
+// from existing Nitty tests (see tests/test_split_tree.npk).
+
+use "../../src/config/schema.npk".*;
+
+func:failsafe = int32(tbb32:_code) { exit 1i32; };
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (expected != got)")));
+    pass(NIL);
+};
+
+func:check32 = NIL(string:name, int32:expected, int32:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (i32 expected != got)")));
+    pass(NIL);
+};
+
+func:check_str = NIL(string:name, string:expected, string:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (string mismatch)")));
+    pass(NIL);
+};
+
+func:main = int32() {
+    print("=== test_schema ===");
+    drop(schema_init());
+
+    // T01: schema_count() == 12
+    drop(check("T01_schema_count", 12i64, raw schema_count()));
+
+    // T02: default for terminal.font_family == "Monospace"
+    drop(check_str("T02_default_font_family",
+        "Monospace", raw schema_get_default("terminal.font_family")));
+
+    // T03: default for terminal.font_size == "12"
+    drop(check_str("T03_default_font_size",
+        "12", raw schema_get_default("terminal.font_size")));
+
+    // T04: validate_int — valid font_size (14 in 6..72) → 1
+    drop(check32("T04_validate_int_valid",
+        1i32, raw schema_validate_int("terminal.font_size", 14i64)));
+
+    // T05: validate_int — below min (5 < 6) → 0
+    drop(check32("T05_validate_int_below_min",
+        0i32, raw schema_validate_int("terminal.font_size", 5i64)));
+
+    // T06: validate_int — above max (73 > 72) → 0
+    drop(check32("T06_validate_int_above_max",
+        0i32, raw schema_validate_int("terminal.font_size", 73i64)));
+
+    // T07: validate_string — valid enum "block" → 1
+    drop(check32("T07_validate_enum_block",
+        1i32, raw schema_validate_string("terminal.cursor_style", "block")));
+
+    // T08: validate_string — valid enum "underline" → 1
+    drop(check32("T08_validate_enum_underline",
+        1i32, raw schema_validate_string("terminal.cursor_style", "underline")));
+
+    // T09: validate_string — valid enum "bar" → 1
+    drop(check32("T09_validate_enum_bar",
+        1i32, raw schema_validate_string("terminal.cursor_style", "bar")));
+
+    // T10: validate_string — invalid enum "blinking" → 0
+    drop(check32("T10_validate_enum_invalid",
+        0i32, raw schema_validate_string("terminal.cursor_style", "blinking")));
+
+    // T11: schema_find — known key returns >= 0
+    int64:idx11 = raw schema_find("appearance.opacity");
+    int64:found11 = 0i64;
+    if (idx11 >= 0i64) { found11 = 1i64; }
+    drop(check("T11_schema_find_known_key", 1i64, found11));
+
+    // T12: schema_find — unknown key returns < 0
+    int64:idx12 = raw schema_find("bogus.key");
+    int64:notfound12 = 0i64;
+    if (idx12 < 0i64) { notfound12 = 1i64; }
+    drop(check("T12_schema_find_unknown_key", 1i64, notfound12));
+
+    // T13: clamp_int — above max clamped to max (72)
+    drop(check("T13_clamp_above_max",
+        72i64, raw schema_clamp_int("terminal.font_size", 999i64)));
+
+    // T14: clamp_int — below min clamped to min (6)
+    drop(check("T14_clamp_below_min",
+        6i64, raw schema_clamp_int("terminal.font_size", 1i64)));
+
+    // T15: scrollback_lines max == 3000
+    drop(check("T15_scrollback_max",
+        3000i64, raw schema_get_max("terminal.scrollback_lines")));
+
+    // T16: validate_string for non-enum key (shell) is always 1
+    drop(check32("T16_non_enum_always_valid",
+        1i32, raw schema_validate_string("terminal.shell", "any value")));
+
+    // Summary
+    print("=== Results ===");
+    if (g_fail > 0i64) {
+        print("SOME TESTS FAILED");
+        exit 1i32;
+    }
+    print("All schema tests passed.");
+    exit 0i32;
+};

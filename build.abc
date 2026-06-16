@@ -396,3 +396,36 @@ deps = []
 flags = []
 link_libraries = []
 link_paths = []
+
+[target.test_pane_operations]
+type = "binary"
+sources = ["tests/test_pane_operations.npk"]
+deps = []
+flags = []
+link_libraries = []
+link_paths = []
+
+# v0.6.0: Configuration engine tests
+[target.test_schema]
+type = "binary"
+sources = ["tests/config/test_schema.npk"]
+deps = []
+flags = []
+link_libraries = []
+link_paths = []
+
+[target.test_paths]
+type = "binary"
+sources = ["tests/config/test_paths.npk"]
+deps = []
+flags = []
+link_libraries = ["nitpick_fs_shim", "nitpick_env_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+
+[target.test_config]
+type = "binary"
+sources = ["tests/config/test_config.npk"]
+deps = []
+flags = []
+link_libraries = ["nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]

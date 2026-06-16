@@ -1088,19 +1088,20 @@ static void on_ctx_action(GSimpleAction *action, GVariant *param, gpointer user_
     (void)param;
     (void)user_data;
     const char *name = g_action_get_name(G_ACTION(action));
-    if      (strcmp(name, "rename")       == 0) g_ctx_pending_action = 1;
-    else if (strcmp(name, "duplicate")    == 0) g_ctx_pending_action = 2;
-    else if (strcmp(name, "close")        == 0) g_ctx_pending_action = 3;
-    else if (strcmp(name, "close-others") == 0) g_ctx_pending_action = 4;
-    else if (strcmp(name, "close-right")  == 0) g_ctx_pending_action = 5;
-    else if (strcmp(name, "color-red")    == 0) g_ctx_pending_action = 6;
-    else if (strcmp(name, "color-orange") == 0) g_ctx_pending_action = 7;
-    else if (strcmp(name, "color-yellow") == 0) g_ctx_pending_action = 8;
-    else if (strcmp(name, "color-green")  == 0) g_ctx_pending_action = 9;
-    else if (strcmp(name, "color-blue")   == 0) g_ctx_pending_action = 10;
-    else if (strcmp(name, "color-purple") == 0) g_ctx_pending_action = 11;
-    else if (strcmp(name, "color-pink")   == 0) g_ctx_pending_action = 12;
-    else if (strcmp(name, "color-none")   == 0) g_ctx_pending_action = 13;
+    if      (strcmp(name, "rename")         == 0) g_ctx_pending_action = 1;
+    else if (strcmp(name, "duplicate")      == 0) g_ctx_pending_action = 2;
+    else if (strcmp(name, "close")          == 0) g_ctx_pending_action = 3;
+    else if (strcmp(name, "close-others")   == 0) g_ctx_pending_action = 4;
+    else if (strcmp(name, "close-right")    == 0) g_ctx_pending_action = 5;
+    else if (strcmp(name, "color-red")      == 0) g_ctx_pending_action = 6;
+    else if (strcmp(name, "color-orange")   == 0) g_ctx_pending_action = 7;
+    else if (strcmp(name, "color-yellow")   == 0) g_ctx_pending_action = 8;
+    else if (strcmp(name, "color-green")    == 0) g_ctx_pending_action = 9;
+    else if (strcmp(name, "color-blue")     == 0) g_ctx_pending_action = 10;
+    else if (strcmp(name, "color-purple")   == 0) g_ctx_pending_action = 11;
+    else if (strcmp(name, "color-pink")     == 0) g_ctx_pending_action = 12;
+    else if (strcmp(name, "color-none")     == 0) g_ctx_pending_action = 13;
+    else if (strcmp(name, "explode-panes")  == 0) g_ctx_pending_action = 14; /* v0.5.5 */
 }
 
 void nitty_gtk4_context_menu_show(int64_t x, int64_t y, int64_t tab_idx)
@@ -1114,7 +1115,9 @@ void nitty_gtk4_context_menu_show(int64_t x, int64_t y, int64_t tab_idx)
     const char *actions[] = {
         "rename", "duplicate", "close", "close-others", "close-right",
         "color-red", "color-orange", "color-yellow", "color-green",
-        "color-blue", "color-purple", "color-pink", "color-none", NULL
+        "color-blue", "color-purple", "color-pink", "color-none",
+        "explode-panes",   /* v0.5.5 */
+        NULL
     };
     for (int i = 0; actions[i]; i++) {
         GSimpleAction *a = g_simple_action_new(actions[i], NULL);
@@ -1151,6 +1154,12 @@ void nitty_gtk4_context_menu_show(int64_t x, int64_t y, int64_t tab_idx)
     g_menu_append_item(menu, color_item);
     g_object_unref(color_item);
     g_object_unref(color_menu);
+
+    /* v0.5.5: Pane operations section */
+    GMenu *pane_section = g_menu_new();
+    g_menu_append(pane_section, "Explode Panes to Tabs", "tab.explode-panes");
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(pane_section));
+    g_object_unref(pane_section);
 
     /* Create and show popover */
     GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
@@ -1622,4 +1631,12 @@ int64_t nitty_gtk4_broadcast_is_active(void)
     /* Simple: delegate to a helper we'll define inline here */
     extern int nitty_input_broadcast_count(void);
     return (nitty_input_broadcast_count() > 0) ? 1 : 0;
+}
+
+/* v0.5.5: Swap mode — delegates to nitty_input.c */
+extern void nitty_input_set_swap_mode(int active);
+
+void nitty_gtk4_set_swap_mode(int64_t active)
+{
+    nitty_input_set_swap_mode((int)active);
 }

@@ -517,6 +517,13 @@ void nitty_gtk4_broadcast_clear(void);
  */
 int64_t nitty_gtk4_broadcast_is_active(void);
 
+/**
+ * v0.5.5: Notify the input handler whether swap mode is active.
+ * When active=1, the next Escape keypress fires pane_event=30 instead of
+ * going to the PTY. Called by Nitpick when entering/leaving swap mode.
+ */
+void nitty_gtk4_set_swap_mode(int64_t active);
+
 #ifdef __cplusplus
 }
 #endif

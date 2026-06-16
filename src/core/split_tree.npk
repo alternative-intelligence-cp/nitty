@@ -932,3 +932,48 @@ pub func:split_tree_prev_pane = int64() {
     }
     pass(prev_pid);
 };
+
+// ===================================================================
+// v0.5.5: Pane swap and tree reset
+// ===================================================================
+
+/// Swap the visual positions of two panes in the split tree.
+/// Finds the Leaf nodes for pane_a and pane_b and swaps their pane_id
+/// values (g_val_a). The fd/pid data in split_view is indexed by pane_id,
+/// so swapping node values is sufficient to visually re-position the panes.
+/// Returns 1 on success, 0 if either pane not found or pane_a == pane_b.
+pub func:split_tree_swap_panes = int32(int64:pane_a, int64:pane_b) {
+    if (pane_a == pane_b) { pass(0i32); }
+    int64:node_a = 63i64;
+    int64:node_b = 63i64;
+    int64:si = 0i64;
+    while (si < g_ms[0i64]) {
+        if (g_kind[si] == 1i64) {
+            if (g_val_a[si] == pane_a) { node_a = si; }
+            if (g_val_a[si] == pane_b) { node_b = si; }
+        }
+        si = si + 1i64;
+    }
+    if (node_a == 63i64) { pass(0i32); }
+    if (node_b == 63i64) { pass(0i32); }
+    g_val_a[node_a] = pane_b;
+    g_val_a[node_b] = pane_a;
+    pass(1i32);
+};
+
+/// Reinitialize the split tree to a single leaf with the given pane_id.
+/// Clears the node pool and resets layout info. Used by explode_panes.
+pub func:split_tree_reset_to_pane = NIL(int64:pane_id) {
+    g_kind[0i64]  = 1i64;
+    g_val_a[0i64] = pane_id;
+    g_val_b[0i64] = 0i64;
+    g_val_c[0i64] = 63i64;
+    g_val_d[0i64] = 63i64;
+    g_ms[0i64] = 1i64;
+    g_ms[1i64] = pane_id;
+    g_ms[3i64] = 0i64;
+    g_ms[4i64] = 0i64;
+    g_ms[5i64] = 0i64;
+    g_ms[6i64] = 0i64;
+    pass(NIL);
+};

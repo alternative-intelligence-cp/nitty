@@ -460,4 +460,7 @@ extern "nitty_gtk4_shim" {
     func:nitty_gtk4_broadcast_add_fd     = NIL(int64:fd);
     func:nitty_gtk4_broadcast_clear      = NIL();
     func:nitty_gtk4_broadcast_is_active  = int64();
+
+    // v0.5.5: Swap mode — tell input.c to intercept next Escape as swap_cancel
+    func:nitty_gtk4_set_swap_mode = NIL(int64:active);
 }

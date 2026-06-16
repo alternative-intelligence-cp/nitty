@@ -32,6 +32,10 @@ extern void nitty_gtk4_grid_handle_key(int64_t keyval, int64_t modifiers);
 static int g_terminal_mode = 0;
 static int64_t g_pty_master_fd = -1;
 
+/* v0.5.5: Swap mode flag — set by Nitpick via nitty_input_set_swap_mode() */
+static int g_swap_mode_active = 0;
+void nitty_input_set_swap_mode(int active) { g_swap_mode_active = active; }
+
 /* PTY shim write functions — defined in nitty_pty_shim.c */
 extern int64_t nitty_pty_write_byte(int64_t fd, int64_t byte_val);
 extern int64_t nitty_pty_write_string(int64_t fd, const char *str);
@@ -182,8 +186,22 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
             /* v0.5.4: Ctrl+Shift+B: broadcast input toggle */
             case GDK_KEY_b: case GDK_KEY_B:
                 g_pane_event = 28; return TRUE; /* broadcast_toggle */
+            /* v0.5.5: Ctrl+Shift+S: swap mode toggle */
+            case GDK_KEY_s: case GDK_KEY_S:
+                g_pane_event = 29; return TRUE; /* swap_mode_toggle */
+            /* v0.5.5: Ctrl+Shift+!: explode panes to tabs */
+            case GDK_KEY_exclam:
+                g_pane_event = 31; return TRUE; /* explode_panes */
+            /* v0.5.5: Ctrl+Shift+@: combine next tab as pane */
+            case GDK_KEY_at:
+                g_pane_event = 32; return TRUE; /* combine_next */
             default: break;
         }
+    }
+
+    /* v0.5.5: Escape cancels swap mode */
+    if (keyval == GDK_KEY_Escape && g_swap_mode_active) {
+        g_pane_event = 30; return TRUE; /* swap_cancel */
     }
 
     /* v0.5.2: Intercept Alt+Arrow for pane focus navigation before PTY routing */

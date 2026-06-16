@@ -18,8 +18,11 @@
 //  11  = Set color: Purple   (0x9060D0)
 //  12  = Set color: Pink     (0xD060A0)
 //  13  = Clear color (None)
+//  14  = Explode Panes       v0.5.5
 
 use "../core/tab_manager.npk".*;
+use "../core/split_tree.npk".*;
+use "../gui/split_view.npk".*;
 use "gtk4_ffi.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════
@@ -160,6 +163,28 @@ pub func:tcm_poll = NIL() {
     // Clear color (None)
     if (action == 13i64) {
         drop(tcm_set_color(tab_idx, TCM_COLOR_NONE));
+    }
+    // v0.5.5: Explode Panes — promote each pane to its own tab
+    if (action == 14i64) {
+        int64:ex_pcount = raw split_tree_pane_count();
+        if (ex_pcount > 1i64) {
+            drop(split_tree_layout(0i64, 0i64, 10000i64, 10000i64));
+            int64:ex_lc   = raw split_tree_get_layout_count();
+            int64:ex_keep = raw split_tree_get_layout_pane_id(0i64);
+            int64:ex_li   = 1i64;
+            while (ex_li < ex_lc) {
+                int64:ex_pid   = raw split_tree_get_layout_pane_id(ex_li);
+                int64:ex_fd    = raw split_view_get_pane_fd(ex_pid);
+                int64:ex_shpid = raw split_view_get_pane_pid(ex_pid);
+                if (ex_fd >= 0i64) {
+                    drop(tm_add_tab_with_fd(ex_fd, ex_shpid, "Shell"));
+                    drop(split_view_detach_pane(ex_pid));
+                }
+                ex_li = ex_li + 1i64;
+            }
+            drop(split_tree_reset_to_pane(ex_keep));
+            drop(split_view_build());
+        }
     }
 
     // Queue a redraw after any context menu action

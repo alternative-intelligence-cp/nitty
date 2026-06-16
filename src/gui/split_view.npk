@@ -45,7 +45,9 @@ use "../core/pane.npk".*;
 //   g_sv_ms[1] = pane_count (number of live pane slots)
 //   g_sv_ms[2] = root_widget ptr (current root GtkWidget)
 //   g_sv_ms[3] = next_pane_slot (next free slot in g_sv_pane_fd)
-int64[4]:g_sv_ms = [0i64, 0i64, 0i64, 0i64];
+//   g_sv_ms[4] = swap_mode (0=off, 1=active)         v0.5.5
+//   g_sv_ms[5] = swap_source_pane_id                  v0.5.5
+int64[6]:g_sv_ms = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
 
 // Per-pane PTY tracking (indexed by pane_id 0..62)
 int64[63]:g_sv_pane_fd  = [
@@ -147,13 +149,13 @@ pub func:split_view_build = NIL() {
 
     // Case 1: single pane — just wrap the DA in a box
     if (pcount == 1i64) {
-        int64:pid0  = raw split_tree_get_layout_pane_id(0i64);
-        int64:da0   = _get_or_create_da(pid0);
+        int64:pid0    = raw split_tree_get_layout_pane_id(0i64);
+        int64:da0     = _get_or_create_da(pid0);
         // Pack into a box so set_content_widget always gets a container
-        int64:box   = raw nitty_gtk4_box_new(1i64, 0i64);  // vertical, 0 spacing
-        drop(nitty_gtk4_box_append(box, da0));
+        int64:wrap_box = raw nitty_gtk4_box_new(1i64, 0i64);  // vertical, 0 spacing
+        drop(nitty_gtk4_box_append(wrap_box, da0));
         drop(nitty_gtk4_widget_set_expand(da0, 1i64, 1i64));
-        new_root = box;
+        new_root = wrap_box;
     }
 
     // Case 2+: multiple panes — build from dividers
@@ -611,4 +613,59 @@ pub func:split_view_resize_all_ptys = NIL(int64:total_w, int64:total_h, int64:ce
         li = li + 1i64;
     }
     pass(NIL);
+};
+// ===================================================================
+// v0.5.5: Pane detach/register and swap mode
+// ===================================================================
+
+/// Remove a pane from the fd registry WITHOUT closing its PTY.
+/// Used by explode_panes to transfer fds to new tabs.
+/// Decrements pane_count.
+pub func:split_view_detach_pane = NIL(int64:pane_id) {
+    if (pane_id < 0i64) { pass(NIL); }
+    if (pane_id >= 63i64) { pass(NIL); }
+    g_sv_pane_fd[pane_id]  = -1i64;
+    g_sv_pane_pid[pane_id] = -1i64;
+    g_sv_pane_da[pane_id]  = 0i64;
+    int64:cnt = g_sv_ms[1i64];
+    if (cnt > 0i64) {
+        g_sv_ms[1i64] = cnt - 1i64;
+    }
+    pass(NIL);
+};
+
+/// Register an existing PTY fd/pid as a pane WITHOUT spawning a new shell.
+/// Used by combine_next_tab to absorb a tab's shell as a pane.
+/// Increments pane_count.
+pub func:split_view_register_pane = NIL(int64:pane_id, int64:fd, int64:pid) {
+    if (pane_id < 0i64) { pass(NIL); }
+    if (pane_id >= 63i64) { pass(NIL); }
+    g_sv_pane_fd[pane_id]  = fd;
+    g_sv_pane_pid[pane_id] = pid;
+    g_sv_ms[1i64] = g_sv_ms[1i64] + 1i64;
+    pass(NIL);
+};
+
+/// Enter swap mode: record the source pane and set the swap_mode flag.
+pub func:split_view_enter_swap_mode = NIL(int64:pane_id) {
+    g_sv_ms[4i64] = 1i64;
+    g_sv_ms[5i64] = pane_id;
+    pass(NIL);
+};
+
+/// Cancel swap mode (Escape or same-pane click).
+pub func:split_view_cancel_swap_mode = NIL() {
+    g_sv_ms[4i64] = 0i64;
+    g_sv_ms[5i64] = 0i64;
+    pass(NIL);
+};
+
+/// Returns 1 if swap mode is currently active, 0 otherwise.
+pub func:split_view_is_swap_mode = int64() {
+    pass(g_sv_ms[4i64]);
+};
+
+/// Returns the source pane_id recorded when swap mode was entered.
+pub func:split_view_get_swap_source = int64() {
+    pass(g_sv_ms[5i64]);
 };

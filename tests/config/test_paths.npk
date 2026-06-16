@@ -1,0 +1,95 @@
+// tests/config/test_paths.npk — Unit tests for paths.npk (v0.6.0)
+//
+// Uses the inline check harness pattern from existing Nitty tests.
+// Requires: nitpick_fs_shim, nitpick_env_shim
+
+use "../../src/config/paths.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+
+func:failsafe = int32(tbb32:_code) { exit 1i32; };
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (expected != got)")));
+    pass(NIL);
+};
+
+func:check32 = NIL(string:name, int32:expected, int32:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (i32 expected != got)")));
+    pass(NIL);
+};
+
+func:main = int32() {
+    print("=== test_paths ===");
+    drop(paths_init());
+
+    // T01: config_file_path() is non-empty
+    string:fpath = raw config_file_path();
+    int64:flen   = string_length(fpath);
+    int64:fnonempty = 0i64;
+    if (flen > 0i64) { fnonempty = 1i64; }
+    drop(check("T01_config_file_path_nonempty", 1i64, fnonempty));
+
+    // T02: config_dir() is non-empty
+    string:cdir = raw config_dir();
+    int64:cnonempty = 0i64;
+    if (string_length(cdir) > 0i64) { cnonempty = 1i64; }
+    drop(check("T02_config_dir_nonempty", 1i64, cnonempty));
+
+    // T03: data_dir() is non-empty
+    string:ddir = raw data_dir();
+    int64:dnonempty = 0i64;
+    if (string_length(ddir) > 0i64) { dnonempty = 1i64; }
+    drop(check("T03_data_dir_nonempty", 1i64, dnonempty));
+
+    // T04: cache_dir() is non-empty
+    string:ccdir = raw cache_dir();
+    int64:ccnonempty = 0i64;
+    if (string_length(ccdir) > 0i64) { ccnonempty = 1i64; }
+    drop(check("T04_cache_dir_nonempty", 1i64, ccnonempty));
+
+    // T05: ensure_dirs() returns 1 (success)
+    int32:dirs_ok = raw ensure_dirs();
+    drop(check32("T05_ensure_dirs_success", 1i32, dirs_ok));
+
+    // T06: config dir exists on disk after ensure_dirs
+    int32:is_dir = raw fs_is_dir(raw config_dir());
+    drop(check32("T06_config_dir_exists_on_disk", 1i32, is_dir));
+
+    // T07: config_file_path() length > config_dir() length
+    int64:cfdir_len  = string_length(raw config_dir());
+    int64:cfpath_len = string_length(raw config_file_path());
+    int64:path_longer = 0i64;
+    if (cfpath_len > cfdir_len) { path_longer = 1i64; }
+    drop(check("T07_file_path_longer_than_dir", 1i64, path_longer));
+
+    // T08: paths_init is idempotent (safe to call twice)
+    drop(paths_init());
+    string:cdir2 = raw config_dir();
+    int64:idem_ok = 0i64;
+    if (cdir2 == cdir) { idem_ok = 1i64; }
+    drop(check("T08_paths_init_idempotent", 1i64, idem_ok));
+
+    // Summary
+    print("=== Results ===");
+    if (g_fail > 0i64) {
+        print("SOME TESTS FAILED");
+        exit 1i32;
+    }
+    print("All paths tests passed.");
+    exit 0i32;
+};

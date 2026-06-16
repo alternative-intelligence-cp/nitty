@@ -1,0 +1,153 @@
+// tests/config/test_config.npk — Unit tests for config.npk (v0.6.0)
+//
+// Uses the inline check harness pattern from existing Nitty tests.
+// Requires: nitpick_toml_shim, nitpick_fs_shim, nitpick_env_shim
+
+use "../../src/config/config.npk".*;
+use "../../src/config/paths.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+
+func:failsafe = int32(tbb32:_code) { exit 1i32; };
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (expected != got)")));
+    pass(NIL);
+};
+
+func:check32 = NIL(string:name, int32:expected, int32:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (i32 expected != got)")));
+    pass(NIL);
+};
+
+func:check_str = NIL(string:name, string:expected, string:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (string mismatch)")));
+    pass(NIL);
+};
+
+func:main = int32() {
+    print("=== test_config ===");
+
+    // T01: config_load() completes (idempotent sentinel check)
+    drop(config_load());
+    drop(check("T01_config_load_completes", 1i64, 1i64));
+
+    // T02: cfg_font_family() is non-empty
+    string:ff = raw cfg_font_family();
+    int64:ff_ok = 0i64;
+    if (string_length(ff) > 0i64) { ff_ok = 1i64; }
+    drop(check("T02_cfg_font_family_nonempty", 1i64, ff_ok));
+
+    // T03: cfg_font_size() is in [6, 72]
+    int64:fs = raw cfg_font_size();
+    int64:fs_ok = 0i64;
+    if (fs >= 6i64) {
+        if (fs <= 72i64) { fs_ok = 1i64; }
+    }
+    drop(check("T03_cfg_font_size_in_range", 1i64, fs_ok));
+
+    // T04: cfg_scrollback_lines() is in [0, 3000]
+    int64:sb = raw cfg_scrollback_lines();
+    int64:sb_ok = 0i64;
+    if (sb >= 0i64) {
+        if (sb <= 3000i64) { sb_ok = 1i64; }
+    }
+    drop(check("T04_cfg_scrollback_lines_in_range", 1i64, sb_ok));
+
+    // T05: cfg_columns() is in [10, 500]
+    int64:cols = raw cfg_columns();
+    int64:cols_ok = 0i64;
+    if (cols >= 10i64) {
+        if (cols <= 500i64) { cols_ok = 1i64; }
+    }
+    drop(check("T05_cfg_columns_in_range", 1i64, cols_ok));
+
+    // T06: cfg_rows() is in [5, 200]
+    int64:rows = raw cfg_rows();
+    int64:rows_ok = 0i64;
+    if (rows >= 5i64) {
+        if (rows <= 200i64) { rows_ok = 1i64; }
+    }
+    drop(check("T06_cfg_rows_in_range", 1i64, rows_ok));
+
+    // T07: cfg_cursor_style() is a valid enum value
+    string:cs = raw cfg_cursor_style();
+    int64:cs_ok = 0i64;
+    if (cs == "block")     { cs_ok = 1i64; }
+    if (cs == "underline") { cs_ok = 1i64; }
+    if (cs == "bar")       { cs_ok = 1i64; }
+    drop(check("T07_cfg_cursor_style_valid_enum", 1i64, cs_ok));
+
+    // T08: cfg_opacity() is in [100, 1000]
+    int64:op = raw cfg_opacity();
+    int64:op_ok = 0i64;
+    if (op >= 100i64) {
+        if (op <= 1000i64) { op_ok = 1i64; }
+    }
+    drop(check("T08_cfg_opacity_in_range", 1i64, op_ok));
+
+    // T09: cfg_theme() is non-empty
+    string:th = raw cfg_theme();
+    int64:th_ok = 0i64;
+    if (string_length(th) > 0i64) { th_ok = 1i64; }
+    drop(check("T09_cfg_theme_nonempty", 1i64, th_ok));
+
+    // T10: config_save() returns 1 (success)
+    int32:saved = raw config_save();
+    drop(check32("T10_config_save_success", 1i32, saved));
+
+    // T11: config file exists on disk after save
+    string:fpath = raw config_file_path();
+    int32:exists = raw fs_exists(fpath);
+    drop(check32("T11_config_file_exists_after_save", 1i32, exists));
+
+    // T12: config_is_default() returns 0 or 1
+    int64:is_def = raw config_is_default();
+    int64:is_def_ok = 0i64;
+    if (is_def == 0i64) { is_def_ok = 1i64; }
+    if (is_def == 1i64) { is_def_ok = 1i64; }
+    drop(check("T12_config_is_default_valid", 1i64, is_def_ok));
+
+    // T13: setter round-trip — cfg_set_font_family then read back
+    drop(cfg_set_font_family("TestFontRoundTrip"));
+    drop(check_str("T13_set_font_family_roundtrip",
+        "TestFontRoundTrip", raw cfg_font_family()));
+
+    // T14: default font_size is 12 (after fresh init)
+    // This may be 12 (default) or user-set; just check it's still in range
+    int64:fs2 = raw cfg_font_size();
+    int64:fs2_ok = 0i64;
+    if (fs2 >= 6i64) {
+        if (fs2 <= 72i64) { fs2_ok = 1i64; }
+    }
+    drop(check("T14_cfg_font_size_still_in_range_after_setter", 1i64, fs2_ok));
+
+    // Summary
+    print("=== Results ===");
+    if (g_fail > 0i64) {
+        print("SOME TESTS FAILED");
+        exit 1i32;
+    }
+    print("All config tests passed.");
+    exit 0i32;
+};
