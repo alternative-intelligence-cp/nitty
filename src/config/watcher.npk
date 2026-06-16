@@ -1,0 +1,67 @@
+// src/config/watcher.npk — Config file hot-reload for Nitty v0.6.5
+//
+// Uses the GFileMonitor-based C shim to watch the config file for changes
+// and reload it live without restarting Nitty.
+//
+// Usage:
+//   app_init():    drop(watcher_init());
+//   tw_on_draw():  drop(watcher_poll());
+
+use "../gui/gtk4_ffi.npk".*;
+use "../config/config.npk".*;
+use "../config/paths.npk".*;
+use "../config/theme.npk".*;
+use "../gui/font_config.npk".*;
+use "../gui/tab_bar.npk".*;
+
+// Module state
+int64:g_watcher_active = 0i64;  // 1 once watcher_init() succeeds
+
+pub func:watcher_init = NIL() {
+    // Get the resolved config file path from paths.npk.
+    string:cfg_path = raw config_file_path();
+
+    // Don't watch if there is no config file path.
+    if (string_length(cfg_path) == 0i64) {
+        pass(NIL);
+    }
+
+    int64:result = nitty_gtk4_config_watch_start(cfg_path);
+    if (result == 0i64) {
+        g_watcher_active = 1i64;
+    }
+    pass(NIL);
+};
+
+pub func:watcher_poll = NIL() {
+    if (g_watcher_active == 0i64) { pass(NIL); }
+
+    int64:changed = nitty_gtk4_config_watch_poll();
+    if (changed == 0i64) { pass(NIL); }
+
+    // Reload config from disk.
+    drop(config_load());
+
+    // Re-apply font from new config.
+    string:ff = raw cfg_font_family();
+    int64:fs  = raw cfg_font_size();
+    drop(font_config_set_family(ff));
+    drop(font_config_set_size(fs));
+    drop(font_config_apply());
+
+    // Re-apply theme from new config.
+    string:thm = raw cfg_theme();
+    drop(theme_apply(thm));
+    drop(tb_apply_theme());
+
+    // Redraw.
+    nitty_gtk4_queue_redraw();
+    pass(NIL);
+};
+
+pub func:watcher_destroy = NIL() {
+    if (g_watcher_active == 0i64) { pass(NIL); }
+    nitty_gtk4_config_watch_stop();
+    g_watcher_active = 0i64;
+    pass(NIL);
+};

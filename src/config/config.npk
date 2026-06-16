@@ -426,6 +426,12 @@ pub func:cfg_set_cursor_style = NIL(string:v) { g_cfg_cursor_style = v; pass(NIL
 pub func:cfg_set_cursor_blink = NIL(int64:v)  { g_cfg_cursor_blink = v; pass(NIL); };
 pub func:cfg_set_opacity      = NIL(int64:v)  { g_cfg_opacity = v;     pass(NIL); };
 pub func:cfg_set_theme        = NIL(string:v) { g_cfg_theme = v;       pass(NIL); };
+// v0.6.5: Additional setters for settings window
+pub func:cfg_set_scrollback_lines  = NIL(int64:v)  { g_cfg_scrollback_lines = v;  pass(NIL); };
+pub func:cfg_set_columns           = NIL(int64:v)  { g_cfg_columns = v;           pass(NIL); };
+pub func:cfg_set_rows              = NIL(int64:v)  { g_cfg_rows = v;              pass(NIL); };
+pub func:cfg_set_close_on_exit     = NIL(int64:v)  { g_cfg_close_on_exit = v;     pass(NIL); };
+pub func:cfg_set_confirm_on_close  = NIL(int64:v)  { g_cfg_confirm_on_close = v;  pass(NIL); };
 // v0.6.3: Quake mode getters
 pub func:cfg_quake_enabled       = int64()  { pass(g_cfg_quake_enabled); };
 pub func:cfg_quake_hotkey        = string() { pass(g_cfg_quake_hotkey); };
@@ -433,3 +439,4 @@ pub func:cfg_quake_width_percent = int64()  { pass(g_cfg_quake_width_pct); };
 pub func:cfg_quake_height_percent = int64() { pass(g_cfg_quake_height_pct); };
 pub func:cfg_quake_position      = string() { pass(g_cfg_quake_position); };
 pub func:cfg_quake_anim_duration = int64()  { pass(g_cfg_quake_anim_duration); };
+

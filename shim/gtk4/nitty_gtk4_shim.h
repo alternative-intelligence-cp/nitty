@@ -580,6 +580,97 @@ void    nitty_quake_move_window(int64_t win_ptr, int64_t x, int64_t y);
 int64_t nitty_quake_get_monitor_w(void);
 int64_t nitty_quake_get_monitor_h(void);
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * v0.6.5: Settings window
+ *
+ * The settings window is a non-modal GTK4 window with a GtkNotebook.
+ * Because Nitpick cannot register GTK signal callbacks directly, the
+ * window uses a polling model:
+ *
+ *   1. Nitpick calls nitty_settings_init_values() with current config.
+ *   2. Nitpick calls nitty_settings_add_theme() for each built-in theme.
+ *   3. Nitpick calls nitty_settings_open() to create + show the window.
+ *   4. Each frame, Nitpick calls nitty_settings_poll_event() to check
+ *      for button clicks (Apply=1, OK=2, Cancel=3).
+ *   5. On Apply or OK, Nitpick reads new values via nitty_settings_get_*().
+ *
+ * nitty_settings_open:        Create and show the settings window.
+ *                             parent_win: main window ptr (for transient-for).
+ *                             Returns 1 on success, 0 on failure.
+ * nitty_settings_close:       Close and destroy the settings window.
+ * nitty_settings_is_open:     Returns 1 if the window is currently open.
+ * nitty_settings_poll_event:  Returns 1=Apply, 2=OK, 3=Cancel, 0=none.
+ *                             Clears the event on read.
+ *
+ * nitty_settings_init_values: Populate widget values before opening.
+ *                             Call this BEFORE nitty_settings_open().
+ * nitty_settings_clear_themes: Clear the theme dropdown items.
+ * nitty_settings_add_theme:   Append a theme name to the dropdown.
+ *
+ * nitty_settings_get_font_family:    Read current font family entry.
+ * nitty_settings_get_font_size:      Read current font size spinbutton (int).
+ * nitty_settings_get_scrollback:     Read scrollback lines spinbutton.
+ * nitty_settings_get_shell:          Read shell entry text.
+ * nitty_settings_get_cursor_style:   "block", "underline", or "bar".
+ * nitty_settings_get_cursor_blink:   0 or 1.
+ * nitty_settings_get_columns:        Terminal columns (int).
+ * nitty_settings_get_rows:           Terminal rows (int).
+ * nitty_settings_get_theme:          Selected theme name string.
+ * nitty_settings_get_opacity:        Opacity 0-1000 fixed-point.
+ * nitty_settings_get_close_on_exit:  0 or 1.
+ * nitty_settings_get_confirm_close:  0 or 1.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+int64_t     nitty_settings_open(int64_t parent_win_ptr);
+void        nitty_settings_close(void);
+int64_t     nitty_settings_is_open(void);
+int64_t     nitty_settings_poll_event(void);
+
+void        nitty_settings_init_values(
+                const char *font_family, int64_t font_size,
+                int64_t scrollback, const char *shell,
+                const char *cursor_style, int64_t cursor_blink,
+                int64_t columns, int64_t rows,
+                const char *theme, int64_t opacity,
+                int64_t close_on_exit, int64_t confirm_close);
+
+void        nitty_settings_clear_themes(void);
+void        nitty_settings_add_theme(const char *name);
+
+const char *nitty_settings_get_font_family(void);
+int64_t     nitty_settings_get_font_size(void);
+int64_t     nitty_settings_get_scrollback(void);
+const char *nitty_settings_get_shell(void);
+const char *nitty_settings_get_cursor_style(void);
+int64_t     nitty_settings_get_cursor_blink(void);
+int64_t     nitty_settings_get_columns(void);
+int64_t     nitty_settings_get_rows(void);
+const char *nitty_settings_get_theme(void);
+int64_t     nitty_settings_get_opacity(void);
+int64_t     nitty_settings_get_close_on_exit(void);
+int64_t     nitty_settings_get_confirm_close(void);
+
+/* ── Config file watcher (v0.6.5) ──────────────────────────────────────── */
+
+/**
+ * Start watching a config file for modifications (GFileMonitor-based).
+ * path: absolute path to the config file.
+ * Returns 0 on success, -1 on error.
+ */
+int64_t nitty_gtk4_config_watch_start(const char *path);
+
+/**
+ * Poll for a config file change event.
+ * Returns 1 if the file was modified (with 200ms debounce), 0 otherwise.
+ * Clears the event on read.
+ */
+int64_t nitty_gtk4_config_watch_poll(void);
+
+/**
+ * Stop watching the config file and release resources.
+ */
+void nitty_gtk4_config_watch_stop(void);
+
 #ifdef __cplusplus
 }
 #endif

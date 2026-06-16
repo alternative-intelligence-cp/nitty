@@ -37,6 +37,7 @@ use "../terminal/scrollback.npk".*;
 use "global_hotkey.npk".*;          // v0.6.3: global hotkey registration
 use "../gui/quake.npk".*;           // v0.6.3: quake mode window management
 use "../config/theme.npk".*;        // v0.6.4: theme engine
+use "../config/watcher.npk".*;      // v0.6.5: config hot-reload
 
 // fd 1 = stdout
 int64:STDOUT = 1i64;
@@ -66,10 +67,11 @@ pub func:app_set_no_restore = NIL() {
 
 pub func:app_init = NIL() {
     drop(config_load());                              // v0.6.0: load config first
+    drop(watcher_init());                            // v0.6.5: start config file watcher
     // v0.6.4: Apply theme from config before renderer_init() in app_run()
     drop(theme_apply(raw cfg_theme()));
     drop(tb_apply_theme());                           // v0.6.4: sync tab bar colors to theme
-    drop(write_stdout("Nitty v0.6.4 initializing...\n"));
+    drop(write_stdout("Nitty v0.6.5 initializing...\n"));
     pass(NIL);
 };
 
@@ -226,5 +228,5 @@ pub func:app_shutdown = NIL() {
 };
 
 pub func:app_version = string() {
-    pass("0.6.4");
+    pass("0.6.5");
 };

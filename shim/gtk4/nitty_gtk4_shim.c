@@ -2041,3 +2041,417 @@ int64_t nitty_quake_get_monitor_h(void)
     return (int64_t)geo.height;
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * v0.6.5: Settings window
+ *
+ * A non-blocking, non-modal GTK4 settings window with a GtkNotebook.
+ * Because Nitpick cannot register GTK signal callbacks, the window uses
+ * the polling model:  C-side captures button clicks and stores a result,
+ * Nitpick polls nitty_settings_poll_event() each frame.
+ *
+ * Events: 0=none, 1=Apply, 2=OK (also closes window), 3=Cancel (also closes)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Stored values ── */
+static char   g_sv_font_family[256]  = "Monospace";
+static int    g_sv_font_size         = 12;
+static int    g_sv_scrollback        = 3000;
+static char   g_sv_shell[512]        = "";
+static char   g_sv_cursor_style[32]  = "block";
+static int    g_sv_cursor_blink      = 1;
+static int    g_sv_columns           = 80;
+static int    g_sv_rows              = 24;
+static char   g_sv_theme[128]        = "default";
+static int    g_sv_opacity           = 1000;
+static int    g_sv_close_on_exit     = 1;
+static int    g_sv_confirm_close     = 1;
+
+/* ── Window state ── */
+static GtkWidget *g_settings_win   = NULL;
+static int        g_settings_event = 0;
+
+/* ── Widget pointers ── */
+static GtkWidget *g_sw_font_family_entry  = NULL;
+static GtkWidget *g_sw_font_size_spin     = NULL;
+static GtkWidget *g_sw_scrollback_spin    = NULL;
+static GtkWidget *g_sw_shell_entry        = NULL;
+static GtkWidget *g_sw_cursor_style_drop  = NULL;
+static GtkWidget *g_sw_cursor_blink_sw    = NULL;
+static GtkWidget *g_sw_columns_spin       = NULL;
+static GtkWidget *g_sw_rows_spin          = NULL;
+static GtkWidget *g_sw_theme_drop         = NULL;
+static GtkWidget *g_sw_opacity_scale      = NULL;
+static GtkWidget *g_sw_close_on_exit_sw   = NULL;
+static GtkWidget *g_sw_confirm_close_sw   = NULL;
+
+/* ── Theme list ── */
+static GtkStringList *g_sw_theme_list = NULL;
+static char g_sv_theme_names[32][128];
+static int  g_sv_theme_count = 0;
+
+/* ── Cursor styles ── */
+static const char *g_cursor_styles[] = { "block", "underline", "bar", NULL };
+
+static void _sw_snapshot_values(void)
+{
+    if (g_sw_font_family_entry) {
+        const char *t = gtk_editable_get_text(GTK_EDITABLE(g_sw_font_family_entry));
+        if (t) { strncpy(g_sv_font_family, t, sizeof(g_sv_font_family)-1); g_sv_font_family[sizeof(g_sv_font_family)-1]='\0'; }
+    }
+    if (g_sw_font_size_spin)
+        g_sv_font_size = (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_sw_font_size_spin));
+    if (g_sw_scrollback_spin)
+        g_sv_scrollback = (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_sw_scrollback_spin));
+    if (g_sw_shell_entry) {
+        const char *t = gtk_editable_get_text(GTK_EDITABLE(g_sw_shell_entry));
+        if (t) { strncpy(g_sv_shell, t, sizeof(g_sv_shell)-1); g_sv_shell[sizeof(g_sv_shell)-1]='\0'; }
+    }
+    if (g_sw_cursor_style_drop) {
+        guint sel = gtk_drop_down_get_selected(GTK_DROP_DOWN(g_sw_cursor_style_drop));
+        if (sel == GTK_INVALID_LIST_POSITION || sel >= 3) sel = 0;
+        strncpy(g_sv_cursor_style, g_cursor_styles[sel], sizeof(g_sv_cursor_style)-1);
+        g_sv_cursor_style[sizeof(g_sv_cursor_style)-1] = '\0';
+    }
+    if (g_sw_cursor_blink_sw)
+        g_sv_cursor_blink = gtk_switch_get_active(GTK_SWITCH(g_sw_cursor_blink_sw)) ? 1 : 0;
+    if (g_sw_columns_spin)
+        g_sv_columns = (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_sw_columns_spin));
+    if (g_sw_rows_spin)
+        g_sv_rows = (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_sw_rows_spin));
+    if (g_sw_theme_drop && g_sv_theme_count > 0) {
+        guint sel = gtk_drop_down_get_selected(GTK_DROP_DOWN(g_sw_theme_drop));
+        if (sel != GTK_INVALID_LIST_POSITION && sel < (guint)g_sv_theme_count) {
+            strncpy(g_sv_theme, g_sv_theme_names[sel], sizeof(g_sv_theme)-1);
+            g_sv_theme[sizeof(g_sv_theme)-1] = '\0';
+        }
+    }
+    if (g_sw_opacity_scale) {
+        double val = gtk_range_get_value(GTK_RANGE(g_sw_opacity_scale));
+        g_sv_opacity = (int)(val * 1000.0);
+        if (g_sv_opacity < 100) g_sv_opacity = 100;
+        if (g_sv_opacity > 1000) g_sv_opacity = 1000;
+    }
+    if (g_sw_close_on_exit_sw)
+        g_sv_close_on_exit = gtk_switch_get_active(GTK_SWITCH(g_sw_close_on_exit_sw)) ? 1 : 0;
+    if (g_sw_confirm_close_sw)
+        g_sv_confirm_close = gtk_switch_get_active(GTK_SWITCH(g_sw_confirm_close_sw)) ? 1 : 0;
+}
+
+static void _sw_on_apply(GtkButton *btn, gpointer ud)  { (void)btn;(void)ud; _sw_snapshot_values(); g_settings_event=1; }
+static void _sw_on_ok(GtkButton *btn, gpointer ud)     { (void)btn;(void)ud; _sw_snapshot_values(); g_settings_event=2; if(g_settings_win) gtk_window_close(GTK_WINDOW(g_settings_win)); }
+static void _sw_on_cancel(GtkButton *btn, gpointer ud) { (void)btn;(void)ud; g_settings_event=3; if(g_settings_win) gtk_window_close(GTK_WINDOW(g_settings_win)); }
+
+static void _sw_on_destroy(GtkWidget *w, gpointer ud)
+{
+    (void)w;(void)ud;
+    g_settings_win=NULL;
+    g_sw_font_family_entry=NULL; g_sw_font_size_spin=NULL; g_sw_scrollback_spin=NULL;
+    g_sw_shell_entry=NULL; g_sw_cursor_style_drop=NULL; g_sw_cursor_blink_sw=NULL;
+    g_sw_columns_spin=NULL; g_sw_rows_spin=NULL; g_sw_theme_drop=NULL;
+    g_sw_opacity_scale=NULL; g_sw_close_on_exit_sw=NULL; g_sw_confirm_close_sw=NULL;
+    g_sw_theme_list=NULL;
+}
+
+static GtkWidget *_sw_row(const char *lbl_text, GtkWidget *widget)
+{
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_widget_set_margin_start(row, 4); gtk_widget_set_margin_end(row, 4);
+    GtkWidget *lbl = gtk_label_new(lbl_text);
+    gtk_widget_set_halign(lbl, GTK_ALIGN_START);
+    gtk_widget_set_hexpand(lbl, TRUE);
+    gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+    gtk_widget_set_halign(widget, GTK_ALIGN_END);
+    gtk_widget_set_valign(widget, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(row), lbl);
+    gtk_box_append(GTK_BOX(row), widget);
+    return row;
+}
+
+static GtkWidget *_sw_section_label(const char *text)
+{
+    GtkWidget *lbl = gtk_label_new(NULL);
+    char markup[256];
+    snprintf(markup, sizeof(markup), "<b>%s</b>", text);
+    gtk_label_set_markup(GTK_LABEL(lbl), markup);
+    gtk_widget_set_halign(lbl, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(lbl, 8);
+    gtk_widget_set_margin_bottom(lbl, 4);
+    gtk_widget_set_margin_start(lbl, 4);
+    return lbl;
+}
+
+static int _sw_find_theme_index(const char *name)
+{
+    for (int i=0; i<g_sv_theme_count; i++)
+        if (strcmp(g_sv_theme_names[i], name)==0) return i;
+    return 0;
+}
+
+static int _sw_find_cursor_style_index(const char *style)
+{
+    for (int i=0; g_cursor_styles[i]!=NULL; i++)
+        if (strcmp(g_cursor_styles[i], style)==0) return i;
+    return 0;
+}
+
+static GtkWidget *_sw_build_general_tab(void)
+{
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(box,12); gtk_widget_set_margin_end(box,12);
+    gtk_widget_set_margin_top(box,12);  gtk_widget_set_margin_bottom(box,12);
+    gtk_box_append(GTK_BOX(box), _sw_section_label("Behavior"));
+    g_sw_close_on_exit_sw = gtk_switch_new();
+    gtk_switch_set_active(GTK_SWITCH(g_sw_close_on_exit_sw), g_sv_close_on_exit ? TRUE : FALSE);
+    gtk_box_append(GTK_BOX(box), _sw_row("Close tab when shell exits", g_sw_close_on_exit_sw));
+    g_sw_confirm_close_sw = gtk_switch_new();
+    gtk_switch_set_active(GTK_SWITCH(g_sw_confirm_close_sw), g_sv_confirm_close ? TRUE : FALSE);
+    gtk_box_append(GTK_BOX(box), _sw_row("Confirm before closing a tab", g_sw_confirm_close_sw));
+    return box;
+}
+
+static GtkWidget *_sw_build_appearance_tab(void)
+{
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(box,12); gtk_widget_set_margin_end(box,12);
+    gtk_widget_set_margin_top(box,12);  gtk_widget_set_margin_bottom(box,12);
+    gtk_box_append(GTK_BOX(box), _sw_section_label("Color Theme"));
+    g_sw_theme_list = gtk_string_list_new(NULL);
+    for (int i=0; i<g_sv_theme_count; i++)
+        gtk_string_list_append(g_sw_theme_list, g_sv_theme_names[i]);
+    g_sw_theme_drop = gtk_drop_down_new(G_LIST_MODEL(g_sw_theme_list), NULL);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(g_sw_theme_drop), (guint)_sw_find_theme_index(g_sv_theme));
+    gtk_widget_set_size_request(g_sw_theme_drop, 200, -1);
+    gtk_box_append(GTK_BOX(box), _sw_row("Theme", g_sw_theme_drop));
+    gtk_box_append(GTK_BOX(box), _sw_section_label("Window"));
+    g_sw_opacity_scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.1, 1.0, 0.05);
+    gtk_range_set_value(GTK_RANGE(g_sw_opacity_scale), (double)g_sv_opacity/1000.0);
+    gtk_widget_set_size_request(g_sw_opacity_scale, 180, -1);
+    gtk_scale_set_draw_value(GTK_SCALE(g_sw_opacity_scale), TRUE);
+    gtk_scale_set_digits(GTK_SCALE(g_sw_opacity_scale), 2);
+    gtk_box_append(GTK_BOX(box), _sw_row("Opacity", g_sw_opacity_scale));
+    return box;
+}
+
+static GtkWidget *_sw_build_terminal_tab(void)
+{
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(box,12); gtk_widget_set_margin_end(box,12);
+    gtk_widget_set_margin_top(box,12);  gtk_widget_set_margin_bottom(box,12);
+    gtk_box_append(GTK_BOX(box), _sw_section_label("Font"));
+    g_sw_font_family_entry = gtk_entry_new();
+    gtk_editable_set_text(GTK_EDITABLE(g_sw_font_family_entry), g_sv_font_family);
+    gtk_widget_set_size_request(g_sw_font_family_entry, 200, -1);
+    gtk_box_append(GTK_BOX(box), _sw_row("Font Family", g_sw_font_family_entry));
+    g_sw_font_size_spin = gtk_spin_button_new_with_range(6.0, 72.0, 1.0);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_sw_font_size_spin), (double)g_sv_font_size);
+    gtk_box_append(GTK_BOX(box), _sw_row("Font Size", g_sw_font_size_spin));
+    gtk_box_append(GTK_BOX(box), _sw_section_label("Display"));
+    g_sw_columns_spin = gtk_spin_button_new_with_range(40.0, 400.0, 1.0);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_sw_columns_spin), (double)g_sv_columns);
+    gtk_box_append(GTK_BOX(box), _sw_row("Columns", g_sw_columns_spin));
+    g_sw_rows_spin = gtk_spin_button_new_with_range(8.0, 200.0, 1.0);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_sw_rows_spin), (double)g_sv_rows);
+    gtk_box_append(GTK_BOX(box), _sw_row("Rows", g_sw_rows_spin));
+    g_sw_scrollback_spin = gtk_spin_button_new_with_range(0.0, 1000000.0, 1000.0);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_sw_scrollback_spin), (double)g_sv_scrollback);
+    gtk_box_append(GTK_BOX(box), _sw_row("Scrollback Lines", g_sw_scrollback_spin));
+    gtk_box_append(GTK_BOX(box), _sw_section_label("Cursor"));
+    GtkStringList *csl = gtk_string_list_new(NULL);
+    gtk_string_list_append(csl, "block");
+    gtk_string_list_append(csl, "underline");
+    gtk_string_list_append(csl, "bar");
+    g_sw_cursor_style_drop = gtk_drop_down_new(G_LIST_MODEL(csl), NULL);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(g_sw_cursor_style_drop),
+                               (guint)_sw_find_cursor_style_index(g_sv_cursor_style));
+    gtk_box_append(GTK_BOX(box), _sw_row("Cursor Style", g_sw_cursor_style_drop));
+    g_sw_cursor_blink_sw = gtk_switch_new();
+    gtk_switch_set_active(GTK_SWITCH(g_sw_cursor_blink_sw), g_sv_cursor_blink ? TRUE : FALSE);
+    gtk_box_append(GTK_BOX(box), _sw_row("Cursor Blink", g_sw_cursor_blink_sw));
+    gtk_box_append(GTK_BOX(box), _sw_section_label("Shell"));
+    g_sw_shell_entry = gtk_entry_new();
+    if (g_sv_shell[0])
+        gtk_editable_set_text(GTK_EDITABLE(g_sw_shell_entry), g_sv_shell);
+    else
+        gtk_entry_set_placeholder_text(GTK_ENTRY(g_sw_shell_entry), "Default ($SHELL)");
+    gtk_widget_set_size_request(g_sw_shell_entry, 200, -1);
+    gtk_box_append(GTK_BOX(box), _sw_row("Shell Binary", g_sw_shell_entry));
+    return box;
+}
+
+static GtkWidget *_sw_build_stub_tab(const char *msg)
+{
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(box,24); gtk_widget_set_margin_end(box,24);
+    gtk_widget_set_margin_top(box,32);  gtk_widget_set_margin_bottom(box,24);
+    GtkWidget *lbl = gtk_label_new(msg);
+    gtk_widget_set_halign(lbl, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(lbl, GTK_ALIGN_CENTER);
+    gtk_label_set_wrap(GTK_LABEL(lbl), TRUE);
+    gtk_box_append(GTK_BOX(box), lbl);
+    return box;
+}
+
+int64_t nitty_settings_open(int64_t parent_win_ptr)
+{
+    if (g_settings_win != NULL) { gtk_window_present(GTK_WINDOW(g_settings_win)); return 1; }
+
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(win), "Nitty Settings");
+    gtk_window_set_default_size(GTK_WINDOW(win), 540, 480);
+    gtk_window_set_resizable(GTK_WINDOW(win), TRUE);
+    gtk_window_set_modal(GTK_WINDOW(win), FALSE);
+
+    if (parent_win_ptr != 0)
+        gtk_window_set_transient_for(GTK_WINDOW(win), GTK_WINDOW((GtkWidget *)(uintptr_t)parent_win_ptr));
+    else if (g_main_window)
+        gtk_window_set_transient_for(GTK_WINDOW(win), GTK_WINDOW(g_main_window));
+
+    GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_window_set_child(GTK_WINDOW(win), outer);
+
+    GtkWidget *nb = gtk_notebook_new();
+    gtk_widget_set_hexpand(nb, TRUE);
+    gtk_widget_set_vexpand(nb, TRUE);
+    gtk_box_append(GTK_BOX(outer), nb);
+
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), _sw_build_general_tab(),    gtk_label_new("General"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), _sw_build_appearance_tab(), gtk_label_new("Appearance"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), _sw_build_terminal_tab(),   gtk_label_new("Terminal"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), _sw_build_stub_tab("Profile editor — coming in v0.6.6"), gtk_label_new("Profiles"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), _sw_build_stub_tab("Hotkey editor — coming in v0.6.6"), gtk_label_new("Hotkeys"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), _sw_build_stub_tab("Plugin system — coming in v0.7.x"),  gtk_label_new("Plugins"));
+
+    GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_box_append(GTK_BOX(outer), sep);
+
+    GtkWidget *btn_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_margin_start(btn_bar,12); gtk_widget_set_margin_end(btn_bar,12);
+    gtk_widget_set_margin_top(btn_bar,8);   gtk_widget_set_margin_bottom(btn_bar,8);
+    gtk_box_append(GTK_BOX(outer), btn_bar);
+
+    GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_hexpand(spacer, TRUE);
+    gtk_box_append(GTK_BOX(btn_bar), spacer);
+
+    GtkWidget *cancel_btn = gtk_button_new_with_label("Cancel");
+    GtkWidget *apply_btn  = gtk_button_new_with_label("Apply");
+    GtkWidget *ok_btn     = gtk_button_new_with_label("OK");
+    gtk_widget_add_css_class(ok_btn, "suggested-action");
+
+    g_signal_connect(cancel_btn, "clicked", G_CALLBACK(_sw_on_cancel), NULL);
+    g_signal_connect(apply_btn,  "clicked", G_CALLBACK(_sw_on_apply),  NULL);
+    g_signal_connect(ok_btn,     "clicked", G_CALLBACK(_sw_on_ok),     NULL);
+
+    gtk_box_append(GTK_BOX(btn_bar), cancel_btn);
+    gtk_box_append(GTK_BOX(btn_bar), apply_btn);
+    gtk_box_append(GTK_BOX(btn_bar), ok_btn);
+
+    g_signal_connect(win, "destroy", G_CALLBACK(_sw_on_destroy), NULL);
+
+    g_settings_win = win;
+    gtk_widget_set_visible(win, TRUE);
+    return 1;
+}
+
+void        nitty_settings_close(void)       { if (g_settings_win) gtk_window_close(GTK_WINDOW(g_settings_win)); }
+int64_t     nitty_settings_is_open(void)     { return g_settings_win != NULL ? 1 : 0; }
+int64_t     nitty_settings_poll_event(void)  { int ev=g_settings_event; g_settings_event=0; return (int64_t)ev; }
+
+void nitty_settings_init_values(
+    const char *font_family, int64_t font_size,
+    int64_t scrollback, const char *shell,
+    const char *cursor_style, int64_t cursor_blink,
+    int64_t columns, int64_t rows,
+    const char *theme, int64_t opacity,
+    int64_t close_on_exit, int64_t confirm_close)
+{
+    if (font_family)  { strncpy(g_sv_font_family,   font_family,   sizeof(g_sv_font_family)-1);   g_sv_font_family[sizeof(g_sv_font_family)-1]='\0'; }
+    if (font_size>0)   g_sv_font_size   = (int)font_size;
+    if (scrollback>=0) g_sv_scrollback  = (int)scrollback;
+    if (shell)        { strncpy(g_sv_shell,          shell,         sizeof(g_sv_shell)-1);          g_sv_shell[sizeof(g_sv_shell)-1]='\0'; }
+    if (cursor_style) { strncpy(g_sv_cursor_style,   cursor_style,  sizeof(g_sv_cursor_style)-1);   g_sv_cursor_style[sizeof(g_sv_cursor_style)-1]='\0'; }
+    g_sv_cursor_blink  = (int)cursor_blink;
+    if (columns>0)     g_sv_columns = (int)columns;
+    if (rows>0)        g_sv_rows    = (int)rows;
+    if (theme)        { strncpy(g_sv_theme,          theme,         sizeof(g_sv_theme)-1);          g_sv_theme[sizeof(g_sv_theme)-1]='\0'; }
+    if (opacity>0)     g_sv_opacity = (int)opacity;
+    g_sv_close_on_exit = (int)close_on_exit;
+    g_sv_confirm_close = (int)confirm_close;
+}
+
+void nitty_settings_clear_themes(void) { g_sv_theme_count=0; memset(g_sv_theme_names,0,sizeof(g_sv_theme_names)); }
+
+void nitty_settings_add_theme(const char *name)
+{
+    if (!name || g_sv_theme_count>=32) return;
+    strncpy(g_sv_theme_names[g_sv_theme_count], name, 127);
+    g_sv_theme_names[g_sv_theme_count][127]='\0';
+    g_sv_theme_count++;
+}
+
+const char *nitty_settings_get_font_family(void)  { return g_sv_font_family; }
+int64_t     nitty_settings_get_font_size(void)    { return (int64_t)g_sv_font_size; }
+int64_t     nitty_settings_get_scrollback(void)   { return (int64_t)g_sv_scrollback; }
+const char *nitty_settings_get_shell(void)        { return g_sv_shell; }
+const char *nitty_settings_get_cursor_style(void) { return g_sv_cursor_style; }
+int64_t     nitty_settings_get_cursor_blink(void) { return (int64_t)g_sv_cursor_blink; }
+int64_t     nitty_settings_get_columns(void)      { return (int64_t)g_sv_columns; }
+int64_t     nitty_settings_get_rows(void)         { return (int64_t)g_sv_rows; }
+const char *nitty_settings_get_theme(void)        { return g_sv_theme; }
+int64_t     nitty_settings_get_opacity(void)      { return (int64_t)g_sv_opacity; }
+int64_t     nitty_settings_get_close_on_exit(void){ return (int64_t)g_sv_close_on_exit; }
+int64_t     nitty_settings_get_confirm_close(void){ return (int64_t)g_sv_confirm_close; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * v0.6.5: Config file watcher (GFileMonitor-based)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+static GFileMonitor *g_config_monitor    = NULL;
+static int           g_config_changed    = 0;
+static int64_t       g_config_changed_ms = 0;
+
+static void _on_config_file_changed(GFileMonitor *monitor, GFile *file, GFile *other,
+                                    GFileMonitorEvent ev, gpointer user_data)
+{
+    (void)monitor;(void)file;(void)other;(void)user_data;
+    if (ev==G_FILE_MONITOR_EVENT_CHANGED ||
+        ev==G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT ||
+        ev==G_FILE_MONITOR_EVENT_CREATED) {
+        g_config_changed    = 1;
+        g_config_changed_ms = g_get_monotonic_time()/1000;
+    }
+}
+
+int64_t nitty_gtk4_config_watch_start(const char *path)
+{
+    if (!path||!path[0]) return -1;
+    if (g_config_monitor) { g_object_unref(g_config_monitor); g_config_monitor=NULL; }
+    GFile *file = g_file_new_for_path(path);
+    GError *err = NULL;
+    g_config_monitor = g_file_monitor_file(file, G_FILE_MONITOR_NONE, NULL, &err);
+    g_object_unref(file);
+    if (err) { fprintf(stderr,"nitty: config_watch_start: %s\n",err->message); g_error_free(err); return -1; }
+    g_signal_connect(g_config_monitor, "changed", G_CALLBACK(_on_config_file_changed), NULL);
+    g_config_changed=0; g_config_changed_ms=0;
+    return 0;
+}
+
+int64_t nitty_gtk4_config_watch_poll(void)
+{
+    if (!g_config_changed) return 0;
+    int64_t now_ms = g_get_monotonic_time()/1000;
+    if (now_ms - g_config_changed_ms < 200) return 0;
+    g_config_changed=0;
+    return 1;
+}
+
+void nitty_gtk4_config_watch_stop(void)
+{
+    if (g_config_monitor) {
+        g_file_monitor_cancel(g_config_monitor);
+        g_object_unref(g_config_monitor);
+        g_config_monitor=NULL;
+    }
+    g_config_changed=0;
+}

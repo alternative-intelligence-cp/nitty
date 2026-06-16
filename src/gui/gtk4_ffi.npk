@@ -498,4 +498,55 @@ extern "nitty_gtk4_shim" {
     func:nitty_quake_move_window       = NIL(int64:win_ptr, int64:x, int64:y);
     func:nitty_quake_get_monitor_w     = int64();
     func:nitty_quake_get_monitor_h     = int64();
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.6.5: Settings window (non-modal, polled)
+    // Nitpick calls init_values + add_theme* before open; polls poll_event
+    // each frame. On Apply(1) or OK(2), calls get_* to retrieve new values.
+    // ═══════════════════════════════════════════════════════════════════
+
+    func:nitty_settings_open          = int64(int64:parent_win_ptr);
+    func:nitty_settings_close         = NIL();
+    func:nitty_settings_is_open       = int64();
+    func:nitty_settings_poll_event    = int64();
+
+    // Populate widget values BEFORE calling nitty_settings_open().
+    func:nitty_settings_init_values   = NIL(
+        string:font_family, int64:font_size,
+        int64:scrollback,   string:shell,
+        string:cursor_style, int64:cursor_blink,
+        int64:columns,      int64:rows,
+        string:theme,       int64:opacity,
+        int64:close_on_exit, int64:confirm_close);
+
+    // Build the theme dropdown list (call clear then add once per theme).
+    func:nitty_settings_clear_themes  = NIL();
+    func:nitty_settings_add_theme     = NIL(string:name);
+
+    // Read the settings values after poll_event returns 1 or 2.
+    func:nitty_settings_get_font_family   = string();
+    func:nitty_settings_get_font_size     = int64();
+    func:nitty_settings_get_scrollback    = int64();
+    func:nitty_settings_get_shell         = string();
+    func:nitty_settings_get_cursor_style  = string();
+    func:nitty_settings_get_cursor_blink  = int64();
+    func:nitty_settings_get_columns       = int64();
+    func:nitty_settings_get_rows          = int64();
+    func:nitty_settings_get_theme         = string();
+    func:nitty_settings_get_opacity       = int64();
+    func:nitty_settings_get_close_on_exit = int64();
+    func:nitty_settings_get_confirm_close = int64();
+
+    // ═══════════════════════════════════════════════════════════════════
+    // v0.6.5: Config file watcher (GFileMonitor-based, debounced 200ms)
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Start watching path for modifications. Returns 0 = ok, -1 = error.
+    func:nitty_gtk4_config_watch_start = int64(string:path);
+
+    // Poll: returns 1 if config changed (with 200ms debounce), else 0.
+    func:nitty_gtk4_config_watch_poll  = int64();
+
+    // Stop watching and release resources.
+    func:nitty_gtk4_config_watch_stop  = NIL();
 }

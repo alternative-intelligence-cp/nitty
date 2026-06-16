@@ -51,6 +51,7 @@ use "viewport.npk".*;
 use "tab_bar.npk".*;
 use "tab_context_menu.npk".*;
 use "split_view.npk".*;
+use "settings.npk".*;              // v0.6.5: settings window
 use "../terminal/terminal_pipeline.npk".*;
 use "../terminal/terminal_state.npk".*;
 use "../terminal/scrollback.npk".*;
@@ -62,6 +63,7 @@ use "../core/hotkey.npk".*;
 use "../core/global_hotkey.npk".*;  // v0.6.3: global hotkey polling
 use "quake.npk".*;                  // v0.6.3: quake mode animation
 use "input.npk".*;
+use "../config/watcher.npk".*;      // v0.6.5: config hot-reload
 
 // ═══════════════════════════════════════════════════════════════════════
 // Module state
@@ -194,7 +196,7 @@ func:dispatch_action = NIL(string:action, int64:rows, int64:cols) {
         ("view.zoom_out")   { drop(nitty_gtk4_show_notification("Zoom out: coming in v0.7.x")); },
         ("view.zoom_reset") { drop(nitty_gtk4_show_notification("Zoom reset: coming in v0.7.x")); },
         // App
-        ("app.settings") { drop(nitty_gtk4_show_notification("Settings: coming in v0.7.x")); },
+        ("app.settings") { drop(settings_open()); },
         ("app.quit")     { drop(nitty_gtk4_window_close(nitty_gtk4_get_main_window())); },
         // v0.6.3: Quake mode toggle
         ("quake.toggle") { drop(quake_toggle()); },
@@ -789,6 +791,12 @@ pub func:tw_on_draw = NIL() {
 
     // Step 2: Sync terminal state to C render grid
     drop(renderer_sync_frame());
+
+    // v0.6.5: Poll settings window events (Apply/OK/Cancel)
+    drop(settings_poll());
+
+    // v0.6.5: Poll config file watcher (hot-reload on external TOML edit)
+    drop(watcher_poll());
 
     // v0.4.4: Periodic session save every 30 seconds
     int64:now_s = nitty_gtk4_monotonic_sec();

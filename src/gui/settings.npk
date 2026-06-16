@@ -1,0 +1,139 @@
+// src/gui/settings.npk — Graphical settings window for Nitty v0.6.5
+//
+// settings_open():
+//   Reads current config, populates theme dropdown, opens non-modal settings window.
+//
+// settings_poll():
+//   Called every frame from tw_on_draw(). Polls nitty_settings_poll_event().
+//   On Apply(1) or OK(2): reads widget values, applies via cfg_set_*, saves config,
+//   re-applies font/theme.
+//
+// Usage:
+//   dispatch_action: ("app.settings") { drop(settings_open()); },
+//   tw_on_draw():    drop(settings_poll());
+
+use "../gui/gtk4_ffi.npk".*;
+use "../config/config.npk".*;
+use "../config/theme.npk".*;
+use "../config/builtin_themes.npk".*;
+use "../gui/font_config.npk".*;
+use "../gui/tab_bar.npk".*;
+
+// Module state: 1 while the settings window is open
+int64:g_settings_open_flag = 0i64;
+
+pub func:settings_open = NIL() {
+    // If already open, just raise it (shim handles re-raise).
+    if (nitty_settings_is_open() == 1i64) {
+        drop(nitty_settings_open(nitty_gtk4_get_main_window()));
+        pass(NIL);
+    }
+
+    // Snapshot current config values into C-side storage.
+    string:ff    = raw cfg_font_family();
+    int64:fs     = raw cfg_font_size();
+    int64:sb     = raw cfg_scrollback_lines();
+    string:sh    = raw cfg_shell();
+    string:cs    = raw cfg_cursor_style();
+    int64:cb     = raw cfg_cursor_blink();
+    int64:cols   = raw cfg_columns();
+    int64:rows   = raw cfg_rows();
+    string:thm   = raw cfg_theme();
+    int64:op     = raw cfg_opacity();
+    int64:coe    = raw cfg_close_on_exit();
+    int64:coc    = raw cfg_confirm_on_close();
+
+    drop(nitty_settings_init_values(
+        ff, fs, sb, sh, cs, cb, cols, rows, thm, op, coe, coc));
+
+    // Populate theme dropdown from the built-in theme registry.
+    drop(nitty_settings_clear_themes());
+    int64:n = raw theme_builtin_count();
+    int64:i = 0i64;
+    while (i < n) {
+        string:tname = raw theme_builtin_name(i);
+        drop(nitty_settings_add_theme(tname));
+        i = i + 1i64;
+    }
+
+    // Open the window (non-modal, non-blocking).
+    drop(nitty_settings_open(nitty_gtk4_get_main_window()));
+    g_settings_open_flag = 1i64;
+    pass(NIL);
+};
+
+pub func:settings_poll = NIL() {
+    if (g_settings_open_flag == 0i64) { pass(NIL); }
+
+    int64:ev = nitty_settings_poll_event();
+    if (ev == 0i64) { pass(NIL); }
+
+    // Cancel: nothing to apply.
+    if (ev == 3i64) {
+        g_settings_open_flag = 0i64;
+        pass(NIL);
+    }
+
+    // Apply (ev=1) or OK (ev=2): read widget values and apply them.
+
+    string:new_ff    = nitty_settings_get_font_family();
+    int64:new_fs     = nitty_settings_get_font_size();
+    int64:new_sb     = nitty_settings_get_scrollback();
+    string:new_sh    = nitty_settings_get_shell();
+    string:new_cs    = nitty_settings_get_cursor_style();
+    int64:new_cb     = nitty_settings_get_cursor_blink();
+    int64:new_cols   = nitty_settings_get_columns();
+    int64:new_rows   = nitty_settings_get_rows();
+    string:new_thm   = nitty_settings_get_theme();
+    int64:new_op     = nitty_settings_get_opacity();
+    int64:new_coe    = nitty_settings_get_close_on_exit();
+    int64:new_coc    = nitty_settings_get_confirm_close();
+
+    // Track whether font or theme changed.
+    string:old_ff  = raw cfg_font_family();
+    int64:old_fs   = raw cfg_font_size();
+    string:old_thm = raw cfg_theme();
+
+    // Apply all settings via config setters.
+    drop(cfg_set_font_family(new_ff));
+    drop(cfg_set_font_size(new_fs));
+    drop(cfg_set_scrollback_lines(new_sb));
+    drop(cfg_set_shell(new_sh));
+    drop(cfg_set_cursor_style(new_cs));
+    drop(cfg_set_cursor_blink(new_cb));
+    drop(cfg_set_columns(new_cols));
+    drop(cfg_set_rows(new_rows));
+    drop(cfg_set_theme(new_thm));
+    drop(cfg_set_opacity(new_op));
+    drop(cfg_set_close_on_exit(new_coe));
+    drop(cfg_set_confirm_on_close(new_coc));
+
+    // Persist to disk.
+    drop(config_save());
+
+    // Re-apply font if family or size changed.
+    int64:font_changed = 0i64;
+    if (old_ff != new_ff) { font_changed = 1i64; }
+    if (old_fs != new_fs) { font_changed = 1i64; }
+    if (font_changed == 1i64) {
+        drop(font_config_set_family(new_ff));
+        drop(font_config_set_size(new_fs));
+        drop(font_config_apply());
+    }
+
+    // Re-apply theme if changed.
+    if (old_thm != new_thm) {
+        drop(theme_apply(new_thm));
+        drop(tb_apply_theme());
+    }
+
+    // Always redraw.
+    nitty_gtk4_queue_redraw();
+
+    // On OK the C side closes the window; update our tracking flag.
+    if (ev == 2i64) {
+        g_settings_open_flag = 0i64;
+    }
+
+    pass(NIL);
+};
