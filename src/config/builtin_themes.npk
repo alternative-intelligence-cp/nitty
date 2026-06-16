@@ -1,0 +1,961 @@
+// src/config/builtin_themes.npk — Built-in theme definitions for Nitty v0.6.4
+//
+// Provides 22 built-in themes as pure accessor functions (if-chain pattern,
+// no mutable state). The theme engine (theme.npk) queries these to apply a
+// theme by calling scheme_set_ansi() and scheme_set_default_fg/bg().
+//
+// Themes encoded here:
+//  0  default        — xterm defaults (dark)
+//  1  dracula        — Dracula (dark purple)
+//  2  one-dark       — Atom One Dark
+//  3  solarized-dark — Solarized Dark
+//  4  gruvbox-dark   — Gruvbox Dark (hard)
+//  5  nord           — Nord
+//  6  tokyo-night    — Tokyo Night
+//  7  catppuccin-mocha — Catppuccin Mocha
+//  8  material-dark  — Material Dark
+//  9  ayu-dark       — Ayu Dark
+// 10  monokai        — Monokai
+// 11  github-dark    — GitHub Dark
+// 12  vscode-dark    — VS Code Dark+
+// 13  tomorrow-night — Tomorrow Night
+// 14  synthwave      — Synthwave 84
+// 15  kanagawa       — Kanagawa Wave
+// 16  cobalt2        — Cobalt2
+// 17  solarized-light— Solarized Light
+// 18  one-light      — Atom One Light
+// 19  github-light   — GitHub Light
+// 20  gruvbox-light  — Gruvbox Light
+// 21  catppuccin-latte — Catppuccin Latte
+
+/// Total number of built-in themes.
+pub func:builtin_theme_count = int64() { pass(22i64); };
+
+/// Name of built-in theme at index i (0-based).
+pub func:builtin_theme_name = string(int64:i) {
+    if (i == 0i64)  { pass("default");            }
+    if (i == 1i64)  { pass("dracula");             }
+    if (i == 2i64)  { pass("one-dark");            }
+    if (i == 3i64)  { pass("solarized-dark");      }
+    if (i == 4i64)  { pass("gruvbox-dark");        }
+    if (i == 5i64)  { pass("nord");                }
+    if (i == 6i64)  { pass("tokyo-night");         }
+    if (i == 7i64)  { pass("catppuccin-mocha");    }
+    if (i == 8i64)  { pass("material-dark");       }
+    if (i == 9i64)  { pass("ayu-dark");            }
+    if (i == 10i64) { pass("monokai");             }
+    if (i == 11i64) { pass("github-dark");         }
+    if (i == 12i64) { pass("vscode-dark");         }
+    if (i == 13i64) { pass("tomorrow-night");      }
+    if (i == 14i64) { pass("synthwave");           }
+    if (i == 15i64) { pass("kanagawa");            }
+    if (i == 16i64) { pass("cobalt2");             }
+    if (i == 17i64) { pass("solarized-light");     }
+    if (i == 18i64) { pass("one-light");           }
+    if (i == 19i64) { pass("github-light");        }
+    if (i == 20i64) { pass("gruvbox-light");       }
+    pass("catppuccin-latte");
+};
+
+/// Display name of built-in theme at index i.
+pub func:builtin_theme_display_name = string(int64:i) {
+    if (i == 0i64)  { pass("Default (xterm)");       }
+    if (i == 1i64)  { pass("Dracula");                }
+    if (i == 2i64)  { pass("One Dark");               }
+    if (i == 3i64)  { pass("Solarized Dark");         }
+    if (i == 4i64)  { pass("Gruvbox Dark");           }
+    if (i == 5i64)  { pass("Nord");                   }
+    if (i == 6i64)  { pass("Tokyo Night");            }
+    if (i == 7i64)  { pass("Catppuccin Mocha");       }
+    if (i == 8i64)  { pass("Material Dark");          }
+    if (i == 9i64)  { pass("Ayu Dark");               }
+    if (i == 10i64) { pass("Monokai");                }
+    if (i == 11i64) { pass("GitHub Dark");            }
+    if (i == 12i64) { pass("VS Code Dark+");          }
+    if (i == 13i64) { pass("Tomorrow Night");         }
+    if (i == 14i64) { pass("Synthwave '84");          }
+    if (i == 15i64) { pass("Kanagawa Wave");          }
+    if (i == 16i64) { pass("Cobalt2");                }
+    if (i == 17i64) { pass("Solarized Light");        }
+    if (i == 18i64) { pass("One Light");              }
+    if (i == 19i64) { pass("GitHub Light");           }
+    if (i == 20i64) { pass("Gruvbox Light");          }
+    pass("Catppuccin Latte");
+};
+
+/// Is the theme at index i a dark theme? (1=dark, 0=light)
+pub func:builtin_theme_is_dark = int64(int64:i) {
+    if (i >= 17i64) { pass(0i64); }  // indices 17-21 are light themes
+    pass(1i64);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Per-theme ANSI color data (8-bit RGB)
+// Format: builtin_theme_ansi_r(theme_idx, color_idx 0-15)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// ANSI R component for theme t, color index c (0-15).
+pub func:builtin_theme_ansi_r = int64(int64:t, int64:c) {
+    // theme 0: default (xterm)
+    if (t == 0i64) {
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(205i64); }
+        if (c == 2i64)  { pass(0i64);   }  if (c == 3i64)  { pass(205i64); }
+        if (c == 4i64)  { pass(0i64);   }  if (c == 5i64)  { pass(205i64); }
+        if (c == 6i64)  { pass(0i64);   }  if (c == 7i64)  { pass(229i64); }
+        if (c == 8i64)  { pass(127i64); }  if (c == 9i64)  { pass(255i64); }
+        if (c == 10i64) { pass(0i64);   }  if (c == 11i64) { pass(255i64); }
+        if (c == 12i64) { pass(92i64);  }  if (c == 13i64) { pass(255i64); }
+        if (c == 14i64) { pass(0i64);   }  pass(255i64);
+    }
+    // theme 1: dracula
+    if (t == 1i64) {
+        if (c == 0i64)  { pass(33i64);  }  if (c == 1i64)  { pass(255i64); }
+        if (c == 2i64)  { pass(80i64);  }  if (c == 3i64)  { pass(241i64); }
+        if (c == 4i64)  { pass(98i64);  }  if (c == 5i64)  { pass(255i64); }
+        if (c == 6i64)  { pass(139i64); }  if (c == 7i64)  { pass(248i64); }
+        if (c == 8i64)  { pass(68i64);  }  if (c == 9i64)  { pass(255i64); }
+        if (c == 10i64) { pass(80i64);  }  if (c == 11i64) { pass(241i64); }
+        if (c == 12i64) { pass(98i64);  }  if (c == 13i64) { pass(255i64); }
+        if (c == 14i64) { pass(139i64); }  pass(255i64);
+    }
+    // theme 2: one-dark
+    if (t == 2i64) {
+        if (c == 0i64)  { pass(40i64);  }  if (c == 1i64)  { pass(224i64); }
+        if (c == 2i64)  { pass(152i64); }  if (c == 3i64)  { pass(229i64); }
+        if (c == 4i64)  { pass(97i64);  }  if (c == 5i64)  { pass(198i64); }
+        if (c == 6i64)  { pass(86i64);  }  if (c == 7i64)  { pass(171i64); }
+        if (c == 8i64)  { pass(92i64);  }  if (c == 9i64)  { pass(224i64); }
+        if (c == 10i64) { pass(152i64); }  if (c == 11i64) { pass(229i64); }
+        if (c == 12i64) { pass(97i64);  }  if (c == 13i64) { pass(198i64); }
+        if (c == 14i64) { pass(86i64);  }  pass(220i64);
+    }
+    // theme 3: solarized-dark
+    if (t == 3i64) {
+        if (c == 0i64)  { pass(7i64);   }  if (c == 1i64)  { pass(220i64); }
+        if (c == 2i64)  { pass(133i64); }  if (c == 3i64)  { pass(181i64); }
+        if (c == 4i64)  { pass(38i64);  }  if (c == 5i64)  { pass(211i64); }
+        if (c == 6i64)  { pass(42i64);  }  if (c == 7i64)  { pass(238i64); }
+        if (c == 8i64)  { pass(0i64);   }  if (c == 9i64)  { pass(203i64); }
+        if (c == 10i64) { pass(88i64);  }  if (c == 11i64) { pass(147i64); }
+        if (c == 12i64) { pass(131i64); }  if (c == 13i64) { pass(108i64); }
+        if (c == 14i64) { pass(147i64); }  pass(253i64);
+    }
+    // theme 4: gruvbox-dark
+    if (t == 4i64) {
+        if (c == 0i64)  { pass(40i64);  }  if (c == 1i64)  { pass(204i64); }
+        if (c == 2i64)  { pass(152i64); }  if (c == 3i64)  { pass(215i64); }
+        if (c == 4i64)  { pass(69i64);  }  if (c == 5i64)  { pass(177i64); }
+        if (c == 6i64)  { pass(104i64); }  if (c == 7i64)  { pass(168i64); }
+        if (c == 8i64)  { pass(146i64); }  if (c == 9i64)  { pass(251i64); }
+        if (c == 10i64) { pass(184i64); }  if (c == 11i64) { pass(250i64); }
+        if (c == 12i64) { pass(131i64); }  if (c == 13i64) { pass(211i64); }
+        if (c == 14i64) { pass(142i64); }  pass(235i64);
+    }
+    // theme 5: nord
+    if (t == 5i64) {
+        if (c == 0i64)  { pass(46i64);  }  if (c == 1i64)  { pass(191i64); }
+        if (c == 2i64)  { pass(163i64); }  if (c == 3i64)  { pass(235i64); }
+        if (c == 4i64)  { pass(129i64); }  if (c == 5i64)  { pass(180i64); }
+        if (c == 6i64)  { pass(136i64); }  if (c == 7i64)  { pass(216i64); }
+        if (c == 8i64)  { pass(76i64);  }  if (c == 9i64)  { pass(191i64); }
+        if (c == 10i64) { pass(163i64); }  if (c == 11i64) { pass(235i64); }
+        if (c == 12i64) { pass(129i64); }  if (c == 13i64) { pass(180i64); }
+        if (c == 14i64) { pass(136i64); }  pass(229i64);
+    }
+    // theme 6: tokyo-night
+    if (t == 6i64) {
+        if (c == 0i64)  { pass(16i64);  }  if (c == 1i64)  { pass(247i64); }
+        if (c == 2i64)  { pass(158i64); }  if (c == 3i64)  { pass(224i64); }
+        if (c == 4i64)  { pass(122i64); }  if (c == 5i64)  { pass(187i64); }
+        if (c == 6i64)  { pass(42i64);  }  if (c == 7i64)  { pass(169i64); }
+        if (c == 8i64)  { pass(65i64);  }  if (c == 9i64)  { pass(247i64); }
+        if (c == 10i64) { pass(158i64); }  if (c == 11i64) { pass(224i64); }
+        if (c == 12i64) { pass(122i64); }  if (c == 13i64) { pass(187i64); }
+        if (c == 14i64) { pass(42i64);  }  pass(192i64);
+    }
+    // theme 7: catppuccin-mocha
+    if (t == 7i64) {
+        if (c == 0i64)  { pass(69i64);  }  if (c == 1i64)  { pass(243i64); }
+        if (c == 2i64)  { pass(166i64); }  if (c == 3i64)  { pass(249i64); }
+        if (c == 4i64)  { pass(137i64); }  if (c == 5i64)  { pass(245i64); }
+        if (c == 6i64)  { pass(148i64); }  if (c == 7i64)  { pass(186i64); }
+        if (c == 8i64)  { pass(88i64);  }  if (c == 9i64)  { pass(243i64); }
+        if (c == 10i64) { pass(166i64); }  if (c == 11i64) { pass(249i64); }
+        if (c == 12i64) { pass(137i64); }  if (c == 13i64) { pass(245i64); }
+        if (c == 14i64) { pass(148i64); }  pass(205i64);
+    }
+    // theme 8: material-dark
+    if (t == 8i64) {
+        if (c == 0i64)  { pass(38i64);  }  if (c == 1i64)  { pass(239i64); }
+        if (c == 2i64)  { pass(167i64); }  if (c == 3i64)  { pass(255i64); }
+        if (c == 4i64)  { pass(130i64); }  if (c == 5i64)  { pass(195i64); }
+        if (c == 6i64)  { pass(137i64); }  if (c == 7i64)  { pass(176i64); }
+        if (c == 8i64)  { pass(84i64);  }  if (c == 9i64)  { pass(239i64); }
+        if (c == 10i64) { pass(167i64); }  if (c == 11i64) { pass(255i64); }
+        if (c == 12i64) { pass(130i64); }  if (c == 13i64) { pass(195i64); }
+        if (c == 14i64) { pass(137i64); }  pass(255i64);
+    }
+    // theme 9: ayu-dark
+    if (t == 9i64) {
+        if (c == 0i64)  { pass(1i64);   }  if (c == 1i64)  { pass(234i64); }
+        if (c == 2i64)  { pass(182i64); }  if (c == 3i64)  { pass(230i64); }
+        if (c == 4i64)  { pass(84i64);  }  if (c == 5i64)  { pass(163i64); }
+        if (c == 6i64)  { pass(149i64); }  if (c == 7i64)  { pass(179i64); }
+        if (c == 8i64)  { pass(55i64);  }  if (c == 9i64)  { pass(234i64); }
+        if (c == 10i64) { pass(182i64); }  if (c == 11i64) { pass(230i64); }
+        if (c == 12i64) { pass(84i64);  }  if (c == 13i64) { pass(163i64); }
+        if (c == 14i64) { pass(149i64); }  pass(179i64);
+    }
+    // theme 10: monokai
+    if (t == 10i64) {
+        if (c == 0i64)  { pass(39i64);  }  if (c == 1i64)  { pass(249i64); }
+        if (c == 2i64)  { pass(166i64); }  if (c == 3i64)  { pass(230i64); }
+        if (c == 4i64)  { pass(102i64); }  if (c == 5i64)  { pass(174i64); }
+        if (c == 6i64)  { pass(102i64); }  if (c == 7i64)  { pass(248i64); }
+        if (c == 8i64)  { pass(117i64); }  if (c == 9i64)  { pass(249i64); }
+        if (c == 10i64) { pass(166i64); }  if (c == 11i64) { pass(230i64); }
+        if (c == 12i64) { pass(102i64); }  if (c == 13i64) { pass(174i64); }
+        if (c == 14i64) { pass(102i64); }  pass(248i64);
+    }
+    // theme 11: github-dark
+    if (t == 11i64) {
+        if (c == 0i64)  { pass(13i64);  }  if (c == 1i64)  { pass(255i64); }
+        if (c == 2i64)  { pass(63i64);  }  if (c == 3i64)  { pass(210i64); }
+        if (c == 4i64)  { pass(88i64);  }  if (c == 5i64)  { pass(188i64); }
+        if (c == 6i64)  { pass(57i64);  }  if (c == 7i64)  { pass(139i64); }
+        if (c == 8i64)  { pass(110i64); }  if (c == 9i64)  { pass(255i64); }
+        if (c == 10i64) { pass(63i64);  }  if (c == 11i64) { pass(210i64); }
+        if (c == 12i64) { pass(88i64);  }  if (c == 13i64) { pass(188i64); }
+        if (c == 14i64) { pass(57i64);  }  pass(176i64);
+    }
+    // theme 12: vscode-dark
+    if (t == 12i64) {
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(205i64); }
+        if (c == 2i64)  { pass(19i64);  }  if (c == 3i64)  { pass(229i64); }
+        if (c == 4i64)  { pass(0i64);   }  if (c == 5i64)  { pass(188i64); }
+        if (c == 6i64)  { pass(13i64);  }  if (c == 7i64)  { pass(229i64); }
+        if (c == 8i64)  { pass(102i64); }  if (c == 9i64)  { pass(241i64); }
+        if (c == 10i64) { pass(35i64);  }  if (c == 11i64) { pass(245i64); }
+        if (c == 12i64) { pass(59i64);  }  if (c == 13i64) { pass(214i64); }
+        if (c == 14i64) { pass(41i64);  }  pass(255i64);
+    }
+    // theme 13: tomorrow-night
+    if (t == 13i64) {
+        if (c == 0i64)  { pass(29i64);  }  if (c == 1i64)  { pass(204i64); }
+        if (c == 2i64)  { pass(181i64); }  if (c == 3i64)  { pass(240i64); }
+        if (c == 4i64)  { pass(129i64); }  if (c == 5i64)  { pass(178i64); }
+        if (c == 6i64)  { pass(138i64); }  if (c == 7i64)  { pass(197i64); }
+        if (c == 8i64)  { pass(150i64); }  if (c == 9i64)  { pass(204i64); }
+        if (c == 10i64) { pass(181i64); }  if (c == 11i64) { pass(240i64); }
+        if (c == 12i64) { pass(129i64); }  if (c == 13i64) { pass(178i64); }
+        if (c == 14i64) { pass(138i64); }  pass(255i64);
+    }
+    // theme 14: synthwave
+    if (t == 14i64) {
+        if (c == 0i64)  { pass(22i64);  }  if (c == 1i64)  { pass(255i64); }
+        if (c == 2i64)  { pass(114i64); }  if (c == 3i64)  { pass(252i64); }
+        if (c == 4i64)  { pass(54i64);  }  if (c == 5i64)  { pass(255i64); }
+        if (c == 6i64)  { pass(54i64);  }  if (c == 7i64)  { pass(248i64); }
+        if (c == 8i64)  { pass(58i64);  }  if (c == 9i64)  { pass(255i64); }
+        if (c == 10i64) { pass(114i64); }  if (c == 11i64) { pass(252i64); }
+        if (c == 12i64) { pass(54i64);  }  if (c == 13i64) { pass(255i64); }
+        if (c == 14i64) { pass(54i64);  }  pass(255i64);
+    }
+    // theme 15: kanagawa
+    if (t == 15i64) {
+        if (c == 0i64)  { pass(22i64);  }  if (c == 1i64)  { pass(192i64); }
+        if (c == 2i64)  { pass(115i64); }  if (c == 3i64)  { pass(210i64); }
+        if (c == 4i64)  { pass(84i64);  }  if (c == 5i64)  { pass(152i64); }
+        if (c == 6i64)  { pass(106i64); }  if (c == 7i64)  { pass(220i64); }
+        if (c == 8i64)  { pass(84i64);  }  if (c == 9i64)  { pass(192i64); }
+        if (c == 10i64) { pass(115i64); }  if (c == 11i64) { pass(210i64); }
+        if (c == 12i64) { pass(84i64);  }  if (c == 13i64) { pass(152i64); }
+        if (c == 14i64) { pass(106i64); }  pass(220i64);
+    }
+    // theme 16: cobalt2
+    if (t == 16i64) {
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(255i64); }
+        if (c == 2i64)  { pass(0i64);   }  if (c == 3i64)  { pass(255i64); }
+        if (c == 4i64)  { pass(0i64);   }  if (c == 5i64)  { pass(250i64); }
+        if (c == 6i64)  { pass(0i64);   }  if (c == 7i64)  { pass(255i64); }
+        if (c == 8i64)  { pass(0i64);   }  if (c == 9i64)  { pass(255i64); }
+        if (c == 10i64) { pass(0i64);   }  if (c == 11i64) { pass(255i64); }
+        if (c == 12i64) { pass(48i64);  }  if (c == 13i64) { pass(250i64); }
+        if (c == 14i64) { pass(0i64);   }  pass(255i64);
+    }
+    // theme 17: solarized-light
+    if (t == 17i64) {
+        if (c == 0i64)  { pass(7i64);   }  if (c == 1i64)  { pass(220i64); }
+        if (c == 2i64)  { pass(133i64); }  if (c == 3i64)  { pass(181i64); }
+        if (c == 4i64)  { pass(38i64);  }  if (c == 5i64)  { pass(211i64); }
+        if (c == 6i64)  { pass(42i64);  }  if (c == 7i64)  { pass(238i64); }
+        if (c == 8i64)  { pass(0i64);   }  if (c == 9i64)  { pass(203i64); }
+        if (c == 10i64) { pass(88i64);  }  if (c == 11i64) { pass(147i64); }
+        if (c == 12i64) { pass(131i64); }  if (c == 13i64) { pass(108i64); }
+        if (c == 14i64) { pass(147i64); }  pass(253i64);
+    }
+    // theme 18: one-light
+    if (t == 18i64) {
+        if (c == 0i64)  { pass(56i64);  }  if (c == 1i64)  { pass(228i64); }
+        if (c == 2i64)  { pass(80i64);  }  if (c == 3i64)  { pass(152i64); }
+        if (c == 4i64)  { pass(64i64);  }  if (c == 5i64)  { pass(168i64); }
+        if (c == 6i64)  { pass(0i64);   }  if (c == 7i64)  { pass(250i64); }
+        if (c == 8i64)  { pass(130i64); }  if (c == 9i64)  { pass(228i64); }
+        if (c == 10i64) { pass(80i64);  }  if (c == 11i64) { pass(152i64); }
+        if (c == 12i64) { pass(64i64);  }  if (c == 13i64) { pass(168i64); }
+        if (c == 14i64) { pass(0i64);   }  pass(255i64);
+    }
+    // theme 19: github-light
+    if (t == 19i64) {
+        if (c == 0i64)  { pass(36i64);  }  if (c == 1i64)  { pass(207i64); }
+        if (c == 2i64)  { pass(26i64);  }  if (c == 3i64)  { pass(145i64); }
+        if (c == 4i64)  { pass(0i64);   }  if (c == 5i64)  { pass(176i64); }
+        if (c == 6i64)  { pass(32i64);  }  if (c == 7i64)  { pass(246i64); }
+        if (c == 8i64)  { pass(106i64); }  if (c == 9i64)  { pass(207i64); }
+        if (c == 10i64) { pass(26i64);  }  if (c == 11i64) { pass(145i64); }
+        if (c == 12i64) { pass(0i64);   }  if (c == 13i64) { pass(176i64); }
+        if (c == 14i64) { pass(32i64);  }  pass(255i64);
+    }
+    // theme 20: gruvbox-light
+    if (t == 20i64) {
+        if (c == 0i64)  { pass(251i64); }  if (c == 1i64)  { pass(157i64); }
+        if (c == 2i64)  { pass(121i64); }  if (c == 3i64)  { pass(181i64); }
+        if (c == 4i64)  { pass(0i64);   }  if (c == 5i64)  { pass(143i64); }
+        if (c == 6i64)  { pass(104i64); }  if (c == 7i64)  { pass(102i64); }
+        if (c == 8i64)  { pass(146i64); }  if (c == 9i64)  { pass(157i64); }
+        if (c == 10i64) { pass(121i64); }  if (c == 11i64) { pass(181i64); }
+        if (c == 12i64) { pass(0i64);   }  if (c == 13i64) { pass(143i64); }
+        if (c == 14i64) { pass(104i64); }  pass(60i64);
+    }
+    // theme 21: catppuccin-latte (fallthrough)
+    if (c == 0i64)  { pass(220i64); }  if (c == 1i64)  { pass(210i64); }
+    if (c == 2i64)  { pass(64i64);  }  if (c == 3i64)  { pass(223i64); }
+    if (c == 4i64)  { pass(30i64);  }  if (c == 5i64)  { pass(136i64); }
+    if (c == 6i64)  { pass(4i64);   }  if (c == 7i64)  { pass(172i64); }
+    if (c == 8i64)  { pass(188i64); }  if (c == 9i64)  { pass(210i64); }
+    if (c == 10i64) { pass(64i64);  }  if (c == 11i64) { pass(223i64); }
+    if (c == 12i64) { pass(30i64);  }  if (c == 13i64) { pass(136i64); }
+    if (c == 14i64) { pass(4i64);   }  pass(76i64);
+};
+
+/// ANSI G component for theme t, color index c (0-15).
+pub func:builtin_theme_ansi_g = int64(int64:t, int64:c) {
+    if (t == 0i64) {  // default
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(0i64);   }
+        if (c == 2i64)  { pass(205i64); }  if (c == 3i64)  { pass(205i64); }
+        if (c == 4i64)  { pass(0i64);   }  if (c == 5i64)  { pass(0i64);   }
+        if (c == 6i64)  { pass(205i64); }  if (c == 7i64)  { pass(229i64); }
+        if (c == 8i64)  { pass(127i64); }  if (c == 9i64)  { pass(0i64);   }
+        if (c == 10i64) { pass(255i64); }  if (c == 11i64) { pass(255i64); }
+        if (c == 12i64) { pass(92i64);  }  if (c == 13i64) { pass(0i64);   }
+        if (c == 14i64) { pass(255i64); }  pass(255i64);
+    }
+    if (t == 1i64) {  // dracula
+        if (c == 0i64)  { pass(34i64);  }  if (c == 1i64)  { pass(85i64);  }
+        if (c == 2i64)  { pass(250i64); }  if (c == 3i64)  { pass(198i64); }
+        if (c == 4i64)  { pass(114i64); }  if (c == 5i64)  { pass(121i64); }
+        if (c == 6i64)  { pass(233i64); }  if (c == 7i64)  { pass(248i64); }
+        if (c == 8i64)  { pass(71i64);  }  if (c == 9i64)  { pass(85i64);  }
+        if (c == 10i64) { pass(250i64); }  if (c == 11i64) { pass(198i64); }
+        if (c == 12i64) { pass(114i64); }  if (c == 13i64) { pass(121i64); }
+        if (c == 14i64) { pass(233i64); }  pass(248i64);
+    }
+    if (t == 2i64) {  // one-dark
+        if (c == 0i64)  { pass(44i64);  }  if (c == 1i64)  { pass(108i64); }
+        if (c == 2i64)  { pass(195i64); }  if (c == 3i64)  { pass(192i64); }
+        if (c == 4i64)  { pass(175i64); }  if (c == 5i64)  { pass(120i64); }
+        if (c == 6i64)  { pass(182i64); }  if (c == 7i64)  { pass(178i64); }
+        if (c == 8i64)  { pass(95i64);  }  if (c == 9i64)  { pass(108i64); }
+        if (c == 10i64) { pass(195i64); }  if (c == 11i64) { pass(192i64); }
+        if (c == 12i64) { pass(175i64); }  if (c == 13i64) { pass(120i64); }
+        if (c == 14i64) { pass(182i64); }  pass(220i64);
+    }
+    if (t == 3i64) {  // solarized-dark
+        if (c == 0i64)  { pass(54i64);  }  if (c == 1i64)  { pass(50i64);  }
+        if (c == 2i64)  { pass(153i64); }  if (c == 3i64)  { pass(137i64); }
+        if (c == 4i64)  { pass(139i64); }  if (c == 5i64)  { pass(54i64);  }
+        if (c == 6i64)  { pass(161i64); }  if (c == 7i64)  { pass(232i64); }
+        if (c == 8i64)  { pass(43i64);  }  if (c == 9i64)  { pass(75i64);  }
+        if (c == 10i64) { pass(110i64); }  if (c == 11i64) { pass(161i64); }
+        if (c == 12i64) { pass(148i64); }  if (c == 13i64) { pass(113i64); }
+        if (c == 14i64) { pass(197i64); }  pass(246i64);
+    }
+    if (t == 4i64) {  // gruvbox-dark
+        if (c == 0i64)  { pass(40i64);  }  if (c == 1i64)  { pass(36i64);  }
+        if (c == 2i64)  { pass(152i64); }  if (c == 3i64)  { pass(153i64); }
+        if (c == 4i64)  { pass(133i64); }  if (c == 5i64)  { pass(98i64);  }
+        if (c == 6i64)  { pass(167i64); }  if (c == 7i64)  { pass(153i64); }
+        if (c == 8i64)  { pass(131i64); }  if (c == 9i64)  { pass(73i64);  }
+        if (c == 10i64) { pass(192i64); }  if (c == 11i64) { pass(189i64); }
+        if (c == 12i64) { pass(165i64); }  if (c == 13i64) { pass(134i64); }
+        if (c == 14i64) { pass(184i64); }  pass(219i64);
+    }
+    if (t == 5i64) {  // nord
+        if (c == 0i64)  { pass(52i64);  }  if (c == 1i64)  { pass(97i64);  }
+        if (c == 2i64)  { pass(190i64); }  if (c == 3i64)  { pass(203i64); }
+        if (c == 4i64)  { pass(161i64); }  if (c == 5i64)  { pass(142i64); }
+        if (c == 6i64)  { pass(192i64); }  if (c == 7i64)  { pass(222i64); }
+        if (c == 8i64)  { pass(86i64);  }  if (c == 9i64)  { pass(97i64);  }
+        if (c == 10i64) { pass(190i64); }  if (c == 11i64) { pass(203i64); }
+        if (c == 12i64) { pass(161i64); }  if (c == 13i64) { pass(142i64); }
+        if (c == 14i64) { pass(192i64); }  pass(233i64);
+    }
+    if (t == 6i64) {  // tokyo-night
+        if (c == 0i64)  { pass(16i64);  }  if (c == 1i64)  { pass(76i64);  }
+        if (c == 2i64)  { pass(206i64); }  if (c == 3i64)  { pass(175i64); }
+        if (c == 4i64)  { pass(162i64); }  if (c == 5i64)  { pass(135i64); }
+        if (c == 6i64)  { pass(195i64); }  if (c == 7i64)  { pass(177i64); }
+        if (c == 8i64)  { pass(68i64);  }  if (c == 9i64)  { pass(76i64);  }
+        if (c == 10i64) { pass(206i64); }  if (c == 11i64) { pass(175i64); }
+        if (c == 12i64) { pass(162i64); }  if (c == 13i64) { pass(135i64); }
+        if (c == 14i64) { pass(195i64); }  pass(192i64);
+    }
+    if (t == 7i64) {  // catppuccin-mocha
+        if (c == 0i64)  { pass(71i64);  }  if (c == 1i64)  { pass(76i64);  }
+        if (c == 2i64)  { pass(227i64); }  if (c == 3i64)  { pass(226i64); }
+        if (c == 4i64)  { pass(180i64); }  if (c == 5i64)  { pass(194i64); }
+        if (c == 6i64)  { pass(226i64); }  if (c == 7i64)  { pass(194i64); }
+        if (c == 8i64)  { pass(91i64);  }  if (c == 9i64)  { pass(76i64);  }
+        if (c == 10i64) { pass(227i64); }  if (c == 11i64) { pass(226i64); }
+        if (c == 12i64) { pass(180i64); }  if (c == 13i64) { pass(194i64); }
+        if (c == 14i64) { pass(226i64); }  pass(213i64);
+    }
+    if (t == 8i64) {  // material-dark
+        if (c == 0i64)  { pass(50i64);  }  if (c == 1i64)  { pass(83i64);  }
+        if (c == 2i64)  { pass(201i64); }  if (c == 3i64)  { pass(212i64); }
+        if (c == 4i64)  { pass(170i64); }  if (c == 5i64)  { pass(204i64); }
+        if (c == 6i64)  { pass(221i64); }  if (c == 7i64)  { pass(188i64); }
+        if (c == 8i64)  { pass(101i64); }  if (c == 9i64)  { pass(83i64);  }
+        if (c == 10i64) { pass(201i64); }  if (c == 11i64) { pass(212i64); }
+        if (c == 12i64) { pass(170i64); }  if (c == 13i64) { pass(204i64); }
+        if (c == 14i64) { pass(221i64); }  pass(255i64);
+    }
+    if (t == 9i64) {  // ayu-dark
+        if (c == 0i64)  { pass(10i64);  }  if (c == 1i64)  { pass(84i64);  }
+        if (c == 2i64)  { pass(211i64); }  if (c == 3i64)  { pass(182i64); }
+        if (c == 4i64)  { pass(128i64); }  if (c == 5i64)  { pass(105i64); }
+        if (c == 6i64)  { pass(201i64); }  if (c == 7i64)  { pass(176i64); }
+        if (c == 8i64)  { pass(56i64);  }  if (c == 9i64)  { pass(84i64);  }
+        if (c == 10i64) { pass(211i64); }  if (c == 11i64) { pass(182i64); }
+        if (c == 12i64) { pass(128i64); }  if (c == 13i64) { pass(105i64); }
+        if (c == 14i64) { pass(201i64); }  pass(176i64);
+    }
+    if (t == 10i64) {  // monokai
+        if (c == 0i64)  { pass(39i64);  }  if (c == 1i64)  { pass(38i64);  }
+        if (c == 2i64)  { pass(226i64); }  if (c == 3i64)  { pass(219i64); }
+        if (c == 4i64)  { pass(217i64); }  if (c == 5i64)  { pass(129i64); }
+        if (c == 6i64)  { pass(205i64); }  if (c == 7i64)  { pass(248i64); }
+        if (c == 8i64)  { pass(117i64); }  if (c == 9i64)  { pass(38i64);  }
+        if (c == 10i64) { pass(226i64); }  if (c == 11i64) { pass(219i64); }
+        if (c == 12i64) { pass(217i64); }  if (c == 13i64) { pass(129i64); }
+        if (c == 14i64) { pass(205i64); }  pass(248i64);
+    }
+    if (t == 11i64) {  // github-dark
+        if (c == 0i64)  { pass(17i64);  }  if (c == 1i64)  { pass(72i64);  }
+        if (c == 2i64)  { pass(135i64); }  if (c == 3i64)  { pass(154i64); }
+        if (c == 4i64)  { pass(115i64); }  if (c == 5i64)  { pass(135i64); }
+        if (c == 6i64)  { pass(192i64); }  if (c == 7i64)  { pass(161i64); }
+        if (c == 8i64)  { pass(119i64); }  if (c == 9i64)  { pass(72i64);  }
+        if (c == 10i64) { pass(135i64); }  if (c == 11i64) { pass(154i64); }
+        if (c == 12i64) { pass(115i64); }  if (c == 13i64) { pass(135i64); }
+        if (c == 14i64) { pass(192i64); }  pass(174i64);
+    }
+    if (t == 12i64) {  // vscode-dark
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(0i64);   }
+        if (c == 2i64)  { pass(161i64); }  if (c == 3i64)  { pass(193i64); }
+        if (c == 4i64)  { pass(0i64);   }  if (c == 5i64)  { pass(134i64); }
+        if (c == 6i64)  { pass(175i64); }  if (c == 7i64)  { pass(229i64); }
+        if (c == 8i64)  { pass(102i64); }  if (c == 9i64)  { pass(109i64); }
+        if (c == 10i64) { pass(188i64); }  if (c == 11i64) { pass(209i64); }
+        if (c == 12i64) { pass(142i64); }  if (c == 13i64) { pass(153i64); }
+        if (c == 14i64) { pass(225i64); }  pass(255i64);
+    }
+    if (t == 13i64) {  // tomorrow-night
+        if (c == 0i64)  { pass(29i64);  }  if (c == 1i64)  { pass(99i64);  }
+        if (c == 2i64)  { pass(183i64); }  if (c == 3i64)  { pass(197i64); }
+        if (c == 4i64)  { pass(162i64); }  if (c == 5i64)  { pass(148i64); }
+        if (c == 6i64)  { pass(184i64); }  if (c == 7i64)  { pass(197i64); }
+        if (c == 8i64)  { pass(150i64); }  if (c == 9i64)  { pass(99i64);  }
+        if (c == 10i64) { pass(183i64); }  if (c == 11i64) { pass(197i64); }
+        if (c == 12i64) { pass(162i64); }  if (c == 13i64) { pass(148i64); }
+        if (c == 14i64) { pass(184i64); }  pass(255i64);
+    }
+    if (t == 14i64) {  // synthwave
+        if (c == 0i64)  { pass(22i64);  }  if (c == 1i64)  { pass(29i64);  }
+        if (c == 2i64)  { pass(245i64); }  if (c == 3i64)  { pass(205i64); }
+        if (c == 4i64)  { pass(114i64); }  if (c == 5i64)  { pass(99i64);  }
+        if (c == 6i64)  { pass(196i64); }  if (c == 7i64)  { pass(232i64); }
+        if (c == 8i64)  { pass(58i64);  }  if (c == 9i64)  { pass(29i64);  }
+        if (c == 10i64) { pass(245i64); }  if (c == 11i64) { pass(205i64); }
+        if (c == 12i64) { pass(114i64); }  if (c == 13i64) { pass(99i64);  }
+        if (c == 14i64) { pass(196i64); }  pass(232i64);
+    }
+    if (t == 15i64) {  // kanagawa
+        if (c == 0i64)  { pass(22i64);  }  if (c == 1i64)  { pass(83i64);  }
+        if (c == 2i64)  { pass(149i64); }  if (c == 3i64)  { pass(154i64); }
+        if (c == 4i64)  { pass(108i64); }  if (c == 5i64)  { pass(89i64);  }
+        if (c == 6i64)  { pass(165i64); }  if (c == 7i64)  { pass(215i64); }
+        if (c == 8i64)  { pass(84i64);  }  if (c == 9i64)  { pass(83i64);  }
+        if (c == 10i64) { pass(149i64); }  if (c == 11i64) { pass(154i64); }
+        if (c == 12i64) { pass(108i64); }  if (c == 13i64) { pass(89i64);  }
+        if (c == 14i64) { pass(165i64); }  pass(215i64);
+    }
+    if (t == 16i64) {  // cobalt2
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(0i64);   }
+        if (c == 2i64)  { pass(175i64); }  if (c == 3i64)  { pass(214i64); }
+        if (c == 4i64)  { pass(150i64); }  if (c == 5i64)  { pass(143i64); }
+        if (c == 6i64)  { pass(214i64); }  if (c == 7i64)  { pass(255i64); }
+        if (c == 8i64)  { pass(0i64);   }  if (c == 9i64)  { pass(0i64);   }
+        if (c == 10i64) { pass(175i64); }  if (c == 11i64) { pass(214i64); }
+        if (c == 12i64) { pass(158i64); }  if (c == 13i64) { pass(143i64); }
+        if (c == 14i64) { pass(214i64); }  pass(255i64);
+    }
+    if (t == 17i64) {  // solarized-light
+        if (c == 0i64)  { pass(54i64);  }  if (c == 1i64)  { pass(50i64);  }
+        if (c == 2i64)  { pass(153i64); }  if (c == 3i64)  { pass(137i64); }
+        if (c == 4i64)  { pass(139i64); }  if (c == 5i64)  { pass(54i64);  }
+        if (c == 6i64)  { pass(161i64); }  if (c == 7i64)  { pass(232i64); }
+        if (c == 8i64)  { pass(43i64);  }  if (c == 9i64)  { pass(75i64);  }
+        if (c == 10i64) { pass(110i64); }  if (c == 11i64) { pass(161i64); }
+        if (c == 12i64) { pass(148i64); }  if (c == 13i64) { pass(113i64); }
+        if (c == 14i64) { pass(197i64); }  pass(246i64);
+    }
+    if (t == 18i64) {  // one-light
+        if (c == 0i64)  { pass(64i64);  }  if (c == 1i64)  { pass(80i64);  }
+        if (c == 2i64)  { pass(161i64); }  if (c == 3i64)  { pass(132i64); }
+        if (c == 4i64)  { pass(120i64); }  if (c == 5i64)  { pass(99i64);  }
+        if (c == 6i64)  { pass(184i64); }  if (c == 7i64)  { pass(250i64); }
+        if (c == 8i64)  { pass(130i64); }  if (c == 9i64)  { pass(80i64);  }
+        if (c == 10i64) { pass(161i64); }  if (c == 11i64) { pass(132i64); }
+        if (c == 12i64) { pass(120i64); }  if (c == 13i64) { pass(99i64);  }
+        if (c == 14i64) { pass(184i64); }  pass(255i64);
+    }
+    if (t == 19i64) {  // github-light
+        if (c == 0i64)  { pass(46i64);  }  if (c == 1i64)  { pass(84i64);  }
+        if (c == 2i64)  { pass(131i64); }  if (c == 3i64)  { pass(106i64); }
+        if (c == 4i64)  { pass(30i64);  }  if (c == 5i64)  { pass(111i64); }
+        if (c == 6i64)  { pass(167i64); }  if (c == 7i64)  { pass(246i64); }
+        if (c == 8i64)  { pass(106i64); }  if (c == 9i64)  { pass(84i64);  }
+        if (c == 10i64) { pass(131i64); }  if (c == 11i64) { pass(106i64); }
+        if (c == 12i64) { pass(30i64);  }  if (c == 13i64) { pass(111i64); }
+        if (c == 14i64) { pass(167i64); }  pass(255i64);
+    }
+    if (t == 20i64) {  // gruvbox-light
+        if (c == 0i64)  { pass(235i64); }  if (c == 1i64)  { pass(147i64); }
+        if (c == 2i64)  { pass(115i64); }  if (c == 3i64)  { pass(152i64); }
+        if (c == 4i64)  { pass(81i64);  }  if (c == 5i64)  { pass(111i64); }
+        if (c == 6i64)  { pass(124i64); }  if (c == 7i64)  { pass(109i64); }
+        if (c == 8i64)  { pass(131i64); }  if (c == 9i64)  { pass(147i64); }
+        if (c == 10i64) { pass(115i64); }  if (c == 11i64) { pass(152i64); }
+        if (c == 12i64) { pass(81i64);  }  if (c == 13i64) { pass(111i64); }
+        if (c == 14i64) { pass(124i64); }  pass(66i64);
+    }
+    // theme 21: catppuccin-latte
+    if (c == 0i64)  { pass(220i64); }  if (c == 1i64)  { pass(65i64);  }
+    if (c == 2i64)  { pass(150i64); }  if (c == 3i64)  { pass(142i64); }
+    if (c == 4i64)  { pass(102i64); }  if (c == 5i64)  { pass(103i64); }
+    if (c == 6i64)  { pass(142i64); }  if (c == 7i64)  { pass(172i64); }
+    if (c == 8i64)  { pass(188i64); }  if (c == 9i64)  { pass(65i64);  }
+    if (c == 10i64) { pass(150i64); }  if (c == 11i64) { pass(142i64); }
+    if (c == 12i64) { pass(102i64); }  if (c == 13i64) { pass(103i64); }
+    if (c == 14i64) { pass(142i64); }  pass(176i64);
+};
+
+/// ANSI B component for theme t, color index c (0-15).
+pub func:builtin_theme_ansi_b = int64(int64:t, int64:c) {
+    if (t == 0i64) {  // default
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(0i64);   }
+        if (c == 2i64)  { pass(0i64);   }  if (c == 3i64)  { pass(0i64);   }
+        if (c == 4i64)  { pass(238i64); }  if (c == 5i64)  { pass(205i64); }
+        if (c == 6i64)  { pass(205i64); }  if (c == 7i64)  { pass(229i64); }
+        if (c == 8i64)  { pass(127i64); }  if (c == 9i64)  { pass(0i64);   }
+        if (c == 10i64) { pass(0i64);   }  if (c == 11i64) { pass(0i64);   }
+        if (c == 12i64) { pass(255i64); }  if (c == 13i64) { pass(255i64); }
+        if (c == 14i64) { pass(255i64); }  pass(255i64);
+    }
+    if (t == 1i64) {  // dracula
+        if (c == 0i64)  { pass(39i64);  }  if (c == 1i64)  { pass(100i64); }
+        if (c == 2i64)  { pass(84i64);  }  if (c == 3i64)  { pass(97i64);  }
+        if (c == 4i64)  { pass(217i64); }  if (c == 5i64)  { pass(211i64); }
+        if (c == 6i64)  { pass(226i64); }  if (c == 7i64)  { pass(242i64); }
+        if (c == 8i64)  { pass(71i64);  }  if (c == 9i64)  { pass(100i64); }
+        if (c == 10i64) { pass(84i64);  }  if (c == 11i64) { pass(97i64);  }
+        if (c == 12i64) { pass(217i64); }  if (c == 13i64) { pass(211i64); }
+        if (c == 14i64) { pass(226i64); }  pass(242i64);
+    }
+    if (t == 2i64) {  // one-dark
+        if (c == 0i64)  { pass(52i64);  }  if (c == 1i64)  { pass(107i64); }
+        if (c == 2i64)  { pass(118i64); }  if (c == 3i64)  { pass(124i64); }
+        if (c == 4i64)  { pass(243i64); }  if (c == 5i64)  { pass(198i64); }
+        if (c == 6i64)  { pass(202i64); }  if (c == 7i64)  { pass(186i64); }
+        if (c == 8i64)  { pass(119i64); }  if (c == 9i64)  { pass(107i64); }
+        if (c == 10i64) { pass(118i64); }  if (c == 11i64) { pass(124i64); }
+        if (c == 12i64) { pass(243i64); }  if (c == 13i64) { pass(198i64); }
+        if (c == 14i64) { pass(202i64); }  pass(220i64);
+    }
+    if (t == 3i64) {  // solarized-dark
+        if (c == 0i64)  { pass(66i64);  }  if (c == 1i64)  { pass(47i64);  }
+        if (c == 2i64)  { pass(0i64);   }  if (c == 3i64)  { pass(0i64);   }
+        if (c == 4i64)  { pass(201i64); }  if (c == 5i64)  { pass(82i64);  }
+        if (c == 6i64)  { pass(147i64); }  if (c == 7i64)  { pass(213i64); }
+        if (c == 8i64)  { pass(54i64);  }  if (c == 9i64)  { pass(47i64);  }
+        if (c == 10i64) { pass(0i64);   }  if (c == 11i64) { pass(0i64);   }
+        if (c == 12i64) { pass(197i64); }  if (c == 13i64) { pass(131i64); }
+        if (c == 14i64) { pass(201i64); }  pass(230i64);
+    }
+    if (t == 4i64) {  // gruvbox-dark
+        if (c == 0i64)  { pass(40i64);  }  if (c == 1i64)  { pass(34i64);  }
+        if (c == 2i64)  { pass(100i64); }  if (c == 3i64)  { pass(33i64);  }
+        if (c == 4i64)  { pass(132i64); }  if (c == 5i64)  { pass(65i64);  }
+        if (c == 6i64)  { pass(69i64);  }  if (c == 7i64)  { pass(120i64); }
+        if (c == 8i64)  { pass(92i64);  }  if (c == 9i64)  { pass(52i64);  }
+        if (c == 10i64) { pass(100i64); }  if (c == 11i64) { pass(33i64);  }
+        if (c == 12i64) { pass(132i64); }  if (c == 13i64) { pass(65i64);  }
+        if (c == 14i64) { pass(69i64);  }  pass(106i64);
+    }
+    if (t == 5i64) {  // nord
+        if (c == 0i64)  { pass(64i64);  }  if (c == 1i64)  { pass(119i64); }
+        if (c == 2i64)  { pass(91i64);  }  if (c == 3i64)  { pass(113i64); }
+        if (c == 4i64)  { pass(175i64); }  if (c == 5i64)  { pass(181i64); }
+        if (c == 6i64)  { pass(188i64); }  if (c == 7i64)  { pass(228i64); }
+        if (c == 8i64)  { pass(106i64); }  if (c == 9i64)  { pass(119i64); }
+        if (c == 10i64) { pass(91i64);  }  if (c == 11i64) { pass(113i64); }
+        if (c == 12i64) { pass(175i64); }  if (c == 13i64) { pass(181i64); }
+        if (c == 14i64) { pass(188i64); }  pass(234i64);
+    }
+    if (t == 6i64) {  // tokyo-night
+        if (c == 0i64)  { pass(24i64);  }  if (c == 1i64)  { pass(99i64);  }
+        if (c == 2i64)  { pass(106i64); }  if (c == 3i64)  { pass(87i64);  }
+        if (c == 4i64)  { pass(207i64); }  if (c == 5i64)  { pass(187i64); }
+        if (c == 6i64)  { pass(200i64); }  if (c == 7i64)  { pass(193i64); }
+        if (c == 8i64)  { pass(82i64);  }  if (c == 9i64)  { pass(99i64);  }
+        if (c == 10i64) { pass(106i64); }  if (c == 11i64) { pass(87i64);  }
+        if (c == 12i64) { pass(207i64); }  if (c == 13i64) { pass(187i64); }
+        if (c == 14i64) { pass(200i64); }  pass(210i64);
+    }
+    if (t == 7i64) {  // catppuccin-mocha
+        if (c == 0i64)  { pass(87i64);  }  if (c == 1i64)  { pass(115i64); }
+        if (c == 2i64)  { pass(118i64); }  if (c == 3i64)  { pass(100i64); }
+        if (c == 4i64)  { pass(255i64); }  if (c == 5i64)  { pass(231i64); }
+        if (c == 6i64)  { pass(233i64); }  if (c == 7i64)  { pass(219i64); }
+        if (c == 8i64)  { pass(113i64); }  if (c == 9i64)  { pass(115i64); }
+        if (c == 10i64) { pass(118i64); }  if (c == 11i64) { pass(100i64); }
+        if (c == 12i64) { pass(255i64); }  if (c == 13i64) { pass(231i64); }
+        if (c == 14i64) { pass(233i64); }  pass(232i64);
+    }
+    if (t == 8i64) {  // material-dark
+        if (c == 0i64)  { pass(60i64);  }  if (c == 1i64)  { pass(83i64);  }
+        if (c == 2i64)  { pass(95i64);  }  if (c == 3i64)  { pass(106i64); }
+        if (c == 4i64)  { pass(221i64); }  if (c == 5i64)  { pass(175i64); }
+        if (c == 6i64)  { pass(204i64); }  if (c == 7i64)  { pass(200i64); }
+        if (c == 8i64)  { pass(120i64); }  if (c == 9i64)  { pass(83i64);  }
+        if (c == 10i64) { pass(95i64);  }  if (c == 11i64) { pass(106i64); }
+        if (c == 12i64) { pass(221i64); }  if (c == 13i64) { pass(175i64); }
+        if (c == 14i64) { pass(204i64); }  pass(255i64);
+    }
+    if (t == 9i64) {  // ayu-dark
+        if (c == 0i64)  { pass(20i64);  }  if (c == 1i64)  { pass(76i64);  }
+        if (c == 2i64)  { pass(105i64); }  if (c == 3i64)  { pass(95i64);  }
+        if (c == 4i64)  { pass(175i64); }  if (c == 5i64)  { pass(188i64); }
+        if (c == 6i64)  { pass(213i64); }  if (c == 7i64)  { pass(176i64); }
+        if (c == 8i64)  { pass(66i64);  }  if (c == 9i64)  { pass(76i64);  }
+        if (c == 10i64) { pass(105i64); }  if (c == 11i64) { pass(95i64);  }
+        if (c == 12i64) { pass(175i64); }  if (c == 13i64) { pass(188i64); }
+        if (c == 14i64) { pass(213i64); }  pass(176i64);
+    }
+    if (t == 10i64) {  // monokai
+        if (c == 0i64)  { pass(39i64);  }  if (c == 1i64)  { pass(73i64);  }
+        if (c == 2i64)  { pass(52i64);  }  if (c == 3i64)  { pass(34i64);  }
+        if (c == 4i64)  { pass(238i64); }  if (c == 5i64)  { pass(182i64); }
+        if (c == 6i64)  { pass(207i64); }  if (c == 7i64)  { pass(248i64); }
+        if (c == 8i64)  { pass(117i64); }  if (c == 9i64)  { pass(73i64);  }
+        if (c == 10i64) { pass(52i64);  }  if (c == 11i64) { pass(34i64);  }
+        if (c == 12i64) { pass(238i64); }  if (c == 13i64) { pass(182i64); }
+        if (c == 14i64) { pass(207i64); }  pass(248i64);
+    }
+    if (t == 11i64) {  // github-dark
+        if (c == 0i64)  { pass(26i64);  }  if (c == 1i64)  { pass(63i64);  }
+        if (c == 2i64)  { pass(113i64); }  if (c == 3i64)  { pass(98i64);  }
+        if (c == 4i64)  { pass(187i64); }  if (c == 5i64)  { pass(192i64); }
+        if (c == 6i64)  { pass(211i64); }  if (c == 7i64)  { pass(178i64); }
+        if (c == 8i64)  { pass(137i64); }  if (c == 9i64)  { pass(63i64);  }
+        if (c == 10i64) { pass(113i64); }  if (c == 11i64) { pass(98i64);  }
+        if (c == 12i64) { pass(187i64); }  if (c == 13i64) { pass(192i64); }
+        if (c == 14i64) { pass(211i64); }  pass(196i64);
+    }
+    if (t == 12i64) {  // vscode-dark
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(0i64);   }
+        if (c == 2i64)  { pass(82i64);  }  if (c == 3i64)  { pass(78i64);  }
+        if (c == 4i64)  { pass(170i64); }  if (c == 5i64)  { pass(187i64); }
+        if (c == 6i64)  { pass(184i64); }  if (c == 7i64)  { pass(229i64); }
+        if (c == 8i64)  { pass(102i64); }  if (c == 9i64)  { pass(126i64); }
+        if (c == 10i64) { pass(134i64); }  if (c == 11i64) { pass(134i64); }
+        if (c == 12i64) { pass(241i64); }  if (c == 13i64) { pass(240i64); }
+        if (c == 14i64) { pass(225i64); }  pass(255i64);
+    }
+    if (t == 13i64) {  // tomorrow-night
+        if (c == 0i64)  { pass(29i64);  }  if (c == 1i64)  { pass(99i64);  }
+        if (c == 2i64)  { pass(109i64); }  if (c == 3i64)  { pass(133i64); }
+        if (c == 4i64)  { pass(201i64); }  if (c == 5i64)  { pass(138i64); }
+        if (c == 6i64)  { pass(190i64); }  if (c == 7i64)  { pass(197i64); }
+        if (c == 8i64)  { pass(150i64); }  if (c == 9i64)  { pass(99i64);  }
+        if (c == 10i64) { pass(109i64); }  if (c == 11i64) { pass(133i64); }
+        if (c == 12i64) { pass(201i64); }  if (c == 13i64) { pass(138i64); }
+        if (c == 14i64) { pass(190i64); }  pass(255i64);
+    }
+    if (t == 14i64) {  // synthwave
+        if (c == 0i64)  { pass(29i64);  }  if (c == 1i64)  { pass(119i64); }
+        if (c == 2i64)  { pass(91i64);  }  if (c == 3i64)  { pass(58i64);  }
+        if (c == 4i64)  { pass(241i64); }  if (c == 5i64)  { pass(243i64); }
+        if (c == 6i64)  { pass(209i64); }  if (c == 7i64)  { pass(232i64); }
+        if (c == 8i64)  { pass(58i64);  }  if (c == 9i64)  { pass(119i64); }
+        if (c == 10i64) { pass(91i64);  }  if (c == 11i64) { pass(58i64);  }
+        if (c == 12i64) { pass(241i64); }  if (c == 13i64) { pass(243i64); }
+        if (c == 14i64) { pass(209i64); }  pass(232i64);
+    }
+    if (t == 15i64) {  // kanagawa
+        if (c == 0i64)  { pass(34i64);  }  if (c == 1i64)  { pass(72i64);  }
+        if (c == 2i64)  { pass(101i64); }  if (c == 3i64)  { pass(46i64);  }
+        if (c == 4i64)  { pass(190i64); }  if (c == 5i64)  { pass(135i64); }
+        if (c == 6i64)  { pass(197i64); }  if (c == 7i64)  { pass(215i64); }
+        if (c == 8i64)  { pass(100i64); }  if (c == 9i64)  { pass(72i64);  }
+        if (c == 10i64) { pass(101i64); }  if (c == 11i64) { pass(46i64);  }
+        if (c == 12i64) { pass(190i64); }  if (c == 13i64) { pass(135i64); }
+        if (c == 14i64) { pass(197i64); }  pass(215i64);
+    }
+    if (t == 16i64) {  // cobalt2
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(0i64);   }
+        if (c == 2i64)  { pass(80i64);  }  if (c == 3i64)  { pass(0i64);   }
+        if (c == 4i64)  { pass(255i64); }  if (c == 5i64)  { pass(0i64);   }
+        if (c == 6i64)  { pass(208i64); }  if (c == 7i64)  { pass(255i64); }
+        if (c == 8i64)  { pass(0i64);   }  if (c == 9i64)  { pass(0i64);   }
+        if (c == 10i64) { pass(80i64);  }  if (c == 11i64) { pass(0i64);   }
+        if (c == 12i64) { pass(255i64); }  if (c == 13i64) { pass(0i64);   }
+        if (c == 14i64) { pass(208i64); }  pass(255i64);
+    }
+    if (t == 17i64) {  // solarized-light
+        if (c == 0i64)  { pass(66i64);  }  if (c == 1i64)  { pass(47i64);  }
+        if (c == 2i64)  { pass(0i64);   }  if (c == 3i64)  { pass(0i64);   }
+        if (c == 4i64)  { pass(201i64); }  if (c == 5i64)  { pass(82i64);  }
+        if (c == 6i64)  { pass(147i64); }  if (c == 7i64)  { pass(213i64); }
+        if (c == 8i64)  { pass(54i64);  }  if (c == 9i64)  { pass(47i64);  }
+        if (c == 10i64) { pass(0i64);   }  if (c == 11i64) { pass(0i64);   }
+        if (c == 12i64) { pass(197i64); }  if (c == 13i64) { pass(131i64); }
+        if (c == 14i64) { pass(201i64); }  pass(230i64);
+    }
+    if (t == 18i64) {  // one-light
+        if (c == 0i64)  { pass(64i64);  }  if (c == 1i64)  { pass(80i64);  }
+        if (c == 2i64)  { pass(80i64);  }  if (c == 3i64)  { pass(80i64);  }
+        if (c == 4i64)  { pass(198i64); }  if (c == 5i64)  { pass(150i64); }
+        if (c == 6i64)  { pass(214i64); }  if (c == 7i64)  { pass(250i64); }
+        if (c == 8i64)  { pass(130i64); }  if (c == 9i64)  { pass(80i64);  }
+        if (c == 10i64) { pass(80i64);  }  if (c == 11i64) { pass(80i64);  }
+        if (c == 12i64) { pass(198i64); }  if (c == 13i64) { pass(150i64); }
+        if (c == 14i64) { pass(214i64); }  pass(255i64);
+    }
+    if (t == 19i64) {  // github-light
+        if (c == 0i64)  { pass(46i64);  }  if (c == 1i64)  { pass(61i64);  }
+        if (c == 2i64)  { pass(81i64);  }  if (c == 3i64)  { pass(61i64);  }
+        if (c == 4i64)  { pass(190i64); }  if (c == 5i64)  { pass(207i64); }
+        if (c == 6i64)  { pass(205i64); }  if (c == 7i64)  { pass(246i64); }
+        if (c == 8i64)  { pass(106i64); }  if (c == 9i64)  { pass(61i64);  }
+        if (c == 10i64) { pass(81i64);  }  if (c == 11i64) { pass(61i64);  }
+        if (c == 12i64) { pass(190i64); }  if (c == 13i64) { pass(207i64); }
+        if (c == 14i64) { pass(205i64); }  pass(255i64);
+    }
+    if (t == 20i64) {  // gruvbox-light
+        if (c == 0i64)  { pass(236i64); }  if (c == 1i64)  { pass(73i64);  }
+        if (c == 2i64)  { pass(116i64); }  if (c == 3i64)  { pass(98i64);  }
+        if (c == 4i64)  { pass(88i64);  }  if (c == 5i64)  { pass(90i64);  }
+        if (c == 6i64)  { pass(109i64); }  if (c == 7i64)  { pass(109i64); }
+        if (c == 8i64)  { pass(132i64); }  if (c == 9i64)  { pass(73i64);  }
+        if (c == 10i64) { pass(116i64); }  if (c == 11i64) { pass(98i64);  }
+        if (c == 12i64) { pass(88i64);  }  if (c == 13i64) { pass(90i64);  }
+        if (c == 14i64) { pass(109i64); }  pass(67i64);
+    }
+    // theme 21: catppuccin-latte
+    if (c == 0i64)  { pass(224i64); }  if (c == 1i64)  { pass(85i64);  }
+    if (c == 2i64)  { pass(111i64); }  if (c == 3i64)  { pass(155i64); }
+    if (c == 4i64)  { pass(220i64); }  if (c == 5i64)  { pass(153i64); }
+    if (c == 6i64)  { pass(178i64); }  if (c == 7i64)  { pass(172i64); }
+    if (c == 8i64)  { pass(192i64); }  if (c == 9i64)  { pass(85i64);  }
+    if (c == 10i64) { pass(111i64); }  if (c == 11i64) { pass(155i64); }
+    if (c == 12i64) { pass(220i64); }  if (c == 13i64) { pass(153i64); }
+    if (c == 14i64) { pass(178i64); }  pass(176i64);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Default fg/bg per theme (8-bit values)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Default foreground R for theme t.
+pub func:builtin_theme_fg_r = int64(int64:t) {
+    if (t == 0i64)  { pass(229i64); }  // default: light gray
+    if (t == 1i64)  { pass(248i64); }  // dracula
+    if (t == 2i64)  { pass(171i64); }  // one-dark: #abb2bf
+    if (t == 3i64)  { pass(131i64); }  // solarized-dark: base0
+    if (t == 4i64)  { pass(235i64); }  // gruvbox-dark: fg0
+    if (t == 5i64)  { pass(216i64); }  // nord: snow storm
+    if (t == 6i64)  { pass(169i64); }  // tokyo-night
+    if (t == 7i64)  { pass(205i64); }  // catppuccin-mocha: text
+    if (t == 8i64)  { pass(176i64); }  // material-dark
+    if (t == 9i64)  { pass(179i64); }  // ayu-dark
+    if (t == 10i64) { pass(248i64); }  // monokai
+    if (t == 11i64) { pass(230i64); }  // github-dark
+    if (t == 12i64) { pass(212i64); }  // vscode-dark
+    if (t == 13i64) { pass(197i64); }  // tomorrow-night
+    if (t == 14i64) { pass(255i64); }  // synthwave
+    if (t == 15i64) { pass(220i64); }  // kanagawa
+    if (t == 16i64) { pass(255i64); }  // cobalt2
+    if (t == 17i64) { pass(101i64); }  // solarized-light: base00 #657b83
+    if (t == 18i64) { pass(56i64);  }  // one-light
+    if (t == 19i64) { pass(36i64);  }  // github-light
+    if (t == 20i64) { pass(60i64);  }  // gruvbox-light: fg0
+    pass(76i64);                        // catppuccin-latte: text
+};
+
+/// Default foreground G for theme t.
+pub func:builtin_theme_fg_g = int64(int64:t) {
+    if (t == 0i64)  { pass(229i64); }
+    if (t == 1i64)  { pass(248i64); }
+    if (t == 2i64)  { pass(178i64); }  // #abb2bf
+    if (t == 3i64)  { pass(148i64); }  // solarized-dark
+    if (t == 4i64)  { pass(219i64); }  // gruvbox-dark fg0
+    if (t == 5i64)  { pass(222i64); }
+    if (t == 6i64)  { pass(177i64); }
+    if (t == 7i64)  { pass(214i64); }  // ctp text: #cdd6f4
+    if (t == 8i64)  { pass(188i64); }
+    if (t == 9i64)  { pass(176i64); }
+    if (t == 10i64) { pass(248i64); }
+    if (t == 11i64) { pass(237i64); }
+    if (t == 12i64) { pass(212i64); }
+    if (t == 13i64) { pass(197i64); }
+    if (t == 14i64) { pass(232i64); }
+    if (t == 15i64) { pass(215i64); }
+    if (t == 16i64) { pass(255i64); }
+    if (t == 17i64) { pass(123i64); }  // #657b83
+    if (t == 18i64) { pass(64i64);  }
+    if (t == 19i64) { pass(41i64);  }
+    if (t == 20i64) { pass(56i64);  }
+    pass(79i64);
+};
+
+/// Default foreground B for theme t.
+pub func:builtin_theme_fg_b = int64(int64:t) {
+    if (t == 0i64)  { pass(229i64); }
+    if (t == 1i64)  { pass(242i64); }
+    if (t == 2i64)  { pass(191i64); }  // #abb2bf
+    if (t == 3i64)  { pass(131i64); }
+    if (t == 4i64)  { pass(106i64); }
+    if (t == 5i64)  { pass(228i64); }
+    if (t == 6i64)  { pass(193i64); }
+    if (t == 7i64)  { pass(244i64); }  // ctp text: #cdd6f4
+    if (t == 8i64)  { pass(200i64); }
+    if (t == 9i64)  { pass(176i64); }
+    if (t == 10i64) { pass(248i64); }
+    if (t == 11i64) { pass(243i64); }
+    if (t == 12i64) { pass(212i64); }
+    if (t == 13i64) { pass(197i64); }
+    if (t == 14i64) { pass(232i64); }
+    if (t == 15i64) { pass(215i64); }
+    if (t == 16i64) { pass(255i64); }
+    if (t == 17i64) { pass(131i64); }
+    if (t == 18i64) { pass(64i64);  }
+    if (t == 19i64) { pass(46i64);  }
+    if (t == 20i64) { pass(52i64);  }
+    pass(98i64);
+};
+
+/// Default background R for theme t.
+pub func:builtin_theme_bg_r = int64(int64:t) {
+    if (t == 0i64)  { pass(0i64);   }   // black
+    if (t == 1i64)  { pass(40i64);  }   // dracula: #282a36
+    if (t == 2i64)  { pass(40i64);  }   // one-dark: #282c34
+    if (t == 3i64)  { pass(0i64);   }   // solarized-dark: base03 #002b36
+    if (t == 4i64)  { pass(29i64);  }   // gruvbox-dark: #1d2021
+    if (t == 5i64)  { pass(46i64);  }   // nord: polar night #2e3440
+    if (t == 6i64)  { pass(26i64);  }   // tokyo-night: #1a1b26
+    if (t == 7i64)  { pass(30i64);  }   // catppuccin-mocha: base #1e1e2e
+    if (t == 8i64)  { pass(18i64);  }   // material: #263238 → use #121212
+    if (t == 9i64)  { pass(15i64);  }   // ayu-dark: #0f1117
+    if (t == 10i64) { pass(39i64);  }   // monokai: #272822
+    if (t == 11i64) { pass(13i64);  }   // github-dark: #0d1117
+    if (t == 12i64) { pass(30i64);  }   // vscode: #1e1e1e
+    if (t == 13i64) { pass(29i64);  }   // tomorrow: #1d1f21
+    if (t == 14i64) { pass(22i64);  }   // synthwave: #161b22
+    if (t == 15i64) { pass(22i64);  }   // kanagawa: #1f1f28
+    if (t == 16i64) { pass(18i64);  }   // cobalt2: #122638
+    if (t == 17i64) { pass(253i64); }   // solarized-light: base3 #fdf6e3
+    if (t == 18i64) { pass(250i64); }   // one-light: #fafafa
+    if (t == 19i64) { pass(255i64); }   // github-light: #ffffff
+    if (t == 20i64) { pass(251i64); }   // gruvbox-light: #fbf1c7
+    pass(239i64);                        // catppuccin-latte: base #eff1f5
+};
+
+/// Default background G for theme t.
+pub func:builtin_theme_bg_g = int64(int64:t) {
+    if (t == 0i64)  { pass(0i64);   }
+    if (t == 1i64)  { pass(42i64);  }   // dracula: #282a36
+    if (t == 2i64)  { pass(44i64);  }   // one-dark: #282c34
+    if (t == 3i64)  { pass(43i64);  }   // #002b36
+    if (t == 4i64)  { pass(32i64);  }   // gruvbox: #1d2021
+    if (t == 5i64)  { pass(52i64);  }   // nord: #2e3440
+    if (t == 6i64)  { pass(27i64);  }   // tokyo: #1a1b26
+    if (t == 7i64)  { pass(30i64);  }   // ctp: #1e1e2e
+    if (t == 8i64)  { pass(18i64);  }
+    if (t == 9i64)  { pass(17i64);  }
+    if (t == 10i64) { pass(40i64);  }   // monokai: #272822
+    if (t == 11i64) { pass(17i64);  }   // github: #0d1117
+    if (t == 12i64) { pass(30i64);  }   // vscode: #1e1e1e
+    if (t == 13i64) { pass(31i64);  }   // tomorrow: #1d1f21
+    if (t == 14i64) { pass(27i64);  }
+    if (t == 15i64) { pass(31i64);  }   // kanagawa: #1f1f28
+    if (t == 16i64) { pass(38i64);  }   // cobalt: #122638
+    if (t == 17i64) { pass(246i64); }   // sol-light: #fdf6e3
+    if (t == 18i64) { pass(250i64); }
+    if (t == 19i64) { pass(255i64); }
+    if (t == 20i64) { pass(241i64); }   // gruvbox: #fbf1c7
+    pass(241i64);                        // ctp-latte: #eff1f5
+};
+
+/// Default background B for theme t.
+pub func:builtin_theme_bg_b = int64(int64:t) {
+    if (t == 0i64)  { pass(0i64);   }
+    if (t == 1i64)  { pass(54i64);  }   // dracula: #282a36
+    if (t == 2i64)  { pass(52i64);  }   // one-dark: #282c34
+    if (t == 3i64)  { pass(54i64);  }   // solarized: #002b36
+    if (t == 4i64)  { pass(33i64);  }   // gruvbox: #1d2021
+    if (t == 5i64)  { pass(64i64);  }   // nord: #2e3440
+    if (t == 6i64)  { pass(38i64);  }   // tokyo: #1a1b26
+    if (t == 7i64)  { pass(46i64);  }   // ctp: #1e1e2e
+    if (t == 8i64)  { pass(18i64);  }
+    if (t == 9i64)  { pass(23i64);  }
+    if (t == 10i64) { pass(34i64);  }   // monokai: #272822
+    if (t == 11i64) { pass(23i64);  }   // github: #0d1117
+    if (t == 12i64) { pass(30i64);  }   // vscode: #1e1e1e
+    if (t == 13i64) { pass(33i64);  }   // tomorrow: #1d1f21
+    if (t == 14i64) { pass(34i64);  }
+    if (t == 15i64) { pass(40i64);  }   // kanagawa: #1f1f28
+    if (t == 16i64) { pass(56i64);  }   // cobalt: #122638
+    if (t == 17i64) { pass(227i64); }   // sol-light: #fdf6e3
+    if (t == 18i64) { pass(250i64); }
+    if (t == 19i64) { pass(255i64); }
+    if (t == 20i64) { pass(199i64); }   // gruvbox: #fbf1c7
+    pass(245i64);                        // ctp-latte: #eff1f5
+};
+
+/// Lookup built-in theme index by name string. Returns -1 if not found.
+pub func:builtin_theme_find = int64(string:name) {
+    int64:cnt = raw builtin_theme_count();
+    int64:i = 0i64;
+    int32:running = 1i32;
+    while (running == 1i32) {
+        if (i >= cnt) { running = 0i32; }
+        if (running == 1i32) {
+            string:n = raw builtin_theme_name(i);
+            if (n == name) { pass(i); }
+            i = i + 1i64;
+        }
+    }
+    pass(-1i64);
+};

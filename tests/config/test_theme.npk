@@ -1,0 +1,166 @@
+// tests/config/test_theme.npk — Theme engine unit tests for Nitty v0.6.4
+//
+// Tests:
+//   TH01: theme_init() applies xterm defaults correctly
+//   TH02: theme_apply("default") → xterm colors preserved
+//   TH03: theme_apply("dracula") → dracula bg R == 40
+//   TH04: theme_apply("nord") → nord fg R == 216
+//   TH05: theme_apply("solarized-light") → is light theme (is_dark == 0)
+//   TH06: theme_apply("nonexistent") falls back to default, returns 0
+//   TH07: builtin_theme_count() == 22
+//   TH08: builtin_theme_find("monokai") >= 0
+//   TH09: color_to_hex(255, 0, 128) == "#FF0080"
+//   TH10: color_from_hex_r("#1E1E2E") == 30 (catppuccin mocha bg)
+//   TH11: color_from_hex_g("#1E1E2E") == 30
+//   TH12: color_from_hex_b("#1E1E2E") == 46
+//   TH13: After dracula, ansi[9] R == 255 (bright red)
+//   TH14: catppuccin-mocha is dark
+//   TH15: github-light is light
+//   TH16: theme_get_active() reflects applied theme
+//   TH17: scheme_reset_defaults() restores xterm after dracula
+//   TH18: ansi_scheme_count() == 25
+//   TH19: ansi_scheme_find("tango") >= 0
+//   TH20: ansi_scheme_find("nope") == -1
+
+use "../../src/config/theme.npk".*;
+use "../../src/gui/color_scheme.npk".*;
+use "../../src/config/builtin_themes.npk".*;
+use "../../src/config/color_schemes.npk".*;
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (expected != got)")));
+    pass(NIL);
+};
+
+func:check_str = NIL(string:name, string:expected, string:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (string mismatch)")));
+    pass(NIL);
+};
+
+func:main = int32() {
+    print("=== test_theme ===");
+
+    // TH01: theme_init() sets xterm defaults
+    drop(theme_init());
+    int64:ansi0_r = raw scheme_ansi_r(0i64);
+    drop(check("TH01_theme_init_ansi0_r", 0i64, ansi0_r));
+
+    // TH02: theme_apply("default") preserves xterm colors
+    drop(theme_apply("default"));
+    int64:ansi1_r = raw scheme_ansi_r(1i64);
+    drop(check("TH02_default_ansi1_r_205", 205i64, ansi1_r));
+
+    // TH03: theme_apply("dracula") → bg R == 40
+    drop(theme_apply("dracula"));
+    int64:drag_bg_r = raw scheme_default_bg_r();
+    drop(check("TH03_dracula_bg_r", 40i64, drag_bg_r));
+
+    // TH04: theme_apply("nord") → fg R == 216
+    drop(theme_apply("nord"));
+    int64:nord_fg_r = raw scheme_default_fg_r();
+    drop(check("TH04_nord_fg_r", 216i64, nord_fg_r));
+
+    // TH05: solarized-light is not dark
+    drop(theme_apply("solarized-light"));
+    int64:sl_dark = raw theme_is_dark();
+    drop(check("TH05_solarized_light_is_light", 0i64, sl_dark));
+
+    // TH06: unknown theme falls back, returns 0
+    int64:unk_r = raw theme_apply("xyzzy-nonexistent-theme");
+    drop(check("TH06_unknown_returns_0", 0i64, unk_r));
+    string:active_after_unk = raw theme_get_active();
+    drop(check_str("TH06b_fallback_active_default", "default", active_after_unk));
+
+    // TH07: 22 built-in themes
+    int64:bcount = raw theme_builtin_count();
+    drop(check("TH07_builtin_count_22", 22i64, bcount));
+
+    // TH08: monokai found
+    int64:mono_idx = raw builtin_theme_find("monokai");
+    int64:mono_ok = 0i64;
+    if (mono_idx >= 0i64) { mono_ok = 1i64; }
+    drop(check("TH08_monokai_found", 1i64, mono_ok));
+
+    // TH09: color_to_hex(255, 0, 128) == "#FF0080"
+    string:hex = raw color_to_hex(255i64, 0i64, 128i64);
+    drop(check_str("TH09_color_to_hex", "#FF0080", hex));
+
+    // TH10-12: Verify specific built-in theme color values for catppuccin-mocha
+    drop(theme_apply("catppuccin-mocha"));
+    int64:ctp_ansi0_r = raw scheme_ansi_r(0i64);
+    int64:ctp_ansi7_r = raw scheme_ansi_r(7i64);
+    int64:ctp_bg_r    = raw scheme_default_bg_r();
+    drop(check("TH10_catppuccin_mocha_ansi0_r", 69i64, ctp_ansi0_r));    // surface0 R=69
+    drop(check("TH11_catppuccin_mocha_ansi7_r", 186i64, ctp_ansi7_r));   // subtext0 R=186
+    drop(check("TH12_catppuccin_mocha_bg_r", 30i64, ctp_bg_r));          // #1E1E2E R=30
+
+    // TH13: After dracula, ansi[9] (bright red) R == 255
+    drop(theme_apply("dracula"));
+    int64:drag_a9_r = raw scheme_ansi_r(9i64);
+    drop(check("TH13_dracula_ansi9_r", 255i64, drag_a9_r));
+
+    // TH14: catppuccin-mocha is dark
+    drop(theme_apply("catppuccin-mocha"));
+    int64:ctp_dark = raw theme_is_dark();
+    drop(check("TH14_catppuccin_mocha_dark", 1i64, ctp_dark));
+
+    // TH15: github-light is light
+    drop(theme_apply("github-light"));
+    int64:gh_dark = raw theme_is_dark();
+    drop(check("TH15_github_light_is_light", 0i64, gh_dark));
+
+    // TH16: theme_get_active returns applied name
+    drop(theme_apply("tokyo-night"));
+    string:active_tn = raw theme_get_active();
+    drop(check_str("TH16_get_active_tokyo_night", "tokyo-night", active_tn));
+
+    // TH17: scheme_reset_defaults restores xterm after dracula
+    drop(theme_apply("dracula"));
+    drop(scheme_reset_defaults());
+    int64:r0_after_reset = raw scheme_ansi_r(0i64);
+    int64:r1_after_reset = raw scheme_ansi_r(1i64);
+    int64:fg_after_reset  = raw scheme_default_fg_r();
+    drop(check("TH17a_reset_ansi0_r", 0i64, r0_after_reset));
+    drop(check("TH17b_reset_ansi1_r", 205i64, r1_after_reset));
+    drop(check("TH17c_reset_fg_r", 229i64, fg_after_reset));
+
+    // TH18: 25 ANSI schemes
+    int64:scount = raw theme_scheme_count();
+    drop(check("TH18_scheme_count_25", 25i64, scount));
+
+    // TH19: tango scheme found
+    int64:tango_idx = raw ansi_scheme_find("tango");
+    int64:tango_ok = 0i64;
+    if (tango_idx >= 0i64) { tango_ok = 1i64; }
+    drop(check("TH19_tango_found", 1i64, tango_ok));
+
+    // TH20: unknown scheme returns -1
+    int64:nope_idx = raw ansi_scheme_find("nope-nope-nope");
+    int64:nope_ok = 0i64;
+    if (nope_idx == -1i64) { nope_ok = 1i64; }
+    drop(check("TH20_unknown_scheme_minus1", 1i64, nope_ok));
+
+    // Results
+    print(string_concat("=== Results ===", ""));
+    if (g_fail == 0i64) {
+        print("All theme tests passed.");
+        exit 0i32;
+    }
+    print(string_concat("FAILURES: ", string_from_int(g_fail)));
+    exit 1i32;
+};

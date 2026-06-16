@@ -430,6 +430,15 @@ flags = []
 link_libraries = ["nitty_gtk4_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
 
+# v0.6.4: Theme engine tests
+[target.test_theme]
+type = "binary"
+sources = ["tests/config/test_theme.npk"]
+deps = ["gtk4_shim"]
+flags = []
+link_libraries = ["nitty_gtk4_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+
 # v0.6.1: Profile system tests
 [target.test_profile]
 type = "binary"

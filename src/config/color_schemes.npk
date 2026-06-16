@@ -1,0 +1,433 @@
+// src/config/color_schemes.npk — ANSI color scheme collection for Nitty v0.6.4
+//
+// Provides 25 named ANSI color schemes (lighter than full themes — just the 16
+// ANSI terminal colors + default fg/bg, no UI chrome colors). Schemes are used
+// as an alternative to full themes when the user only wants to change terminal
+// colors without affecting the tab bar or borders.
+//
+// Schemes included (25 total):
+//  0  xterm          — xterm-256color defaults
+//  1  tango          — GNOME Terminal / Tango palette
+//  2  rxvt           — rxvt-unicode defaults
+//  3  linux          — Linux console palette
+//  4  putty          — PuTTY defaults
+//  5  vga            — VGA console palette
+//  6  windows        — Windows Console classic
+//  7  campbell       — Windows Terminal Campbell
+//  8  one-half-dark  — One Half Dark
+//  9  one-half-light — One Half Light
+// 10  snazzy         — Hyper Snazzy
+// 11  tender         — Tender
+// 12  flat           — Flat UI
+// 13  brogrammer     — Brogrammer
+// 14  ocean          — Base16 Ocean
+// 15  railscasts     — Railscasts
+// 16  smyck          — Smyck
+// 17  hybrid         — Hybrid
+// 18  pastel-dark    — Pastel Dark
+// 19  3024           — 3024 Night
+// 20  birds-of-para  — Birds of Paradise
+// 21  challenger     — Challenger Deep
+// 22  iceberg        — Iceberg
+// 23  horizon        — Horizon
+// 24  nightfly       — Nightfly
+
+/// Total number of ANSI color schemes.
+pub func:ansi_scheme_count = int64() { pass(25i64); };
+
+/// Name of scheme at index i.
+pub func:ansi_scheme_name = string(int64:i) {
+    if (i == 0i64)  { pass("xterm");          }
+    if (i == 1i64)  { pass("tango");          }
+    if (i == 2i64)  { pass("rxvt");           }
+    if (i == 3i64)  { pass("linux");          }
+    if (i == 4i64)  { pass("putty");          }
+    if (i == 5i64)  { pass("vga");            }
+    if (i == 6i64)  { pass("windows");        }
+    if (i == 7i64)  { pass("campbell");       }
+    if (i == 8i64)  { pass("one-half-dark");  }
+    if (i == 9i64)  { pass("one-half-light"); }
+    if (i == 10i64) { pass("snazzy");         }
+    if (i == 11i64) { pass("tender");         }
+    if (i == 12i64) { pass("flat");           }
+    if (i == 13i64) { pass("brogrammer");     }
+    if (i == 14i64) { pass("ocean");          }
+    if (i == 15i64) { pass("railscasts");     }
+    if (i == 16i64) { pass("smyck");          }
+    if (i == 17i64) { pass("hybrid");         }
+    if (i == 18i64) { pass("pastel-dark");    }
+    if (i == 19i64) { pass("3024");           }
+    if (i == 20i64) { pass("birds-of-para");  }
+    if (i == 21i64) { pass("challenger");     }
+    if (i == 22i64) { pass("iceberg");        }
+    if (i == 23i64) { pass("horizon");        }
+    pass("nightfly");
+};
+
+/// Look up scheme index by name. Returns -1 if not found.
+pub func:ansi_scheme_find = int64(string:name) {
+    int64:cnt = raw ansi_scheme_count();
+    int64:i = 0i64;
+    int32:running = 1i32;
+    while (running == 1i32) {
+        if (i >= cnt) { running = 0i32; }
+        if (running == 1i32) {
+            if (raw ansi_scheme_name(i) == name) { pass(i); }
+            i = i + 1i64;
+        }
+    }
+    pass(-1i64);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// ANSI R component for scheme s, color index c (0-15)
+// ═══════════════════════════════════════════════════════════════════════
+
+pub func:ansi_scheme_r = int64(int64:s, int64:c) {
+    // 0: xterm
+    if (s == 0i64) {
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(205i64); }
+        if (c == 2i64)  { pass(0i64);   }  if (c == 3i64)  { pass(205i64); }
+        if (c == 4i64)  { pass(0i64);   }  if (c == 5i64)  { pass(205i64); }
+        if (c == 6i64)  { pass(0i64);   }  if (c == 7i64)  { pass(229i64); }
+        if (c == 8i64)  { pass(127i64); }  if (c == 9i64)  { pass(255i64); }
+        if (c == 10i64) { pass(0i64);   }  if (c == 11i64) { pass(255i64); }
+        if (c == 12i64) { pass(92i64);  }  if (c == 13i64) { pass(255i64); }
+        if (c == 14i64) { pass(0i64);   }  pass(255i64);
+    }
+    // 1: tango
+    if (s == 1i64) {
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(204i64); }
+        if (c == 2i64)  { pass(78i64);  }  if (c == 3i64)  { pass(196i64); }
+        if (c == 4i64)  { pass(52i64);  }  if (c == 5i64)  { pass(117i64); }
+        if (c == 6i64)  { pass(6i64);   }  if (c == 7i64)  { pass(211i64); }
+        if (c == 8i64)  { pass(85i64);  }  if (c == 9i64)  { pass(239i64); }
+        if (c == 10i64) { pass(138i64); }  if (c == 11i64) { pass(252i64); }
+        if (c == 12i64) { pass(114i64); }  if (c == 13i64) { pass(173i64); }
+        if (c == 14i64) { pass(50i64);  }  pass(238i64);
+    }
+    // 2: rxvt
+    if (s == 2i64) {
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(205i64); }
+        if (c == 2i64)  { pass(0i64);   }  if (c == 3i64)  { pass(205i64); }
+        if (c == 4i64)  { pass(0i64);   }  if (c == 5i64)  { pass(205i64); }
+        if (c == 6i64)  { pass(0i64);   }  if (c == 7i64)  { pass(255i64); }
+        if (c == 8i64)  { pass(0i64);   }  if (c == 9i64)  { pass(255i64); }
+        if (c == 10i64) { pass(0i64);   }  if (c == 11i64) { pass(255i64); }
+        if (c == 12i64) { pass(0i64);   }  if (c == 13i64) { pass(255i64); }
+        if (c == 14i64) { pass(0i64);   }  pass(255i64);
+    }
+    // 3: linux
+    if (s == 3i64) {
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(170i64); }
+        if (c == 2i64)  { pass(0i64);   }  if (c == 3i64)  { pass(170i64); }
+        if (c == 4i64)  { pass(0i64);   }  if (c == 5i64)  { pass(170i64); }
+        if (c == 6i64)  { pass(0i64);   }  if (c == 7i64)  { pass(170i64); }
+        if (c == 8i64)  { pass(85i64);  }  if (c == 9i64)  { pass(255i64); }
+        if (c == 10i64) { pass(85i64);  }  if (c == 11i64) { pass(255i64); }
+        if (c == 12i64) { pass(85i64);  }  if (c == 13i64) { pass(255i64); }
+        if (c == 14i64) { pass(85i64);  }  pass(255i64);
+    }
+    // 4: putty
+    if (s == 4i64) {
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(187i64); }
+        if (c == 2i64)  { pass(0i64);   }  if (c == 3i64)  { pass(187i64); }
+        if (c == 4i64)  { pass(0i64);   }  if (c == 5i64)  { pass(187i64); }
+        if (c == 6i64)  { pass(0i64);   }  if (c == 7i64)  { pass(187i64); }
+        if (c == 8i64)  { pass(85i64);  }  if (c == 9i64)  { pass(255i64); }
+        if (c == 10i64) { pass(85i64);  }  if (c == 11i64) { pass(255i64); }
+        if (c == 12i64) { pass(85i64);  }  if (c == 13i64) { pass(255i64); }
+        if (c == 14i64) { pass(85i64);  }  pass(255i64);
+    }
+    // 5: vga
+    if (s == 5i64) {
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(170i64); }
+        if (c == 2i64)  { pass(0i64);   }  if (c == 3i64)  { pass(170i64); }
+        if (c == 4i64)  { pass(0i64);   }  if (c == 5i64)  { pass(170i64); }
+        if (c == 6i64)  { pass(0i64);   }  if (c == 7i64)  { pass(170i64); }
+        if (c == 8i64)  { pass(85i64);  }  if (c == 9i64)  { pass(255i64); }
+        if (c == 10i64) { pass(85i64);  }  if (c == 11i64) { pass(255i64); }
+        if (c == 12i64) { pass(85i64);  }  if (c == 13i64) { pass(255i64); }
+        if (c == 14i64) { pass(85i64);  }  pass(255i64);
+    }
+    // 6: windows classic
+    if (s == 6i64) {
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(128i64); }
+        if (c == 2i64)  { pass(0i64);   }  if (c == 3i64)  { pass(128i64); }
+        if (c == 4i64)  { pass(0i64);   }  if (c == 5i64)  { pass(128i64); }
+        if (c == 6i64)  { pass(0i64);   }  if (c == 7i64)  { pass(192i64); }
+        if (c == 8i64)  { pass(128i64); }  if (c == 9i64)  { pass(255i64); }
+        if (c == 10i64) { pass(0i64);   }  if (c == 11i64) { pass(255i64); }
+        if (c == 12i64) { pass(0i64);   }  if (c == 13i64) { pass(255i64); }
+        if (c == 14i64) { pass(0i64);   }  pass(255i64);
+    }
+    // 7: campbell (Windows Terminal)
+    if (s == 7i64) {
+        if (c == 0i64)  { pass(12i64);  }  if (c == 1i64)  { pass(197i64); }
+        if (c == 2i64)  { pass(19i64);  }  if (c == 3i64)  { pass(193i64); }
+        if (c == 4i64)  { pass(0i64);   }  if (c == 5i64)  { pass(136i64); }
+        if (c == 6i64)  { pass(58i64);  }  if (c == 7i64)  { pass(204i64); }
+        if (c == 8i64)  { pass(118i64); }  if (c == 9i64)  { pass(231i64); }
+        if (c == 10i64) { pass(22i64);  }  if (c == 11i64) { pass(242i64); }
+        if (c == 12i64) { pass(59i64);  }  if (c == 13i64) { pass(180i64); }
+        if (c == 14i64) { pass(44i64);  }  pass(242i64);
+    }
+    // 8: one-half-dark
+    if (s == 8i64) {
+        if (c == 0i64)  { pass(40i64);  }  if (c == 1i64)  { pass(224i64); }
+        if (c == 2i64)  { pass(152i64); }  if (c == 3i64)  { pass(229i64); }
+        if (c == 4i64)  { pass(97i64);  }  if (c == 5i64)  { pass(198i64); }
+        if (c == 6i64)  { pass(86i64);  }  if (c == 7i64)  { pass(220i64); }
+        if (c == 8i64)  { pass(92i64);  }  if (c == 9i64)  { pass(224i64); }
+        if (c == 10i64) { pass(152i64); }  if (c == 11i64) { pass(229i64); }
+        if (c == 12i64) { pass(97i64);  }  if (c == 13i64) { pass(198i64); }
+        if (c == 14i64) { pass(86i64);  }  pass(220i64);
+    }
+    // 9: one-half-light
+    if (s == 9i64) {
+        if (c == 0i64)  { pass(56i64);  }  if (c == 1i64)  { pass(228i64); }
+        if (c == 2i64)  { pass(80i64);  }  if (c == 3i64)  { pass(166i64); }
+        if (c == 4i64)  { pass(0i64);   }  if (c == 5i64)  { pass(166i64); }
+        if (c == 6i64)  { pass(0i64);   }  if (c == 7i64)  { pass(250i64); }
+        if (c == 8i64)  { pass(130i64); }  if (c == 9i64)  { pass(228i64); }
+        if (c == 10i64) { pass(80i64);  }  if (c == 11i64) { pass(166i64); }
+        if (c == 12i64) { pass(0i64);   }  if (c == 13i64) { pass(166i64); }
+        if (c == 14i64) { pass(0i64);   }  pass(255i64);
+    }
+    // 10: snazzy
+    if (s == 10i64) {
+        if (c == 0i64)  { pass(18i64);  }  if (c == 1i64)  { pass(255i64); }
+        if (c == 2i64)  { pass(90i64);  }  if (c == 3i64)  { pass(248i64); }
+        if (c == 4i64)  { pass(87i64);  }  if (c == 5i64)  { pass(255i64); }
+        if (c == 6i64)  { pass(95i64);  }  if (c == 7i64)  { pass(232i64); }
+        if (c == 8i64)  { pass(98i64);  }  if (c == 9i64)  { pass(255i64); }
+        if (c == 10i64) { pass(90i64);  }  if (c == 11i64) { pass(248i64); }
+        if (c == 12i64) { pass(87i64);  }  if (c == 13i64) { pass(255i64); }
+        if (c == 14i64) { pass(95i64);  }  pass(255i64);
+    }
+    // 11: tender
+    if (s == 11i64) {
+        if (c == 0i64)  { pass(40i64);  }  if (c == 1i64)  { pass(248i64); }
+        if (c == 2i64)  { pass(145i64); }  if (c == 3i64)  { pass(229i64); }
+        if (c == 4i64)  { pass(0i64);   }  if (c == 5i64)  { pass(212i64); }
+        if (c == 6i64)  { pass(177i64); }  if (c == 7i64)  { pass(235i64); }
+        if (c == 8i64)  { pass(72i64);  }  if (c == 9i64)  { pass(248i64); }
+        if (c == 10i64) { pass(145i64); }  if (c == 11i64) { pass(229i64); }
+        if (c == 12i64) { pass(0i64);   }  if (c == 13i64) { pass(212i64); }
+        if (c == 14i64) { pass(177i64); }  pass(235i64);
+    }
+    // 12: flat
+    if (s == 12i64) {
+        if (c == 0i64)  { pass(27i64);  }  if (c == 1i64)  { pass(192i64); }
+        if (c == 2i64)  { pass(29i64);  }  if (c == 3i64)  { pass(240i64); }
+        if (c == 4i64)  { pass(52i64);  }  if (c == 5i64)  { pass(167i64); }
+        if (c == 6i64)  { pass(16i64);  }  if (c == 7i64)  { pass(149i64); }
+        if (c == 8i64)  { pass(52i64);  }  if (c == 9i64)  { pass(232i64); }
+        if (c == 10i64) { pass(78i64);  }  if (c == 11i64) { pass(255i64); }
+        if (c == 12i64) { pass(93i64);  }  if (c == 13i64) { pass(191i64); }
+        if (c == 14i64) { pass(22i64);  }  pass(196i64);
+    }
+    // 13: brogrammer
+    if (s == 13i64) {
+        if (c == 0i64)  { pass(26i64);  }  if (c == 1i64)  { pass(248i64); }
+        if (c == 2i64)  { pass(81i64);  }  if (c == 3i64)  { pass(251i64); }
+        if (c == 4i64)  { pass(103i64); }  if (c == 5i64)  { pass(208i64); }
+        if (c == 6i64)  { pass(21i64);  }  if (c == 7i64)  { pass(244i64); }
+        if (c == 8i64)  { pass(95i64);  }  if (c == 9i64)  { pass(248i64); }
+        if (c == 10i64) { pass(81i64);  }  if (c == 11i64) { pass(251i64); }
+        if (c == 12i64) { pass(103i64); }  if (c == 13i64) { pass(208i64); }
+        if (c == 14i64) { pass(21i64);  }  pass(255i64);
+    }
+    // 14: ocean (Base16)
+    if (s == 14i64) {
+        if (c == 0i64)  { pass(43i64);  }  if (c == 1i64)  { pass(191i64); }
+        if (c == 2i64)  { pass(163i64); }  if (c == 3i64)  { pass(235i64); }
+        if (c == 4i64)  { pass(100i64); }  if (c == 5i64)  { pass(180i64); }
+        if (c == 6i64)  { pass(150i64); }  if (c == 7i64)  { pass(192i64); }
+        if (c == 8i64)  { pass(65i64);  }  if (c == 9i64)  { pass(191i64); }
+        if (c == 10i64) { pass(163i64); }  if (c == 11i64) { pass(235i64); }
+        if (c == 12i64) { pass(100i64); }  if (c == 13i64) { pass(180i64); }
+        if (c == 14i64) { pass(150i64); }  pass(192i64);
+    }
+    // 15: railscasts
+    if (s == 15i64) {
+        if (c == 0i64)  { pass(47i64);  }  if (c == 1i64)  { pass(218i64); }
+        if (c == 2i64)  { pass(180i64); }  if (c == 3i64)  { pass(210i64); }
+        if (c == 4i64)  { pass(102i64); }  if (c == 5i64)  { pass(177i64); }
+        if (c == 6i64)  { pass(122i64); }  if (c == 7i64)  { pass(232i64); }
+        if (c == 8i64)  { pass(105i64); }  if (c == 9i64)  { pass(218i64); }
+        if (c == 10i64) { pass(180i64); }  if (c == 11i64) { pass(210i64); }
+        if (c == 12i64) { pass(102i64); }  if (c == 13i64) { pass(177i64); }
+        if (c == 14i64) { pass(122i64); }  pass(232i64);
+    }
+    // 16: smyck
+    if (s == 16i64) {
+        if (c == 0i64)  { pass(0i64);   }  if (c == 1i64)  { pass(197i64); }
+        if (c == 2i64)  { pass(88i64);  }  if (c == 3i64)  { pass(213i64); }
+        if (c == 4i64)  { pass(66i64);  }  if (c == 5i64)  { pass(192i64); }
+        if (c == 6i64)  { pass(32i64);  }  if (c == 7i64)  { pass(235i64); }
+        if (c == 8i64)  { pass(90i64);  }  if (c == 9i64)  { pass(197i64); }
+        if (c == 10i64) { pass(88i64);  }  if (c == 11i64) { pass(213i64); }
+        if (c == 12i64) { pass(66i64);  }  if (c == 13i64) { pass(192i64); }
+        if (c == 14i64) { pass(32i64);  }  pass(235i64);
+    }
+    // 17: hybrid
+    if (s == 17i64) {
+        if (c == 0i64)  { pass(29i64);  }  if (c == 1i64)  { pass(204i64); }
+        if (c == 2i64)  { pass(181i64); }  if (c == 3i64)  { pass(240i64); }
+        if (c == 4i64)  { pass(129i64); }  if (c == 5i64)  { pass(178i64); }
+        if (c == 6i64)  { pass(138i64); }  if (c == 7i64)  { pass(197i64); }
+        if (c == 8i64)  { pass(101i64); }  if (c == 9i64)  { pass(204i64); }
+        if (c == 10i64) { pass(181i64); }  if (c == 11i64) { pass(240i64); }
+        if (c == 12i64) { pass(129i64); }  if (c == 13i64) { pass(178i64); }
+        if (c == 14i64) { pass(138i64); }  pass(255i64);
+    }
+    // 18: pastel-dark
+    if (s == 18i64) {
+        if (c == 0i64)  { pass(72i64);  }  if (c == 1i64)  { pass(255i64); }
+        if (c == 2i64)  { pass(114i64); }  if (c == 3i64)  { pass(255i64); }
+        if (c == 4i64)  { pass(100i64); }  if (c == 5i64)  { pass(255i64); }
+        if (c == 6i64)  { pass(112i64); }  if (c == 7i64)  { pass(228i64); }
+        if (c == 8i64)  { pass(102i64); }  if (c == 9i64)  { pass(255i64); }
+        if (c == 10i64) { pass(114i64); }  if (c == 11i64) { pass(255i64); }
+        if (c == 12i64) { pass(100i64); }  if (c == 13i64) { pass(255i64); }
+        if (c == 14i64) { pass(112i64); }  pass(255i64);
+    }
+    // 19: 3024
+    if (s == 19i64) {
+        if (c == 0i64)  { pass(9i64);   }  if (c == 1i64)  { pass(219i64); }
+        if (c == 2i64)  { pass(90i64);  }  if (c == 3i64)  { pass(216i64); }
+        if (c == 4i64)  { pass(70i64);  }  if (c == 5i64)  { pass(180i64); }
+        if (c == 6i64)  { pass(88i64);  }  if (c == 7i64)  { pass(212i64); }
+        if (c == 8i64)  { pass(59i64);  }  if (c == 9i64)  { pass(219i64); }
+        if (c == 10i64) { pass(90i64);  }  if (c == 11i64) { pass(216i64); }
+        if (c == 12i64) { pass(70i64);  }  if (c == 13i64) { pass(180i64); }
+        if (c == 14i64) { pass(88i64);  }  pass(212i64);
+    }
+    // 20: birds-of-paradise
+    if (s == 20i64) {
+        if (c == 0i64)  { pass(64i64);  }  if (c == 1i64)  { pass(214i64); }
+        if (c == 2i64)  { pass(88i64);  }  if (c == 3i64)  { pass(233i64); }
+        if (c == 4i64)  { pass(54i64);  }  if (c == 5i64)  { pass(173i64); }
+        if (c == 6i64)  { pass(95i64);  }  if (c == 7i64)  { pass(226i64); }
+        if (c == 8i64)  { pass(96i64);  }  if (c == 9i64)  { pass(214i64); }
+        if (c == 10i64) { pass(88i64);  }  if (c == 11i64) { pass(233i64); }
+        if (c == 12i64) { pass(54i64);  }  if (c == 13i64) { pass(173i64); }
+        if (c == 14i64) { pass(95i64);  }  pass(226i64);
+    }
+    // 21: challenger-deep
+    if (s == 21i64) {
+        if (c == 0i64)  { pass(31i64);  }  if (c == 1i64)  { pass(255i64); }
+        if (c == 2i64)  { pass(106i64); }  if (c == 3i64)  { pass(250i64); }
+        if (c == 4i64)  { pass(120i64); }  if (c == 5i64)  { pass(197i64); }
+        if (c == 6i64)  { pass(109i64); }  if (c == 7i64)  { pass(171i64); }
+        if (c == 8i64)  { pass(101i64); }  if (c == 9i64)  { pass(255i64); }
+        if (c == 10i64) { pass(106i64); }  if (c == 11i64) { pass(250i64); }
+        if (c == 12i64) { pass(120i64); }  if (c == 13i64) { pass(197i64); }
+        if (c == 14i64) { pass(109i64); }  pass(198i64);
+    }
+    // 22: iceberg
+    if (s == 22i64) {
+        if (c == 0i64)  { pass(22i64);  }  if (c == 1i64)  { pass(225i64); }
+        if (c == 2i64)  { pass(180i64); }  if (c == 3i64)  { pass(225i64); }
+        if (c == 4i64)  { pass(180i64); }  if (c == 5i64)  { pass(161i64); }
+        if (c == 6i64)  { pass(180i64); }  if (c == 7i64)  { pass(192i64); }
+        if (c == 8i64)  { pass(68i64);  }  if (c == 9i64)  { pass(225i64); }
+        if (c == 10i64) { pass(180i64); }  if (c == 11i64) { pass(225i64); }
+        if (c == 12i64) { pass(180i64); }  if (c == 13i64) { pass(161i64); }
+        if (c == 14i64) { pass(180i64); }  pass(207i64);
+    }
+    // 23: horizon
+    if (s == 23i64) {
+        if (c == 0i64)  { pass(28i64);  }  if (c == 1i64)  { pass(232i64); }
+        if (c == 2i64)  { pass(41i64);  }  if (c == 3i64)  { pass(250i64); }
+        if (c == 4i64)  { pass(38i64);  }  if (c == 5i64)  { pass(178i64); }
+        if (c == 6i64)  { pass(89i64);  }  if (c == 7i64)  { pass(205i64); }
+        if (c == 8i64)  { pass(73i64);  }  if (c == 9i64)  { pass(232i64); }
+        if (c == 10i64) { pass(41i64);  }  if (c == 11i64) { pass(250i64); }
+        if (c == 12i64) { pass(38i64);  }  if (c == 13i64) { pass(178i64); }
+        if (c == 14i64) { pass(89i64);  }  pass(205i64);
+    }
+    // 24: nightfly (fallthrough)
+    if (c == 0i64)  { pass(11i64);  }  if (c == 1i64)  { pass(252i64); }
+    if (c == 2i64)  { pass(3i64);   }  if (c == 3i64)  { pass(236i64); }
+    if (c == 4i64)  { pass(65i64);  }  if (c == 5i64)  { pass(168i64); }
+    if (c == 6i64)  { pass(32i64);  }  if (c == 7i64)  { pass(186i64); }
+    if (c == 8i64)  { pass(59i64);  }  if (c == 9i64)  { pass(252i64); }
+    if (c == 10i64) { pass(3i64);   }  if (c == 11i64) { pass(236i64); }
+    if (c == 12i64) { pass(65i64);  }  if (c == 13i64) { pass(168i64); }
+    if (c == 14i64) { pass(32i64);  }  pass(222i64);
+};
+
+/// Default fg R for scheme s.
+pub func:ansi_scheme_fg_r = int64(int64:s) {
+    if (s == 9i64)  { pass(56i64);  }   // one-half-light
+    if (s >= 9i64 && s <= 9i64) { pass(56i64); }
+    // most dark schemes: light gray
+    if (s == 1i64)  { pass(211i64); }   // tango
+    if (s == 7i64)  { pass(242i64); }   // campbell: #cccccc
+    if (s == 9i64)  { pass(56i64);  }   // one-half-light
+    pass(229i64);  // xterm-style default
+};
+
+/// Default fg G for scheme s.
+pub func:ansi_scheme_fg_g = int64(int64:s) {
+    if (s == 1i64)  { pass(211i64); }
+    if (s == 7i64)  { pass(242i64); }
+    if (s == 9i64)  { pass(64i64);  }
+    pass(229i64);
+};
+
+/// Default fg B for scheme s.
+pub func:ansi_scheme_fg_b = int64(int64:s) {
+    if (s == 1i64)  { pass(211i64); }
+    if (s == 7i64)  { pass(242i64); }
+    if (s == 9i64)  { pass(64i64);  }
+    pass(229i64);
+};
+
+/// Default bg R for scheme s.
+pub func:ansi_scheme_bg_r = int64(int64:s) {
+    if (s == 0i64)  { pass(0i64);   }   // xterm: black
+    if (s == 7i64)  { pass(12i64);  }   // campbell: #0c0c0c
+    if (s == 8i64)  { pass(40i64);  }   // one-half-dark
+    if (s == 9i64)  { pass(250i64); }   // one-half-light: #fafafa
+    if (s == 10i64) { pass(28i64);  }   // snazzy: #1c2023
+    if (s == 12i64) { pass(27i64);  }   // flat
+    if (s == 19i64) { pass(9i64);   }   // 3024
+    if (s == 21i64) { pass(31i64);  }   // challenger
+    if (s == 22i64) { pass(22i64);  }   // iceberg
+    if (s == 23i64) { pass(28i64);  }   // horizon
+    if (s == 24i64) { pass(11i64);  }   // nightfly
+    pass(0i64);
+};
+
+/// Default bg G for scheme s.
+pub func:ansi_scheme_bg_g = int64(int64:s) {
+    if (s == 7i64)  { pass(12i64);  }
+    if (s == 8i64)  { pass(44i64);  }
+    if (s == 9i64)  { pass(250i64); }
+    if (s == 10i64) { pass(32i64);  }
+    if (s == 12i64) { pass(28i64);  }
+    if (s == 19i64) { pass(9i64);   }
+    if (s == 21i64) { pass(33i64);  }
+    if (s == 22i64) { pass(22i64);  }
+    if (s == 23i64) { pass(30i64);  }
+    if (s == 24i64) { pass(21i64);  }
+    pass(0i64);
+};
+
+/// Default bg B for scheme s.
+pub func:ansi_scheme_bg_b = int64(int64:s) {
+    if (s == 7i64)  { pass(12i64);  }
+    if (s == 8i64)  { pass(52i64);  }
+    if (s == 9i64)  { pass(250i64); }
+    if (s == 10i64) { pass(36i64);  }
+    if (s == 12i64) { pass(36i64);  }
+    if (s == 19i64) { pass(9i64);   }
+    if (s == 21i64) { pass(49i64);  }
+    if (s == 22i64) { pass(31i64);  }
+    if (s == 23i64) { pass(36i64);  }
+    if (s == 24i64) { pass(34i64);  }
+    pass(0i64);
+};

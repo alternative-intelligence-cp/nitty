@@ -36,6 +36,7 @@ use "../gui/font_config.npk".*;
 use "../terminal/scrollback.npk".*;
 use "global_hotkey.npk".*;          // v0.6.3: global hotkey registration
 use "../gui/quake.npk".*;           // v0.6.3: quake mode window management
+use "../config/theme.npk".*;        // v0.6.4: theme engine
 
 // fd 1 = stdout
 int64:STDOUT = 1i64;
@@ -65,6 +66,8 @@ pub func:app_set_no_restore = NIL() {
 
 pub func:app_init = NIL() {
     drop(config_load());                              // v0.6.0: load config first
+    // v0.6.4: Apply theme from config before renderer_init() in app_run()
+    drop(theme_apply(raw cfg_theme()));
     drop(write_stdout("Nitty v0.6.0 initializing...\n"));
     pass(NIL);
 };

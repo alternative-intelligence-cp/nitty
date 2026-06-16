@@ -1,15 +1,23 @@
-// src/gui/color_scheme.npk — Default terminal color scheme for Nitty v0.3.1
+// src/gui/color_scheme.npk — Mutable terminal color scheme for Nitty v0.6.4
 //
-// Provides the xterm default 16-color ANSI palette and terminal default
-// foreground / background colors as pure accessor functions (no mutable state).
+// v0.3.1: Pure accessor functions with hardcoded xterm defaults.
+// v0.6.4: Upgraded to mutable module-level state. The 16 ANSI colors and
+//         default fg/bg values are stored in parallel int64 arrays and
+//         can be overridden at runtime by the theme engine.
 //
-// Using if-chains instead of arrays to avoid the Nitpick compiler's
-// module-variable-reassignment-in-pub-NIL-func limitation.
+// Public API (unchanged from v0.3.1 — zero changes needed to color_resolve.npk):
+//   scheme_ansi_r/g/b(n)       — ANSI color n (0-15), 8-bit
+//   scheme_default_fg_r/g/b()  — default foreground, 8-bit
+//   scheme_default_bg_r/g/b()  — default background, 8-bit
+//   scheme_to_fp(v8)           — 8-bit → fixed-point ×1000
 //
-// All RGB values are 8-bit (0-255).
-// Use scheme_to_fp(v) to convert to fixed-point ×1000 for Cairo/C renderer.
+// New API for theme engine:
+//   scheme_set_ansi(n, r, g, b)        — set ANSI color n
+//   scheme_set_default_fg(r, g, b)     — set default foreground
+//   scheme_set_default_bg(r, g, b)     — set default background
+//   scheme_reset_defaults()            — restore xterm defaults
 //
-// xterm ANSI color defaults:
+// xterm ANSI defaults:
 //   0  Black         (0,   0,   0  )   8  Bright Black    (127, 127, 127)
 //   1  Red           (205, 0,   0  )   9  Bright Red      (255, 0,   0  )
 //   2  Green         (0,   205, 0  )   10 Bright Green    (0,   255, 0  )
@@ -20,27 +28,63 @@
 //   7  White         (229, 229, 229)   15 Bright White    (255, 255, 255)
 
 // ═══════════════════════════════════════════════════════════════════════
+// Mutable ANSI palette state (16 colors × 3 channels)
+// ═══════════════════════════════════════════════════════════════════════
+//
+// NOTE: Nitpick does not support fixed-size array literals inline.
+// We declare 16 separate int64 variables per channel. These are
+// initialized to xterm defaults and can be overridden by the theme engine.
+// A private func wrapper provides indexed access.
+
+// Red channel (0-15)
+int64:g_ansi_r_0  = 0i64;   int64:g_ansi_r_1  = 205i64; int64:g_ansi_r_2  = 0i64;
+int64:g_ansi_r_3  = 205i64; int64:g_ansi_r_4  = 0i64;   int64:g_ansi_r_5  = 205i64;
+int64:g_ansi_r_6  = 0i64;   int64:g_ansi_r_7  = 229i64; int64:g_ansi_r_8  = 127i64;
+int64:g_ansi_r_9  = 255i64; int64:g_ansi_r_10 = 0i64;   int64:g_ansi_r_11 = 255i64;
+int64:g_ansi_r_12 = 92i64;  int64:g_ansi_r_13 = 255i64; int64:g_ansi_r_14 = 0i64;
+int64:g_ansi_r_15 = 255i64;
+
+// Green channel (0-15)
+int64:g_ansi_g_0  = 0i64;   int64:g_ansi_g_1  = 0i64;   int64:g_ansi_g_2  = 205i64;
+int64:g_ansi_g_3  = 205i64; int64:g_ansi_g_4  = 0i64;   int64:g_ansi_g_5  = 0i64;
+int64:g_ansi_g_6  = 205i64; int64:g_ansi_g_7  = 229i64; int64:g_ansi_g_8  = 127i64;
+int64:g_ansi_g_9  = 0i64;   int64:g_ansi_g_10 = 255i64; int64:g_ansi_g_11 = 255i64;
+int64:g_ansi_g_12 = 92i64;  int64:g_ansi_g_13 = 0i64;   int64:g_ansi_g_14 = 255i64;
+int64:g_ansi_g_15 = 255i64;
+
+// Blue channel (0-15)
+int64:g_ansi_b_0  = 0i64;   int64:g_ansi_b_1  = 0i64;   int64:g_ansi_b_2  = 0i64;
+int64:g_ansi_b_3  = 0i64;   int64:g_ansi_b_4  = 238i64; int64:g_ansi_b_5  = 205i64;
+int64:g_ansi_b_6  = 205i64; int64:g_ansi_b_7  = 229i64; int64:g_ansi_b_8  = 127i64;
+int64:g_ansi_b_9  = 0i64;   int64:g_ansi_b_10 = 0i64;   int64:g_ansi_b_11 = 0i64;
+int64:g_ansi_b_12 = 255i64; int64:g_ansi_b_13 = 255i64; int64:g_ansi_b_14 = 255i64;
+int64:g_ansi_b_15 = 255i64;
+
+// Default fg/bg (8-bit)
+int64:g_default_fg_r = 229i64; int64:g_default_fg_g = 229i64; int64:g_default_fg_b = 229i64;
+int64:g_default_bg_r = 0i64;   int64:g_default_bg_g = 0i64;   int64:g_default_bg_b = 0i64;
+
+// ═══════════════════════════════════════════════════════════════════════
 // ANSI R component (8-bit), index 0-15
 // ═══════════════════════════════════════════════════════════════════════
 
 pub func:scheme_ansi_r = int64(int64:n) {
-    if (n == 0i64)  { pass(0i64);   }
-    if (n == 1i64)  { pass(205i64); }
-    if (n == 2i64)  { pass(0i64);   }
-    if (n == 3i64)  { pass(205i64); }
-    if (n == 4i64)  { pass(0i64);   }
-    if (n == 5i64)  { pass(205i64); }
-    if (n == 6i64)  { pass(0i64);   }
-    if (n == 7i64)  { pass(229i64); }
-    if (n == 8i64)  { pass(127i64); }
-    if (n == 9i64)  { pass(255i64); }
-    if (n == 10i64) { pass(0i64);   }
-    if (n == 11i64) { pass(255i64); }
-    if (n == 12i64) { pass(92i64);  }
-    if (n == 13i64) { pass(255i64); }
-    if (n == 14i64) { pass(0i64);   }
-    if (n == 15i64) { pass(255i64); }
-    pass(0i64);
+    if (n == 0i64)  { pass(g_ansi_r_0);  }
+    if (n == 1i64)  { pass(g_ansi_r_1);  }
+    if (n == 2i64)  { pass(g_ansi_r_2);  }
+    if (n == 3i64)  { pass(g_ansi_r_3);  }
+    if (n == 4i64)  { pass(g_ansi_r_4);  }
+    if (n == 5i64)  { pass(g_ansi_r_5);  }
+    if (n == 6i64)  { pass(g_ansi_r_6);  }
+    if (n == 7i64)  { pass(g_ansi_r_7);  }
+    if (n == 8i64)  { pass(g_ansi_r_8);  }
+    if (n == 9i64)  { pass(g_ansi_r_9);  }
+    if (n == 10i64) { pass(g_ansi_r_10); }
+    if (n == 11i64) { pass(g_ansi_r_11); }
+    if (n == 12i64) { pass(g_ansi_r_12); }
+    if (n == 13i64) { pass(g_ansi_r_13); }
+    if (n == 14i64) { pass(g_ansi_r_14); }
+    pass(g_ansi_r_15);
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -48,23 +92,22 @@ pub func:scheme_ansi_r = int64(int64:n) {
 // ═══════════════════════════════════════════════════════════════════════
 
 pub func:scheme_ansi_g = int64(int64:n) {
-    if (n == 0i64)  { pass(0i64);   }
-    if (n == 1i64)  { pass(0i64);   }
-    if (n == 2i64)  { pass(205i64); }
-    if (n == 3i64)  { pass(205i64); }
-    if (n == 4i64)  { pass(0i64);   }
-    if (n == 5i64)  { pass(0i64);   }
-    if (n == 6i64)  { pass(205i64); }
-    if (n == 7i64)  { pass(229i64); }
-    if (n == 8i64)  { pass(127i64); }
-    if (n == 9i64)  { pass(0i64);   }
-    if (n == 10i64) { pass(255i64); }
-    if (n == 11i64) { pass(255i64); }
-    if (n == 12i64) { pass(92i64);  }
-    if (n == 13i64) { pass(0i64);   }
-    if (n == 14i64) { pass(255i64); }
-    if (n == 15i64) { pass(255i64); }
-    pass(0i64);
+    if (n == 0i64)  { pass(g_ansi_g_0);  }
+    if (n == 1i64)  { pass(g_ansi_g_1);  }
+    if (n == 2i64)  { pass(g_ansi_g_2);  }
+    if (n == 3i64)  { pass(g_ansi_g_3);  }
+    if (n == 4i64)  { pass(g_ansi_g_4);  }
+    if (n == 5i64)  { pass(g_ansi_g_5);  }
+    if (n == 6i64)  { pass(g_ansi_g_6);  }
+    if (n == 7i64)  { pass(g_ansi_g_7);  }
+    if (n == 8i64)  { pass(g_ansi_g_8);  }
+    if (n == 9i64)  { pass(g_ansi_g_9);  }
+    if (n == 10i64) { pass(g_ansi_g_10); }
+    if (n == 11i64) { pass(g_ansi_g_11); }
+    if (n == 12i64) { pass(g_ansi_g_12); }
+    if (n == 13i64) { pass(g_ansi_g_13); }
+    if (n == 14i64) { pass(g_ansi_g_14); }
+    pass(g_ansi_g_15);
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -72,42 +115,110 @@ pub func:scheme_ansi_g = int64(int64:n) {
 // ═══════════════════════════════════════════════════════════════════════
 
 pub func:scheme_ansi_b = int64(int64:n) {
-    if (n == 0i64)  { pass(0i64);   }
-    if (n == 1i64)  { pass(0i64);   }
-    if (n == 2i64)  { pass(0i64);   }
-    if (n == 3i64)  { pass(0i64);   }
-    if (n == 4i64)  { pass(238i64); }
-    if (n == 5i64)  { pass(205i64); }
-    if (n == 6i64)  { pass(205i64); }
-    if (n == 7i64)  { pass(229i64); }
-    if (n == 8i64)  { pass(127i64); }
-    if (n == 9i64)  { pass(0i64);   }
-    if (n == 10i64) { pass(0i64);   }
-    if (n == 11i64) { pass(0i64);   }
-    if (n == 12i64) { pass(255i64); }
-    if (n == 13i64) { pass(255i64); }
-    if (n == 14i64) { pass(255i64); }
-    if (n == 15i64) { pass(255i64); }
-    pass(0i64);
+    if (n == 0i64)  { pass(g_ansi_b_0);  }
+    if (n == 1i64)  { pass(g_ansi_b_1);  }
+    if (n == 2i64)  { pass(g_ansi_b_2);  }
+    if (n == 3i64)  { pass(g_ansi_b_3);  }
+    if (n == 4i64)  { pass(g_ansi_b_4);  }
+    if (n == 5i64)  { pass(g_ansi_b_5);  }
+    if (n == 6i64)  { pass(g_ansi_b_6);  }
+    if (n == 7i64)  { pass(g_ansi_b_7);  }
+    if (n == 8i64)  { pass(g_ansi_b_8);  }
+    if (n == 9i64)  { pass(g_ansi_b_9);  }
+    if (n == 10i64) { pass(g_ansi_b_10); }
+    if (n == 11i64) { pass(g_ansi_b_11); }
+    if (n == 12i64) { pass(g_ansi_b_12); }
+    if (n == 13i64) { pass(g_ansi_b_13); }
+    if (n == 14i64) { pass(g_ansi_b_14); }
+    pass(g_ansi_b_15);
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// Default fg/bg colors (8-bit constants)
+// Default fg/bg accessors (8-bit constants, now mutable)
 // ═══════════════════════════════════════════════════════════════════════
 
-pub func:scheme_default_fg_r = int64() { pass(229i64); };
-pub func:scheme_default_fg_g = int64() { pass(229i64); };
-pub func:scheme_default_fg_b = int64() { pass(229i64); };
+pub func:scheme_default_fg_r = int64() { pass(g_default_fg_r); };
+pub func:scheme_default_fg_g = int64() { pass(g_default_fg_g); };
+pub func:scheme_default_fg_b = int64() { pass(g_default_fg_b); };
 
-pub func:scheme_default_bg_r = int64() { pass(0i64); };
-pub func:scheme_default_bg_g = int64() { pass(0i64); };
-pub func:scheme_default_bg_b = int64() { pass(0i64); };
+pub func:scheme_default_bg_r = int64() { pass(g_default_bg_r); };
+pub func:scheme_default_bg_g = int64() { pass(g_default_bg_g); };
+pub func:scheme_default_bg_b = int64() { pass(g_default_bg_b); };
 
 // ═══════════════════════════════════════════════════════════════════════
-// Fixed-point ×1000 helper (for C renderer)
+// Fixed-point ×1000 helper (for C renderer) — unchanged from v0.3.1
 // ═══════════════════════════════════════════════════════════════════════
 
 /// Convert 8-bit component (0-255) to fixed-point ×1000 (0-1000).
 pub func:scheme_to_fp = int64(int64:v8) {
     pass(v8 * 1000i64 / 255i64);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Theme engine API — set individual ANSI colors and defaults
+// Called by theme.npk to apply a theme.
+// NOTE: Uses private setters (not pub) to avoid Nitpick compiler
+//       limitation with pub-NIL reassignment of module-level vars.
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Set ANSI color at index n (0-15) to 8-bit r,g,b values.
+pub func:scheme_set_ansi = NIL(int64:n, int64:r, int64:g, int64:b) {
+    if (n == 0i64)  { g_ansi_r_0  = r; g_ansi_g_0  = g; g_ansi_b_0  = b; pass(NIL); }
+    if (n == 1i64)  { g_ansi_r_1  = r; g_ansi_g_1  = g; g_ansi_b_1  = b; pass(NIL); }
+    if (n == 2i64)  { g_ansi_r_2  = r; g_ansi_g_2  = g; g_ansi_b_2  = b; pass(NIL); }
+    if (n == 3i64)  { g_ansi_r_3  = r; g_ansi_g_3  = g; g_ansi_b_3  = b; pass(NIL); }
+    if (n == 4i64)  { g_ansi_r_4  = r; g_ansi_g_4  = g; g_ansi_b_4  = b; pass(NIL); }
+    if (n == 5i64)  { g_ansi_r_5  = r; g_ansi_g_5  = g; g_ansi_b_5  = b; pass(NIL); }
+    if (n == 6i64)  { g_ansi_r_6  = r; g_ansi_g_6  = g; g_ansi_b_6  = b; pass(NIL); }
+    if (n == 7i64)  { g_ansi_r_7  = r; g_ansi_g_7  = g; g_ansi_b_7  = b; pass(NIL); }
+    if (n == 8i64)  { g_ansi_r_8  = r; g_ansi_g_8  = g; g_ansi_b_8  = b; pass(NIL); }
+    if (n == 9i64)  { g_ansi_r_9  = r; g_ansi_g_9  = g; g_ansi_b_9  = b; pass(NIL); }
+    if (n == 10i64) { g_ansi_r_10 = r; g_ansi_g_10 = g; g_ansi_b_10 = b; pass(NIL); }
+    if (n == 11i64) { g_ansi_r_11 = r; g_ansi_g_11 = g; g_ansi_b_11 = b; pass(NIL); }
+    if (n == 12i64) { g_ansi_r_12 = r; g_ansi_g_12 = g; g_ansi_b_12 = b; pass(NIL); }
+    if (n == 13i64) { g_ansi_r_13 = r; g_ansi_g_13 = g; g_ansi_b_13 = b; pass(NIL); }
+    if (n == 14i64) { g_ansi_r_14 = r; g_ansi_g_14 = g; g_ansi_b_14 = b; pass(NIL); }
+    g_ansi_r_15 = r; g_ansi_g_15 = g; g_ansi_b_15 = b;
+    pass(NIL);
+};
+
+/// Set default foreground color (8-bit r,g,b).
+pub func:scheme_set_default_fg = NIL(int64:r, int64:g, int64:b) {
+    g_default_fg_r = r;
+    g_default_fg_g = g;
+    g_default_fg_b = b;
+    pass(NIL);
+};
+
+/// Set default background color (8-bit r,g,b).
+pub func:scheme_set_default_bg = NIL(int64:r, int64:g, int64:b) {
+    g_default_bg_r = r;
+    g_default_bg_g = g;
+    g_default_bg_b = b;
+    pass(NIL);
+};
+
+/// Reset all colors to xterm defaults. Useful for "default" theme.
+pub func:scheme_reset_defaults = NIL() {
+    // ANSI colors — xterm defaults
+    drop(scheme_set_ansi(0i64,  0i64,   0i64,   0i64));
+    drop(scheme_set_ansi(1i64,  205i64, 0i64,   0i64));
+    drop(scheme_set_ansi(2i64,  0i64,   205i64, 0i64));
+    drop(scheme_set_ansi(3i64,  205i64, 205i64, 0i64));
+    drop(scheme_set_ansi(4i64,  0i64,   0i64,   238i64));
+    drop(scheme_set_ansi(5i64,  205i64, 0i64,   205i64));
+    drop(scheme_set_ansi(6i64,  0i64,   205i64, 205i64));
+    drop(scheme_set_ansi(7i64,  229i64, 229i64, 229i64));
+    drop(scheme_set_ansi(8i64,  127i64, 127i64, 127i64));
+    drop(scheme_set_ansi(9i64,  255i64, 0i64,   0i64));
+    drop(scheme_set_ansi(10i64, 0i64,   255i64, 0i64));
+    drop(scheme_set_ansi(11i64, 255i64, 255i64, 0i64));
+    drop(scheme_set_ansi(12i64, 92i64,  92i64,  255i64));
+    drop(scheme_set_ansi(13i64, 255i64, 0i64,   255i64));
+    drop(scheme_set_ansi(14i64, 0i64,   255i64, 255i64));
+    drop(scheme_set_ansi(15i64, 255i64, 255i64, 255i64));
+    // Defaults
+    drop(scheme_set_default_fg(229i64, 229i64, 229i64));
+    drop(scheme_set_default_bg(0i64,   0i64,   0i64));
+    pass(NIL);
 };
