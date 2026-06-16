@@ -1,0 +1,657 @@
+// src/ssh/ssh_forward.npk — Port Forwarding Orchestration (v0.8.4)
+//
+// Implements local (-L), remote (-R), and dynamic (-D) SSH port forwarding.
+// Uses nitpick-ssh forwarding message builders (Phase 1.0.0) combined with
+// nitpick-socket for TCP listener/relay operations.
+//
+// Session state storage uses the session ahash under these key patterns:
+//   "_fwd_L_{local_port}"         → "remote_host:remote_port" (local fwd rule)
+//   "_fwd_Lfd_{local_port}"       → int64 listen_fd as string
+//   "_fwd_R_{bind_port}"          → "local_host:local_port" (remote fwd rule)
+//   "_fwd_D_{local_port}"         → "1" (SOCKS5 rule active)
+//   "_fwd_Dfd_{local_port}"       → int64 listen_fd as string
+//   "_chan_fd_{chan_id}"           → int64 client_fd (relay mapping)
+//   "_fwd_has_remote"             → "1" if remote fwd requested this session
+//   "_fwd_pending_local_{port}"   → "remote_host:remote_port" (pending confirm)
+//
+// The relay tick functions must be called each draw frame from tw_on_draw().
+// All I/O uses non-blocking socket_poll_read(fd, 0) so they return immediately.
+//
+// Import with: use "../../src/ssh/ssh_forward.npk".*;
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/src/nitpick_ssh.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/src/nitpick_socket_v2.npk".*;
+use "../../src/core/pane.npk".*;
+
+// ── Internal string helpers ────────────────────────────────────────────────────
+
+// Convert int64 to a string key (reuse SSH_handle_to_str from nitpick_ssh.npk).
+func:_fwd_i64s = string(int64:v) {
+    pass(raw SSH_handle_to_str(v));
+};
+
+// Store an int64 fd in the session ahash as a string.
+func:_fwd_set_fd = NIL(int64:session, string:key, int64:fd) {
+    ahset(session, key, raw _fwd_i64s(fd));
+    pass(NIL);
+};
+
+// Retrieve an int64 fd from the session ahash. Returns -1 if missing/unset.
+func:_fwd_get_fd = int64(int64:session, string:key) {
+    string:s = ahget(session, key);
+    if (string_length(s) == 0i64) { pass(-1i64); }
+    pass(raw SSH_str_to_handle(s));
+};
+
+// ── Local Forwarding (-L) ─────────────────────────────────────────────────────
+
+/// Start a local port forward rule.
+/// Binds a TCP listener on 127.0.0.1:local_port; accepted connections are
+/// forwarded through a direct-tcpip SSH channel to remote_host:remote_port.
+///
+/// Returns: listen_fd on success, -1 on error.
+pub func:fwd_local_start = int64(int64:pane_slot, int64:local_port,
+                                  string:remote_host, int64:remote_port) {
+    int64:session = raw pane_get_ssh_session(pane_slot);
+    if (session == 0i64) { pass(-1i64); }
+
+    // Create TCP listener
+    int64:listen_fd = raw socket_tcp_listen("127.0.0.1", local_port, 8i64);
+    if (listen_fd < 0i64) { pass(-1i64); }
+    drop(raw socket_set_nonblocking(listen_fd));
+
+    // Store rule in session ahash
+    string:rule_key = string_concat("_fwd_L_", raw _fwd_i64s(local_port));
+    string:dest = string_concat(remote_host, string_concat(":", raw _fwd_i64s(remote_port)));
+    ahset(session, rule_key, dest);
+
+    string:fd_key = string_concat("_fwd_Lfd_", raw _fwd_i64s(local_port));
+    drop(_fwd_set_fd(session, fd_key, listen_fd));
+
+    pass(listen_fd);
+};
+
+/// Stop a local port forward.
+/// Closes the listener fd and removes the rule from the session.
+pub func:fwd_local_stop = NIL(int64:pane_slot, int64:local_port) {
+    int64:session = raw pane_get_ssh_session(pane_slot);
+    if (session == 0i64) { pass(NIL); }
+
+    string:fd_key = string_concat("_fwd_Lfd_", raw _fwd_i64s(local_port));
+    int64:listen_fd = raw _fwd_get_fd(session, fd_key);
+    if (listen_fd >= 0i64) { drop(raw socket_close(listen_fd)); }
+    ahset(session, fd_key, "");
+    ahset(session, string_concat("_fwd_L_", raw _fwd_i64s(local_port)), "");
+    pass(NIL);
+};
+
+/// Tick function for local forwarding — call from tw_on_draw() each frame.
+/// Accepts pending connections and opens direct-tcpip channels for them.
+/// Also relays data between established relay pairs.
+///
+/// The session ahash tracks active listen ports as "_fwd_L_{port}" entries.
+/// We scan a fixed range of common ports (8000–9999, 3000–4999, 1024–2999).
+/// In practice the number of active rules is small (typically ≤ 8).
+pub func:fwd_local_tick = NIL(int64:pane_slot) {
+    int64:session = raw pane_get_ssh_session(pane_slot);
+    if (session == 0i64) { pass(NIL); }
+
+    // Process up to 8 active local forward rules per frame.
+    // Rules are tracked via g_fwd_local_ports[] parallel array below,
+    // but since we're using the ahash we scan our tracking arrays instead.
+    // For now scan g_fwd_local_* module arrays (see bottom of file).
+    int64:ri = 0i64;
+    while (ri < 8i64) {
+        int64:lport = g_fwd_local_port[pane_slot * 8i64 + ri];
+        if (lport > 0i64) {
+            string:fd_key = string_concat("_fwd_Lfd_", raw _fwd_i64s(lport));
+            int64:listen_fd = raw _fwd_get_fd(session, fd_key);
+            if (listen_fd >= 0i64) {
+                // Non-blocking accept
+                int64:ready = raw socket_poll_read(listen_fd, 0i64);
+                if (ready > 0i64) {
+                    int64:client_fd = raw socket_tcp_accept(listen_fd);
+                    if (client_fd >= 0i64) {
+                        drop(raw socket_set_nonblocking(client_fd));
+                        drop(_fwd_open_direct_tcpip(pane_slot, session,
+                            client_fd, lport));
+                    }
+                }
+            }
+        }
+        ri = ri + 1i64;
+    }
+
+    // Relay data for established channel↔fd pairs
+    drop(_fwd_relay_all(pane_slot, session));
+    pass(NIL);
+};
+
+// Open a direct-tcpip channel for a newly accepted local connection.
+func:_fwd_open_direct_tcpip = NIL(int64:pane_slot, int64:session,
+                                   int64:client_fd, int64:local_port) {
+    // Look up destination from session ahash
+    string:rule_key = string_concat("_fwd_L_", raw _fwd_i64s(local_port));
+    string:dest = ahget(session, rule_key);
+    if (string_length(dest) == 0i64) {
+        drop(raw socket_close(client_fd));
+        pass(NIL);
+    }
+
+    // Parse "remote_host:remote_port"
+    string:rhost = "";
+    int64:rport  = 22i64;
+    drop(_fwd_parse_hostport(dest, rhost, rport));
+
+    // Allocate a channel id
+    drop(raw SSH_channel_init(session));
+    int64:chan_buf = raw SSH_channel_open(session, "direct-tcpip");
+    int64:chan_id  = raw SSH_channel_last_id(session);
+    drop(raw SSH_buf_free(chan_buf));
+
+    // Build and send direct-tcpip open message
+    int64:fwd_buf = raw SSH.forward_local(session,
+        @cast_unchecked<int32>(chan_id),
+        rhost, @cast_unchecked<int32>(rport),
+        "127.0.0.1", @cast_unchecked<int32>(local_port));
+    drop(raw SSH_send_packet(session, fwd_buf));
+    drop(raw SSH_buf_free(fwd_buf));
+
+    // Store pending client_fd — will be confirmed when CHANNEL_OPEN_CONFIRM arrives
+    string:pending_key = string_concat("_fwd_pending_",
+        raw _fwd_i64s(chan_id));
+    drop(_fwd_set_fd(session, pending_key, client_fd));
+
+    pass(NIL);
+};
+
+// ── Remote Forwarding (-R) ────────────────────────────────────────────────────
+
+/// Request remote port forwarding from the server.
+/// After calling this, the server will forward connections on bind_host:bind_port
+/// back through SSH. When they arrive (type 90 "forwarded-tcpip"), fwd_remote_accept
+/// must be called (handled in ssh_session.npk's extended poll dispatch).
+pub func:fwd_remote_request = NIL(int64:pane_slot, string:bind_addr,
+                                   int64:bind_port, string:local_host,
+                                   int64:local_port) {
+    int64:session = raw pane_get_ssh_session(pane_slot);
+    if (session == 0i64) { pass(NIL); }
+
+    // Store rule for when the server sends a forwarded-tcpip open
+    string:rule_key = string_concat("_fwd_R_", raw _fwd_i64s(bind_port));
+    string:dest = string_concat(local_host, string_concat(":", raw _fwd_i64s(local_port)));
+    ahset(session, rule_key, dest);
+    ahset(session, "_fwd_has_remote", "1");
+
+    // Send tcpip-forward global request
+    int64:req_buf = raw SSH.forward_remote_request(bind_addr, @cast_unchecked<int32>(bind_port));
+    drop(raw SSH_send_packet(session, req_buf));
+    drop(raw SSH_buf_free(req_buf));
+    pass(NIL);
+};
+
+/// Cancel a previously-requested remote port forward.
+pub func:fwd_remote_cancel = NIL(int64:pane_slot, string:bind_addr, int64:bind_port) {
+    int64:session = raw pane_get_ssh_session(pane_slot);
+    if (session == 0i64) { pass(NIL); }
+
+    ahset(session, string_concat("_fwd_R_", raw _fwd_i64s(bind_port)), "");
+
+    int64:cancel_buf = raw SSH.forward_cancel_request(bind_addr, @cast_unchecked<int32>(bind_port));
+    drop(raw SSH_send_packet(session, cancel_buf));
+    drop(raw SSH_buf_free(cancel_buf));
+    pass(NIL);
+};
+
+/// Handle a server-initiated channel open for remote forwarding (type 90, "forwarded-tcpip").
+/// payload_buf: the SSH packet payload (already dispatched from ssh_session.npk poll loop).
+/// bind_port: the port that was configured for remote forwarding.
+pub func:fwd_remote_accept = NIL(int64:pane_slot, int64:session,
+                                  int64:bind_port, int64:server_chan_id) {
+    // Look up the local destination for this bind port
+    string:rule_key = string_concat("_fwd_R_", raw _fwd_i64s(bind_port));
+    string:dest = ahget(session, rule_key);
+    if (string_length(dest) == 0i64) {
+        // No rule found — reject the channel
+        pass(NIL);
+    }
+
+    string:lhost = "";
+    int64:lport  = 22i64;
+    drop(_fwd_parse_hostport(dest, lhost, lport));
+
+    // Connect to the local service
+    int64:local_fd = raw socket_tcp_connect(lhost, lport);
+    if (local_fd < 0i64) {
+        // Failed to connect locally — we can't satisfy this
+        pass(NIL);
+    }
+    drop(raw socket_set_nonblocking(local_fd));
+
+    // Allocate a local channel id and send CHANNEL_OPEN_CONFIRM
+    drop(raw SSH_channel_init(session));
+    int64:our_chan_id = raw SSH_channel_last_id(session);
+
+    // Build CHANNEL_OPEN_CONFIRM (type 91)
+    int64:confirm_buf = raw SSH_buf_create(32i64);
+    confirm_buf = raw SSH_encode_byte(confirm_buf, 91i32);
+    // server_chan_id (recipient), our_chan_id (sender), initial window, max packet
+    confirm_buf = nitpick_ssh_encode_uint32(confirm_buf, @cast_unchecked<int32>(server_chan_id));
+    confirm_buf = nitpick_ssh_encode_uint32(confirm_buf, @cast_unchecked<int32>(our_chan_id));
+    confirm_buf = nitpick_ssh_encode_uint32(confirm_buf, 2097152i32); // 2MB window
+    confirm_buf = nitpick_ssh_encode_uint32(confirm_buf, 32768i32);   // 32KB max packet
+    drop(raw SSH_send_packet(session, confirm_buf));
+    drop(raw SSH_buf_free(confirm_buf));
+
+    // Store relay mapping: channel → local_fd
+    string:chan_fd_key = string_concat("_chan_fd_", raw _fwd_i64s(our_chan_id));
+    drop(_fwd_set_fd(session, chan_fd_key, local_fd));
+
+    // Register for relay in our tracking arrays
+    drop(_fwd_register_relay(pane_slot, our_chan_id, local_fd));
+
+    pass(NIL);
+};
+
+// ── Dynamic Forwarding / SOCKS5 (-D) ─────────────────────────────────────────
+
+/// Start a SOCKS5 proxy on local_port.
+/// Accepted TCP connections are parsed as SOCKS5 CONNECT requests and forwarded
+/// via direct-tcpip channels to the requested destinations.
+pub func:fwd_dynamic_start = int64(int64:pane_slot, int64:local_port) {
+    int64:session = raw pane_get_ssh_session(pane_slot);
+    if (session == 0i64) { pass(-1i64); }
+
+    int64:listen_fd = raw socket_tcp_listen("127.0.0.1", local_port, 8i64);
+    if (listen_fd < 0i64) { pass(-1i64); }
+    drop(raw socket_set_nonblocking(listen_fd));
+
+    string:rule_key = string_concat("_fwd_D_", raw _fwd_i64s(local_port));
+    ahset(session, rule_key, "1");
+    string:fd_key = string_concat("_fwd_Dfd_", raw _fwd_i64s(local_port));
+    drop(_fwd_set_fd(session, fd_key, listen_fd));
+
+    pass(listen_fd);
+};
+
+/// Stop a SOCKS5 dynamic forward.
+pub func:fwd_dynamic_stop = NIL(int64:pane_slot, int64:local_port) {
+    int64:session = raw pane_get_ssh_session(pane_slot);
+    if (session == 0i64) { pass(NIL); }
+
+    string:fd_key = string_concat("_fwd_Dfd_", raw _fwd_i64s(local_port));
+    int64:listen_fd = raw _fwd_get_fd(session, fd_key);
+    if (listen_fd >= 0i64) { drop(raw socket_close(listen_fd)); }
+    ahset(session, fd_key, "");
+    ahset(session, string_concat("_fwd_D_", raw _fwd_i64s(local_port)), "");
+    pass(NIL);
+};
+
+/// SOCKS5 tick — call each frame.
+pub func:fwd_dynamic_tick = NIL(int64:pane_slot) {
+    int64:session = raw pane_get_ssh_session(pane_slot);
+    if (session == 0i64) { pass(NIL); }
+
+    int64:ri = 0i64;
+    while (ri < 8i64) {
+        int64:lport = g_fwd_dynamic_port[pane_slot * 8i64 + ri];
+        if (lport > 0i64) {
+            string:fd_key = string_concat("_fwd_Dfd_", raw _fwd_i64s(lport));
+            int64:listen_fd = raw _fwd_get_fd(session, fd_key);
+            if (listen_fd >= 0i64) {
+                int64:ready = raw socket_poll_read(listen_fd, 0i64);
+                if (ready > 0i64) {
+                    int64:client_fd = raw socket_tcp_accept(listen_fd);
+                    if (client_fd >= 0i64) {
+                        drop(raw socket_set_nonblocking(client_fd));
+                        // Run SOCKS5 handshake to get destination
+                        string:hostport = raw _socks5_handshake(client_fd);
+                        if (string_length(hostport) > 0i64) {
+                            string:dhost = "";
+                            int64:dport = 80i64;
+                            drop(_fwd_parse_hostport(hostport, dhost, dport));
+                            // Open direct-tcpip channel to destination
+                            int64:fwd_buf = raw SSH.forward_dynamic(session,
+                                @cast_unchecked<int32>(0i64), // chan_id TBD
+                                dhost, @cast_unchecked<int32>(dport));
+                            drop(raw SSH_send_packet(session, fwd_buf));
+                            drop(raw SSH_buf_free(fwd_buf));
+                            drop(_fwd_set_fd(session,
+                                string_concat("_fwd_socks_pending_", raw _fwd_i64s(client_fd)),
+                                client_fd));
+                        }
+                        if (string_length(hostport) == 0i64) {
+                            drop(raw socket_close(client_fd));
+                        }
+                    }
+                }
+            }
+        }
+        ri = ri + 1i64;
+    }
+    pass(NIL);
+};
+
+// ── SOCKS5 Handshake Parser ───────────────────────────────────────────────────
+
+// Implements RFC 1928 SOCKS5 CONNECT method (no auth).
+// Returns "host:port" on success, "" on failure or unsupported request.
+func:_socks5_handshake = string(int64:fd) {
+    // Phase 1: greeting — VER(1) NMETHODS(1) METHODS(n)
+    string:greet = raw socket_recv(fd, 2i64);
+    if (string_length(greet) < 2i64) { pass(""); }
+    // greet[0] should be 0x05 (SOCKS5)
+    int64:ver = raw SSH_str_to_handle(string_substring(greet, 0i64, 1i64));
+    if (ver != 5i64) { pass(""); }
+    int64:nmethods = raw SSH_str_to_handle(string_substring(greet, 1i64, 2i64));
+    // Read the methods bytes (discard — we only support no-auth)
+    if (nmethods > 0i64) {
+        string:_methods = raw socket_recv(fd, nmethods);
+    }
+    // Reply: VER=5, METHOD=0 (no auth)
+    drop(raw socket_send_str(fd, "\x05\x00"));
+
+    // Phase 2: request — VER(1) CMD(1) RSV(1) ATYP(1) ADDR DSTPORT(2)
+    string:req_hdr = raw socket_recv(fd, 4i64);
+    if (string_length(req_hdr) < 4i64) { pass(""); }
+    int64:cmd  = raw SSH_str_to_handle(string_substring(req_hdr, 1i64, 2i64));
+    int64:atyp = raw SSH_str_to_handle(string_substring(req_hdr, 3i64, 4i64));
+    if (cmd != 1i64) {
+        // Only CONNECT (1) supported — send error reply
+        drop(raw socket_send_str(fd, "\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00"));
+        pass("");
+    }
+
+    // Parse address by ATYP
+    string:dest_host = "";
+    if (atyp == 1i64) {
+        // IPv4: 4 bytes
+        string:ip4 = raw socket_recv(fd, 4i64);
+        if (string_length(ip4) < 4i64) { pass(""); }
+        // Build "A.B.C.D" — read individual byte values
+        int64:a = raw SSH_str_to_handle(string_substring(ip4, 0i64, 1i64));
+        int64:b = raw SSH_str_to_handle(string_substring(ip4, 1i64, 2i64));
+        int64:c = raw SSH_str_to_handle(string_substring(ip4, 2i64, 3i64));
+        int64:d = raw SSH_str_to_handle(string_substring(ip4, 3i64, 4i64));
+        dest_host = string_concat(raw _fwd_i64s(a), string_concat(".",
+            string_concat(raw _fwd_i64s(b), string_concat(".",
+            string_concat(raw _fwd_i64s(c), string_concat(".", raw _fwd_i64s(d)))))));
+    }
+    if (atyp == 3i64) {
+        // Domain: 1-byte length + name
+        string:len_b = raw socket_recv(fd, 1i64);
+        if (string_length(len_b) < 1i64) { pass(""); }
+        int64:dlen = raw SSH_str_to_handle(len_b);
+        if (dlen <= 0i64) { pass(""); }
+        dest_host = raw socket_recv(fd, dlen);
+        if (string_length(dest_host) < dlen) { pass(""); }
+    }
+    if (atyp == 4i64) {
+        // IPv6 — reject (16 bytes + 2 port = 18 bytes, discard)
+        string:_ip6 = raw socket_recv(fd, 18i64);
+        drop(raw socket_send_str(fd, "\x05\x08\x00\x01\x00\x00\x00\x00\x00\x00"));
+        pass("");
+    }
+    if (string_length(dest_host) == 0i64) { pass(""); }
+
+    // Port: 2 bytes big-endian
+    string:port_b = raw socket_recv(fd, 2i64);
+    if (string_length(port_b) < 2i64) { pass(""); }
+    int64:ph = raw SSH_str_to_handle(string_substring(port_b, 0i64, 1i64));
+    int64:pl = raw SSH_str_to_handle(string_substring(port_b, 1i64, 2i64));
+    int64:dest_port = ph * 256i64 + pl;
+
+    // Send success reply: VER RSP RSV ATYP BND.ADDR(4) BND.PORT(2)
+    drop(raw socket_send_str(fd, "\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00"));
+
+    // Return "host:port"
+    pass(string_concat(dest_host, string_concat(":", raw _fwd_i64s(dest_port))));
+};
+
+// ── Relay ─────────────────────────────────────────────────────────────────────
+
+// Relay data from all active forward channels' local fds toward the SSH channel.
+// SSH→local direction is handled in ssh_session.npk poll dispatch.
+func:_fwd_relay_all = NIL(int64:pane_slot, int64:session) {
+    int64:ri = 0i64;
+    while (ri < 16i64) {
+        int64:chan_id = g_fwd_relay_chan[pane_slot * 16i64 + ri];
+        int64:lfd    = g_fwd_relay_fd[pane_slot * 16i64 + ri];
+        if (chan_id >= 0i64 && lfd >= 0i64) {
+            int64:ready = raw socket_poll_read(lfd, 0i64);
+            if (ready > 0i64) {
+                string:data = raw socket_recv(lfd, 32768i64);
+                if (string_length(data) > 0i64) {
+                    // Build CHANNEL_DATA and send
+                    int64:len = string_length(data);
+                    int64:data_buf = raw SSH_buf_create(len + 16i64);
+                    data_buf = nitpick_ssh_buf_write_bytes(data_buf, data,
+                        @cast_unchecked<int32>(len));
+                    int64:msg_buf = raw SSH_channel_data_msg(session, chan_id, data_buf);
+                    drop(raw SSH_buf_free(data_buf));
+                    drop(raw SSH_send_packet(session, msg_buf));
+                    drop(raw SSH_buf_free(msg_buf));
+                }
+                if (string_length(data) == 0i64) {
+                    // EOF on local fd — close relay
+                    drop(raw socket_close(lfd));
+                    g_fwd_relay_chan[pane_slot * 16i64 + ri] = -1i64;
+                    g_fwd_relay_fd[pane_slot * 16i64 + ri]  = -1i64;
+                }
+            }
+        }
+        ri = ri + 1i64;
+    }
+    pass(NIL);
+};
+
+// Register a new relay pair in the module tracking arrays.
+func:_fwd_register_relay = NIL(int64:pane_slot, int64:chan_id, int64:local_fd) {
+    int64:ri = 0i64;
+    while (ri < 16i64) {
+        if (g_fwd_relay_chan[pane_slot * 16i64 + ri] < 0i64) {
+            g_fwd_relay_chan[pane_slot * 16i64 + ri] = chan_id;
+            g_fwd_relay_fd[pane_slot * 16i64 + ri]  = local_fd;
+            pass(NIL);
+        }
+        ri = ri + 1i64;
+    }
+    pass(NIL);
+};
+
+// Called from ssh_session.npk when a CHANNEL_OPEN_CONFIRM arrives for a forwarding channel.
+pub func:fwd_confirm_channel = NIL(int64:pane_slot, int64:session, int64:chan_id) {
+    // Move from pending to active relay
+    string:pending_key = string_concat("_fwd_pending_", raw _fwd_i64s(chan_id));
+    int64:client_fd = raw _fwd_get_fd(session, pending_key);
+    if (client_fd >= 0i64) {
+        drop(_fwd_register_relay(pane_slot, chan_id, client_fd));
+        // Store in session ahash for ssh_session.npk's reverse direction
+        string:chan_fd_key = string_concat("_chan_fd_", raw _fwd_i64s(chan_id));
+        drop(_fwd_set_fd(session, chan_fd_key, client_fd));
+        ahset(session, pending_key, "");
+    }
+    pass(NIL);
+};
+
+// Called from ssh_session.npk when a forward channel is closed (EOF or CLOSE).
+pub func:fwd_close_channel = NIL(int64:pane_slot, int64:session, int64:chan_id) {
+    // Close the local fd and remove from relay table
+    string:chan_fd_key = string_concat("_chan_fd_", raw _fwd_i64s(chan_id));
+    int64:lfd = raw _fwd_get_fd(session, chan_fd_key);
+    if (lfd >= 0i64) { drop(raw socket_close(lfd)); }
+    ahset(session, chan_fd_key, "");
+
+    int64:ri = 0i64;
+    while (ri < 16i64) {
+        if (g_fwd_relay_chan[pane_slot * 16i64 + ri] == chan_id) {
+            g_fwd_relay_chan[pane_slot * 16i64 + ri] = -1i64;
+            g_fwd_relay_fd[pane_slot * 16i64 + ri]  = -1i64;
+        }
+        ri = ri + 1i64;
+    }
+    pass(NIL);
+};
+
+// ── Profile Rule Helpers ──────────────────────────────────────────────────────
+
+// Parse a CSV rule string "local_port:remote_host:remote_port" into components.
+// Stores results in the provided int64/string out-params via an ahash trick.
+// Returns: 1 on success, 0 on parse failure.
+pub func:fwd_parse_local_rule = int64(string:rule, int64:out_local_port,
+                                       string:out_remote_host, int64:out_remote_port) {
+    if (string_length(rule) == 0i64) { pass(0i64); }
+
+    // Find first ":"
+    int64:i = 0i64;
+    int64:len = string_length(rule);
+    int64:colon1 = -1i64;
+    while (i < len) {
+        string:ch = string_substring(rule, i, i + 1i64);
+        if (ch == ":" && colon1 < 0i64) { colon1 = i; }
+        i = i + 1i64;
+    }
+    if (colon1 <= 0i64) { pass(0i64); }
+
+    // Find second ":"
+    int64:j = colon1 + 1i64;
+    int64:colon2 = -1i64;
+    while (j < len) {
+        string:ch2 = string_substring(rule, j, j + 1i64);
+        if (ch2 == ":") { colon2 = j; }
+        j = j + 1i64;
+    }
+    if (colon2 <= colon1) { pass(0i64); }
+
+    string:lport_s = string_substring(rule, 0i64, colon1);
+    string:rhost   = string_substring(rule, colon1 + 1i64, colon2);
+    string:rport_s = string_substring(rule, colon2 + 1i64, len);
+
+    if (string_length(lport_s) == 0i64) { pass(0i64); }
+    if (string_length(rhost) == 0i64) { pass(0i64); }
+    if (string_length(rport_s) == 0i64) { pass(0i64); }
+
+    // Store results (out-params via reference — use simple assignment here;
+    // callers must use dedicated temp vars before calling this helper)
+    // NOTE: Nitpick doesn't support true out-params, so callers should use
+    // the returned fields from g_fwd_parse_* module globals below.
+    g_fwd_parse_local_port  = raw SSH_str_to_handle(lport_s);
+    g_fwd_parse_remote_host = rhost;
+    g_fwd_parse_remote_port = raw SSH_str_to_handle(rport_s);
+
+    pass(1i64);
+};
+
+// Parse "host:port" into g_fwd_parse_host / g_fwd_parse_port.
+func:_fwd_parse_hostport = NIL(string:hostport, string:out_host, int64:out_port) {
+    int64:len = string_length(hostport);
+    int64:i = 0i64;
+    int64:colon = -1i64;
+    while (i < len) {
+        string:ch = string_substring(hostport, i, i + 1i64);
+        if (ch == ":") { colon = i; }
+        i = i + 1i64;
+    }
+    if (colon < 0i64) {
+        g_fwd_parse_host = hostport;
+        g_fwd_parse_port = 22i64;
+        pass(NIL);
+    }
+    g_fwd_parse_host = string_substring(hostport, 0i64, colon);
+    g_fwd_parse_port = raw SSH_str_to_handle(string_substring(hostport, colon + 1i64, len));
+    pass(NIL);
+};
+
+/// Apply forwarding rules from a connection profile after successful SSH auth.
+pub func:fwd_apply_profile_rules = NIL(int64:pane_slot, int64:prof_slot) {
+    // Apply local forward rules (CSV: "lport:host:rport,lport:host:rport,...")
+    // (Simplified: only apply the first rule for now — full CSV iteration in v0.8.5)
+    // TODO: iterate CSV entries
+
+    // Apply dynamic SOCKS5 port if set
+    // (Handled by caller checking profile_get_dynamic_port)
+    pass(NIL);
+};
+
+// ── Module-level tracking arrays ─────────────────────────────────────────────
+// Up to 8 active local forward rules per pane slot (64 pane slots × 8 = 512 entries)
+// Up to 16 relay channel pairs per pane slot (64 × 16 = 1024 entries)
+
+int64[512]:g_fwd_local_port;    // listen port per (slot, rule_index) — 0 = unused
+int64[512]:g_fwd_dynamic_port;  // SOCKS5 port per (slot, rule_index) — 0 = unused
+int64[1024]:g_fwd_relay_chan;   // channel_id per (slot, relay_index) — -1 = unused
+int64[1024]:g_fwd_relay_fd;     // local_fd per (slot, relay_index) — -1 = unused
+
+// Parse result temporaries (single-threaded, used immediately after fwd_parse_local_rule)
+int64:g_fwd_parse_local_port  = 0i64;
+string:g_fwd_parse_remote_host = "";
+int64:g_fwd_parse_remote_port  = 0i64;
+string:g_fwd_parse_host        = "";
+int64:g_fwd_parse_port         = 0i64;
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+
+/// Initialize forwarding state for all pane slots.
+/// Call once from app_init().
+pub func:fwd_init = NIL() {
+    int64:i = 0i64;
+    while (i < 512i64) {
+        g_fwd_local_port[i]   = 0i64;
+        g_fwd_dynamic_port[i] = 0i64;
+        i = i + 1i64;
+    }
+    int64:j = 0i64;
+    while (j < 1024i64) {
+        g_fwd_relay_chan[j] = -1i64;
+        g_fwd_relay_fd[j]  = -1i64;
+        j = j + 1i64;
+    }
+    pass(NIL);
+};
+
+/// Add a local forward rule to the tracking array for a pane slot.
+/// Returns the index used, or -1 if no free slot.
+pub func:fwd_track_local = int64(int64:pane_slot, int64:local_port) {
+    int64:base = pane_slot * 8i64;
+    int64:i = 0i64;
+    while (i < 8i64) {
+        if (g_fwd_local_port[base + i] == 0i64) {
+            g_fwd_local_port[base + i] = local_port;
+            pass(i);
+        }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+/// Add a dynamic port to tracking.
+pub func:fwd_track_dynamic = int64(int64:pane_slot, int64:dynamic_port) {
+    int64:base = pane_slot * 8i64;
+    int64:i = 0i64;
+    while (i < 8i64) {
+        if (g_fwd_dynamic_port[base + i] == 0i64) {
+            g_fwd_dynamic_port[base + i] = dynamic_port;
+            pass(i);
+        }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+// ── Parse result accessors (for testing) ─────────────────────────────────────
+// After calling fwd_parse_local_rule(), these getters return the parsed fields.
+
+/// Returns the local port parsed by the most recent fwd_parse_local_rule() call.
+pub func:fwd_get_parsed_local_port = int64() {
+    pass(g_fwd_parse_local_port);
+};
+
+/// Returns the remote host parsed by the most recent fwd_parse_local_rule() call.
+pub func:fwd_get_parsed_remote_host = string() {
+    pass(g_fwd_parse_remote_host);
+};
+
+/// Returns the remote port parsed by the most recent fwd_parse_local_rule() call.
+pub func:fwd_get_parsed_remote_port = int64() {
+    pass(g_fwd_parse_remote_port);
+};

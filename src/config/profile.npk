@@ -67,6 +67,16 @@ string[64]:g_prof_ssh_key_path;   // path to private key file (optional)
 string[64]:g_prof_ssh_pass;       // stored password (optional, cleartext)
 int64[64]:g_prof_keepalive;       // keepalive interval seconds (0=disable, default 30)
 
+// SSH port forwarding fields (v0.8.4)
+string[64]:g_prof_ssh_local_fwd;  // CSV of "-L" rules: "local_port:host:remote_port"
+string[64]:g_prof_ssh_remote_fwd; // CSV of "-R" rules: "bind_port:host:local_port"
+int64[64]:g_prof_ssh_dynamic_port;// SOCKS5 local port (0 = disabled)
+
+// SSH jump host fields (v0.8.4)
+string[64]:g_prof_ssh_jump_host;  // ProxyJump hostname (empty = direct)
+int64[64]:g_prof_ssh_jump_port;   // ProxyJump SSH port (default 22)
+string[64]:g_prof_ssh_jump_user;  // ProxyJump username (empty = same as profile user)
+
 // Serial params (placeholder — v0.9.x fills these)
 string[64]:g_prof_serial_dev;
 int64[64]:g_prof_serial_baud;
@@ -127,10 +137,16 @@ func:_prof_clear_slot = NIL(int64:i) {
     g_prof_ssh_host[i]     = "";
     g_prof_ssh_port[i]     = 22i64;
     g_prof_ssh_user[i]     = "";
-    g_prof_ssh_auth[i]     = "";
-    g_prof_ssh_key_path[i] = "";
-    g_prof_ssh_pass[i]     = "";
-    g_prof_keepalive[i]    = 30i64;
+    g_prof_ssh_auth[i]         = "";
+    g_prof_ssh_key_path[i]     = "";
+    g_prof_ssh_pass[i]         = "";
+    g_prof_keepalive[i]        = 30i64;
+    g_prof_ssh_local_fwd[i]    = "";
+    g_prof_ssh_remote_fwd[i]   = "";
+    g_prof_ssh_dynamic_port[i] = 0i64;
+    g_prof_ssh_jump_host[i]    = "";
+    g_prof_ssh_jump_port[i]    = 22i64;
+    g_prof_ssh_jump_user[i]    = "";
     g_prof_serial_dev[i]   = "";
     g_prof_serial_baud[i]  = 9600i64;
     g_prof_telnet_host[i]  = "";
@@ -554,12 +570,27 @@ pub func:profiles_load_toml = NIL() {
             g_prof_font_size[slot]    = p_font_sz;
             g_prof_color_scheme[slot] = p_scheme;
             g_prof_cursor_style[slot] = p_cursor;
-            g_prof_ssh_host[slot]     = p_ssh_host;
-            g_prof_ssh_port[slot]     = p_ssh_port;
-            g_prof_ssh_user[slot]     = p_ssh_user;
-            g_prof_ssh_auth[slot]     = p_ssh_auth;
-            g_prof_ssh_key_path[slot] = p_key_path;
-            g_prof_keepalive[slot]    = p_keepalive;
+            // Forwarding fields (v0.8.4)
+            string:p_local_fwd    = raw Toml.get_string(string_concat(prefix, "ssh_local_fwd"));
+            string:p_remote_fwd   = raw Toml.get_string(string_concat(prefix, "ssh_remote_fwd"));
+            int64:p_dynamic_port  = raw Toml.get_int(string_concat(prefix, "ssh_dynamic_port"));
+            string:p_jump_host    = raw Toml.get_string(string_concat(prefix, "ssh_jump_host"));
+            int64:p_jump_port     = raw Toml.get_int(string_concat(prefix, "ssh_jump_port"));
+            if (p_jump_port <= 0i64) { p_jump_port = 22i64; }
+            string:p_jump_user    = raw Toml.get_string(string_concat(prefix, "ssh_jump_user"));
+
+            g_prof_ssh_host[slot]        = p_ssh_host;
+            g_prof_ssh_port[slot]        = p_ssh_port;
+            g_prof_ssh_user[slot]        = p_ssh_user;
+            g_prof_ssh_auth[slot]        = p_ssh_auth;
+            g_prof_ssh_key_path[slot]    = p_key_path;
+            g_prof_keepalive[slot]       = p_keepalive;
+            g_prof_ssh_local_fwd[slot]   = p_local_fwd;
+            g_prof_ssh_remote_fwd[slot]  = p_remote_fwd;
+            g_prof_ssh_dynamic_port[slot]= p_dynamic_port;
+            g_prof_ssh_jump_host[slot]   = p_jump_host;
+            g_prof_ssh_jump_port[slot]   = p_jump_port;
+            g_prof_ssh_jump_user[slot]   = p_jump_user;
             g_prof_count = g_prof_count + 1i64;
         }
         i = i + 1i64;
@@ -596,7 +627,73 @@ pub func:profiles_save_toml = NIL() {
         drop(raw Toml.set_string(string_concat(prefix, "ssh_auth"),     g_prof_ssh_auth[i]));
         drop(raw Toml.set_string(string_concat(prefix, "ssh_key_path"), g_prof_ssh_key_path[i]));
         drop(raw Toml.set_int(string_concat(prefix, "keepalive"),       g_prof_keepalive[i]));
+        // Forwarding fields (v0.8.4)
+        drop(raw Toml.set_string(string_concat(prefix, "ssh_local_fwd"),    g_prof_ssh_local_fwd[i]));
+        drop(raw Toml.set_string(string_concat(prefix, "ssh_remote_fwd"),   g_prof_ssh_remote_fwd[i]));
+        drop(raw Toml.set_int(string_concat(prefix, "ssh_dynamic_port"),    g_prof_ssh_dynamic_port[i]));
+        drop(raw Toml.set_string(string_concat(prefix, "ssh_jump_host"),    g_prof_ssh_jump_host[i]));
+        drop(raw Toml.set_int(string_concat(prefix, "ssh_jump_port"),       g_prof_ssh_jump_port[i]));
+        drop(raw Toml.set_string(string_concat(prefix, "ssh_jump_user"),    g_prof_ssh_jump_user[i]));
         i = i + 1i64;
     }
     pass(NIL);
+};
+
+// ── Port Forwarding Accessors (v0.8.4) ────────────────────────────────────────
+
+pub func:profile_set_forwarding = NIL(int64:slot, string:local_fwd, string:remote_fwd, int64:dynamic_port) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(NIL); }
+    g_prof_ssh_local_fwd[slot]    = local_fwd;
+    g_prof_ssh_remote_fwd[slot]   = remote_fwd;
+    g_prof_ssh_dynamic_port[slot] = dynamic_port;
+    pass(NIL);
+};
+
+pub func:profile_get_local_fwd = string(int64:slot) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(""); }
+    pass(string_concat(g_prof_ssh_local_fwd[slot], ""));
+};
+
+pub func:profile_get_remote_fwd = string(int64:slot) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(""); }
+    pass(string_concat(g_prof_ssh_remote_fwd[slot], ""));
+};
+
+pub func:profile_get_dynamic_port = int64(int64:slot) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(0i64); }
+    pass(g_prof_ssh_dynamic_port[slot]);
+};
+
+// ── Jump Host Accessors (v0.8.4) ──────────────────────────────────────────────
+
+pub func:profile_set_jump = NIL(int64:slot, string:host, int64:port, string:user) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(NIL); }
+    g_prof_ssh_jump_host[slot] = host;
+    g_prof_ssh_jump_port[slot] = port;
+    g_prof_ssh_jump_user[slot] = user;
+    pass(NIL);
+};
+
+pub func:profile_get_jump_host = string(int64:slot) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(""); }
+    pass(string_concat(g_prof_ssh_jump_host[slot], ""));
+};
+
+pub func:profile_get_jump_port = int64(int64:slot) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(22i64); }
+    int64:p = g_prof_ssh_jump_port[slot];
+    if (p <= 0i64) { pass(22i64); }
+    pass(p);
+};
+
+pub func:profile_get_jump_user = string(int64:slot) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(""); }
+    pass(string_concat(g_prof_ssh_jump_user[slot], ""));
+};
+
+/// Returns 1 if this profile has a jump host configured, 0 if direct connection.
+pub func:profile_has_jump = int64(int64:slot) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(0i64); }
+    if (string_length(g_prof_ssh_jump_host[slot]) > 0i64) { pass(1i64); }
+    pass(0i64);
 };

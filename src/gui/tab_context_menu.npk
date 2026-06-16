@@ -19,11 +19,13 @@
 //  12  = Set color: Pink     (0xD060A0)
 //  13  = Clear color (None)
 //  14  = Explode Panes       v0.5.5
+//  15  = Port Forwards...   v0.8.4
 
 use "../core/tab_manager.npk".*;
 use "../core/split_tree.npk".*;
 use "../gui/split_view.npk".*;
 use "gtk4_ffi.npk".*;
+use "../gui/forward_status.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════
 // Preset color palette (packed RGB)
@@ -187,8 +189,19 @@ pub func:tcm_poll = NIL() {
         }
     }
 
+    // v0.8.4: Port Forwards — show active forwarding rules for the current SSH pane
+    if (action == 15i64) {
+        // Get the pane slot of the active pane in this tab
+        int64:fwd_pane_slot = raw tm_get_active_pane_slot(tab_idx);
+        drop(fwd_status_open(fwd_pane_slot));
+    }
+
     // Queue a redraw after any context menu action
     nitty_gtk4_queue_redraw();
 
     pass(NIL);
 };
+
+/// Add "Port Forwards..." item to the context menu for SSH panes.
+/// This is called from the right-click handler in the GTK shim before showing the menu.
+/// For now the menu item is always shown; visibility based on pane type is a future improvement.

@@ -611,3 +611,12 @@ deps = []
 flags = []
 link_libraries = ["nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim"]
 link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib"]
+
+# v0.8.4: SSH Port Forwarding and Jump Host unit tests
+[target.test_ssh_forward]
+type = "binary"
+sources = ["tests/ssh/test_ssh_forward.npk"]
+deps = []
+flags = []
+link_libraries = ["nitpick_ssh_shim", "nitpick_env_shim", "nitpick_fs_shim", "nitpick_toml_shim", "nitpick_socket", "nitpick_libc_net"]
+link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-libc/shim"]

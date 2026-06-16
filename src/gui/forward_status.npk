@@ -1,0 +1,71 @@
+// src/gui/forward_status.npk — Active Port Forwards Display (v0.8.4)
+//
+// Simple status notification showing active SSH port forwarding rule counts
+// for the current pane's SSH session. Accessible via tab context menu.
+//
+// Uses nitty_gtk4_show_notification for the status display (available toast).
+// For a full forwarding dialog UI, this can be extended in v0.9.x.
+//
+// Import with: use "../../src/gui/forward_status.npk".*;
+
+use "../../src/config/profile.npk".*;
+use "../../src/core/pane.npk".*;
+use "../../src/ssh/ssh_forward.npk".*;
+
+// GTK4 shim toast notification (already declared in gtk4_ffi.npk, but we
+// declare here to keep this module independent)
+extern "nitty_gtk4_shim" {
+    func:nitty_gtk4_show_notification  = void(string:msg);
+}
+
+/// Open the active forwards status notification for the given pane slot.
+/// Shows a summary toast of active forwarding rules based on the pane's profile.
+pub func:fwd_status_open = NIL(int64:pane_slot) {
+    // Get the profile slot for this pane (slot directly maps to pane/tab slot)
+    int64:prof_slot = pane_slot;
+    if (prof_slot < 0i64) {
+        nitty_gtk4_show_notification("No SSH session on this pane.");
+        pass(NIL);
+    }
+    if (prof_slot >= 64i64) {
+        nitty_gtk4_show_notification("No SSH session on this pane.");
+        pass(NIL);
+    }
+
+    // Check if the pane has any active forwarding rules in the profile
+    string:local_fwd  = raw profile_get_local_fwd(prof_slot);
+    string:remote_fwd = raw profile_get_remote_fwd(prof_slot);
+    int64:dyn_port    = raw profile_get_dynamic_port(prof_slot);
+    int64:has_jump    = raw profile_has_jump(prof_slot);
+
+    // Count active rule types
+    int64:rule_count = 0i64;
+    string:summary = "";
+
+    if (string_length(local_fwd) > 0i64) {
+        rule_count = rule_count + 1i64;
+        summary = string_concat(summary, string_concat("● -L ", string_concat(local_fwd, " ")));
+    }
+    if (string_length(remote_fwd) > 0i64) {
+        rule_count = rule_count + 1i64;
+        summary = string_concat(summary, string_concat("● -R ", string_concat(remote_fwd, " ")));
+    }
+    if (dyn_port > 0i64) {
+        rule_count = rule_count + 1i64;
+        summary = string_concat(summary, string_concat("● SOCKS5 :", string_concat(
+            string_from_int(dyn_port), " ")));
+    }
+    if (has_jump != 0i64) {
+        string:jump_host = raw profile_get_jump_host(prof_slot);
+        summary = string_concat(summary, string_concat("→ via ", string_concat(jump_host, " ")));
+    }
+
+    if (rule_count == 0i64) {
+        nitty_gtk4_show_notification("Port Forwards: none configured");
+        pass(NIL);
+    }
+
+    string:msg = string_concat("Port Forwards: ", summary);
+    nitty_gtk4_show_notification(msg);
+    pass(NIL);
+};

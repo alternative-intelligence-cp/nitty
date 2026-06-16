@@ -21,11 +21,14 @@
 // Import with: use "../../src/ssh/ssh_session.npk".*;
 
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/src/nitpick_ssh.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/src/nitpick_socket_v2.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/src/nitpick_unix_socket.npk".*;
 use "../../src/ssh/ssh_error.npk".*;
 use "../../src/ssh/ssh_known_hosts.npk".*;
 use "../../src/ssh/ssh_auth.npk".*;
 use "../../src/ssh/auth_dialog.npk".*;
 use "../../src/core/pane.npk".*;
+use "../../src/ssh/ssh_forward.npk".{fwd_confirm_channel, fwd_close_channel, fwd_remote_accept};
 
 // ── Session State Constants ──────────────────────────────────────────────────
 
@@ -315,6 +318,8 @@ pub func:ssh_connect = int64(int64:pane_slot, string:host, int64:port, string:us
     drop(pane_set_type(pane_slot, 1i64));            // PANE_TYPE_SSH
     drop(pane_set_ssh_session(pane_slot, session));
     drop(pane_set_ssh_channel(pane_slot, chan_id));
+    // Store shell channel id in ahash for multi-channel dispatch
+    ahset(session, "_shell_chan_id", raw SSH_handle_to_str(chan_id));
     g_ssh_state[pane_slot] = 4i64;                  // SSH_SESS_OPEN
     g_ssh_error[pane_slot] = "";
 
@@ -356,12 +361,21 @@ pub func:ssh_disconnect = NIL(int64:pane_slot) {
 // Call from tw_on_draw() idle callback for SSH panes.
 // Returns: received data string (empty if no data), "" if disconnected.
 // Side effect: on disconnect, sets pane state to DISCONNECTED.
+// v0.8.4: Extended to handle forwarding channels (non-shell CHANNEL_DATA goes
+//         to local relay fds) and server-initiated CHANNEL_OPEN (type 90) for
+//         remote port forwarding.
 pub func:ssh_poll_read = string(int64:pane_slot) {
     int64:session = raw pane_get_ssh_session(pane_slot);
     if (session == 0i64) { pass(""); }
     if (g_ssh_state[pane_slot] != 4i64) { pass(""); }  // not OPEN
 
     int64:chan_id = raw pane_get_ssh_channel(pane_slot);
+    // Retrieve shell channel id from ahash for multi-channel dispatch
+    string:shell_chan_s = ahget(session, "_shell_chan_id");
+    int64:shell_chan = chan_id;
+    if (string_length(shell_chan_s) > 0i64) {
+        shell_chan = raw SSH_str_to_handle(shell_chan_s);
+    }
 
     // Drain all available packets (non-blocking: up to 16 packets per frame)
     int64:n = 0i64;
@@ -371,19 +385,103 @@ pub func:ssh_poll_read = string(int64:pane_slot) {
             n = 16i64; // no more data, break
         }
         if (payload != 0i64) {
-            int32:r = raw SSH_dispatch(session, payload);
-            drop(raw SSH_buf_free(payload));
-            if (r == -1i32) {
-                // DISCONNECT received
-                g_ssh_state[pane_slot] = 0i64; // SSH_SESS_DISCONNECTED
-                g_ssh_error[pane_slot] = "Connection closed by remote host";
-                n = 16i64; // break
+            // Peek at message type before dispatching
+            int32:msg_type = raw SSH_buf_read_byte(payload, 0i64);
+
+            if (msg_type == 94i32) {
+                // CHANNEL_DATA (type 94) — check if it's a forwarding channel
+                // The channel id (recipient) is at bytes 1-4 in the payload
+                int32:recv_chan = nitpick_ssh_decode_uint32(payload, 1i64);
+                int64:recv_chan64 = @cast_unchecked<int64>(recv_chan);
+                if (recv_chan64 != shell_chan) {
+                    // Forwarding channel — relay data to local fd
+                    // First dispatch normally to update channel state/buffer
+                    drop(raw SSH_dispatch(session, payload));
+                    // Then retrieve and relay the accumulated data
+                    string:fwd_data = raw SSH_channel_read(session, recv_chan64);
+                    if (string_length(fwd_data) > 0i64) {
+                        string:chan_fd_key = string_concat("_chan_fd_",
+                            raw SSH_handle_to_str(recv_chan64));
+                        string:fd_s = ahget(session, chan_fd_key);
+                        if (string_length(fd_s) > 0i64) {
+                            int64:local_fd = raw SSH_str_to_handle(fd_s);
+                            if (local_fd >= 0i64) {
+                                drop(raw socket_send_str(local_fd, fwd_data));
+                            }
+                        }
+                    }
+                    drop(raw SSH_buf_free(payload));
+                    n = n + 1i64;
+                }
+                if (recv_chan64 == shell_chan) {
+                    // Normal shell data — dispatch and continue
+                    int32:r = raw SSH_dispatch(session, payload);
+                    drop(raw SSH_buf_free(payload));
+                    if (r == -1i32) {
+                        g_ssh_state[pane_slot] = 0i64;
+                        g_ssh_error[pane_slot] = "Connection closed by remote host";
+                        n = 16i64;
+                    }
+                    n = n + 1i64;
+                }
+            }
+
+            if (msg_type == 91i32) {
+                // CHANNEL_OPEN_CONFIRM — could be a forwarding channel
+                int32:confirm_our_chan = nitpick_ssh_decode_uint32(payload, 1i64);
+                int64:confirm_chan64 = @cast_unchecked<int64>(confirm_our_chan);
+                int32:r = raw SSH_dispatch(session, payload);
+                drop(raw SSH_buf_free(payload));
+                if (confirm_chan64 != shell_chan) {
+                    // Forwarding channel confirmed — move from pending to relay
+                    drop(fwd_confirm_channel(pane_slot, session, confirm_chan64));
+                }
+                if (r == -1i32) {
+                    g_ssh_state[pane_slot] = 0i64;
+                    g_ssh_error[pane_slot] = "Connection closed by remote host";
+                    n = 16i64;
+                }
+                n = n + 1i64;
+            }
+
+            if (msg_type == 90i32) {
+                // SSH_MSG_CHANNEL_OPEN from server — "forwarded-tcpip" for remote fwd
+                // Parse: channel_type string, sender_channel, initial_window, max_packet,
+                //        connected_addr, connected_port, originator_addr, originator_port
+                // We need the connected_port to look up the remote fwd rule.
+                // Simplified: dispatch normally then call fwd_remote_accept with bind_port=0
+                // (fwd_remote_accept looks up available rules).
+                // TODO: parse bind_port from payload for multi-rule support
+                int32:r = raw SSH_dispatch(session, payload);
+                drop(raw SSH_buf_free(payload));
+                // Notify forward module
+                int64:new_chan = raw SSH_channel_last_id(session);
+                drop(fwd_remote_accept(pane_slot, session, 0i64, new_chan));
+                n = n + 1i64;
+            }
+
+            if (msg_type != 90i32 && msg_type != 91i32 && msg_type != 94i32) {
+                // All other packet types: EOF, CLOSE, window adjust, disconnect, etc.
+                int32:r = raw SSH_dispatch(session, payload);
+                drop(raw SSH_buf_free(payload));
+                if (r == -1i32) {
+                    // DISCONNECT received
+                    g_ssh_state[pane_slot] = 0i64; // SSH_SESS_DISCONNECTED
+                    g_ssh_error[pane_slot] = "Connection closed by remote host";
+                    n = 16i64; // break
+                }
+                // Check if a forward channel was closed (type 96=EOF, 97=CLOSE)
+                if (msg_type == 96i32 || msg_type == 97i32) {
+                    // We don't have the channel id here after dispatch; fwd_close_channel
+                    // will be called explicitly by the dispatch handler if needed.
+                    // TODO: parse channel id from payload before dispatch for clean close
+                }
+                n = n + 1i64;
             }
         }
-        n = n + 1i64;
     }
 
-    // Send window adjustment if needed (replenish receive window)
+    // Send window adjustment for shell channel if needed
     string:_wnd_key = string_concat("_chan_", string_concat(raw SSH_handle_to_str(chan_id), "_window_local"));
     string:_wnd_s = ahget(session, _wnd_key);
     int64:wnd = raw SSH_str_to_handle(_wnd_s);
@@ -393,7 +491,7 @@ pub func:ssh_poll_read = string(int64:pane_slot) {
         drop(raw SSH_buf_free(adj_buf));
     }
 
-    // Return accumulated channel data
+    // Return accumulated shell channel data
     string:data = raw SSH_channel_read(session, chan_id);
     pass(data);
 };
@@ -468,5 +566,191 @@ pub func:ssh_session_state_code = int64(int64:pane_slot) {
 // Use this instead of comparing ssh_last_error() == "" across module boundaries.
 pub func:ssh_has_error = int64(int64:pane_slot) {
     if (g_ssh_state[pane_slot] == 5i64) { pass(1i64); } // SSH_SESS_ERROR
+    pass(0i64);
+};
+
+// ── Jump Host Transport Override ─────────────────────────────────────────────
+
+// Connect an SSH session using an existing fd (e.g. a socketpair end from a
+// jump host relay) instead of opening a new TCP connection.
+//
+// The flow is identical to ssh_connect steps 2-15 but skips step 1 (TCP connect).
+// Used by ssh_jump.npk to run the target SSH session over a tunneled channel.
+//
+// Returns: 0 on success, negative error code on failure.
+pub func:ssh_connect_over_fd = int64(int64:pane_slot, int64:transport_fd,
+                                      string:host, int64:port,
+                                      string:user, string:password,
+                                      int64:cols, int64:rows) {
+
+    g_ssh_error[pane_slot] = "";
+    g_ssh_state[pane_slot] = 1i64; // SSH_SESS_CONNECTING
+
+    // Create SSH session using the pre-connected fd instead of TCP connect.
+    // SSH_connect_fd wraps nitpick-ssh's session creation over a given fd.
+    // Internally: version exchange + session allocation.
+    int64:session = raw SSH_connect_fd(transport_fd);
+    if (session == 0i64) {
+        drop(_ssh_set_error(pane_slot, "SSH connect over fd failed"));
+        pass(-4i64);
+    }
+
+    g_ssh_state[pane_slot] = 2i64; // SSH_SESS_HANDSHAKING
+    drop(pane_set_ssh_session(pane_slot, session));
+
+    // Steps 2-11: KEX + auth (identical to ssh_connect)
+    // KEX init
+    int64:kexinit_buf = raw SSH_kexinit_build(session);
+    int64:sent = raw SSH_send_packet(session, kexinit_buf);
+    drop(raw SSH_buf_free(kexinit_buf));
+    if (sent < 0i64) {
+        drop(_ssh_set_error(pane_slot, "Failed to send KEXINIT (fd)"));
+        drop(SSH_disconnect(session));
+        pass(-5i64);
+    }
+
+    int64:srv_kexinit = raw SSH_recv_packet(session);
+    if (srv_kexinit == 0i64) {
+        drop(_ssh_set_error(pane_slot, "No KEXINIT from server (fd)"));
+        drop(SSH_disconnect(session));
+        pass(-5i64);
+    }
+    int32:kp = raw SSH_kexinit_parse(session, srv_kexinit);
+    drop(raw SSH_buf_free(srv_kexinit));
+    if (kp == 0i32) {
+        drop(_ssh_set_error(pane_slot, "KEXINIT parse failed (fd)"));
+        drop(SSH_disconnect(session));
+        pass(-6i64);
+    }
+
+    int32:neg = raw SSH_kex_negotiate(session);
+    if (neg == 0i32) {
+        drop(_ssh_set_error(pane_slot, "KEX negotiate failed (fd)"));
+        drop(SSH_disconnect(session));
+        pass(-6i64);
+    }
+
+    int64:dh_init_buf = raw SSH_kex_dh_init(session);
+    int64:dh_sent = raw SSH_send_packet(session, dh_init_buf);
+    drop(raw SSH_buf_free(dh_init_buf));
+    if (dh_sent < 0i64) {
+        drop(_ssh_set_error(pane_slot, "Failed to send DH_INIT (fd)"));
+        drop(SSH_disconnect(session));
+        pass(-6i64);
+    }
+
+    int64:dh_reply_pkt = raw SSH_recv_packet(session);
+    if (dh_reply_pkt == 0i64) {
+        drop(_ssh_set_error(pane_slot, "No DH_REPLY (fd)"));
+        drop(SSH_disconnect(session));
+        pass(-6i64);
+    }
+    int32:dhr = raw SSH_kex_dh_reply(session, dh_reply_pkt);
+    drop(raw SSH_buf_free(dh_reply_pkt));
+    if (dhr == 0i32) {
+        drop(_ssh_set_error(pane_slot, "DH reply failed (fd)"));
+        drop(SSH_disconnect(session));
+        pass(-6i64);
+    }
+
+    int32:dk = raw SSH_derive_keys(session);
+    if (dk == 0i32) {
+        drop(_ssh_set_error(pane_slot, "Key derivation failed (fd)"));
+        drop(SSH_disconnect(session));
+        pass(-6i64);
+    }
+
+    int64:newkeys_buf = raw SSH_send_newkeys(session);
+    drop(raw SSH_send_packet(session, newkeys_buf));
+    drop(raw SSH_buf_free(newkeys_buf));
+    int64:srv_newkeys = raw SSH_recv_packet(session);
+    if (srv_newkeys == 0i64) {
+        drop(_ssh_set_error(pane_slot, "No NEWKEYS (fd)"));
+        drop(SSH_disconnect(session));
+        pass(-6i64);
+    }
+    drop(raw SSH_recv_newkeys(session, srv_newkeys));
+    drop(raw SSH_buf_free(srv_newkeys));
+    drop(raw SSH_activate_encryption(session));
+
+    // Service request
+    int64:svc_buf = raw SSH_buf_create(32i64);
+    svc_buf = raw SSH_encode_byte(svc_buf, 5i32);
+    svc_buf = nitpick_ssh_encode_string(svc_buf, "ssh-userauth");
+    drop(raw SSH_send_packet(session, svc_buf));
+    drop(raw SSH_buf_free(svc_buf));
+    int64:svc_resp = raw SSH_recv_packet(session);
+    if (svc_resp == 0i64) {
+        drop(_ssh_set_error(pane_slot, "No SERVICE_ACCEPT (fd)"));
+        drop(SSH_disconnect(session));
+        pass(-5i64);
+    }
+    drop(raw SSH_buf_free(svc_resp));
+
+    g_ssh_state[pane_slot] = 3i64; // SSH_SESS_AUTHENTICATING
+
+    // Auth
+    drop(SSH_auth_init(session));
+    drop(auth_init(pane_slot, session, user, password));
+    drop(auth_dialog_init(pane_slot, host));
+    drop(raw SSH_auth_none(session, user));
+    int64:none_resp = raw SSH_recv_packet(session);
+    if (none_resp != 0i64) {
+        drop(raw SSH_auth_parse_response(session, none_resp));
+        drop(raw SSH_buf_free(none_resp));
+    }
+
+    int32:auth_done2  = 0i32;
+    int32:auth_ok2    = 0i32;
+    int64:auth_iters2 = 0i64;
+    while (auth_iters2 < 64i64 && auth_done2 == 0i32) {
+        int32:tick_result2 = auth_dialog_tick(pane_slot);
+        if (tick_result2 == AUTH_DIALOG_DONE()) {
+            auth_done2 = 1i32;
+            if (auth_dialog_success(pane_slot) == 1i32) { auth_ok2 = 1i32; }
+        }
+        auth_iters2 = auth_iters2 + 1i64;
+    }
+    if (auth_ok2 != 1i32) {
+        drop(_ssh_set_error(pane_slot, "Authentication failed (fd)"));
+        drop(SSH_disconnect(session));
+        pass(-3i64);
+    }
+
+    // Channel + PTY + shell
+    drop(SSH_channel_init(session));
+    int64:chan_open_buf = raw SSH_channel_open(session, "session");
+    int64:chan_id2 = raw SSH_channel_last_id(session);
+    drop(raw SSH_send_packet(session, chan_open_buf));
+    drop(raw SSH_buf_free(chan_open_buf));
+    int64:chan_resp2 = raw SSH_recv_packet(session);
+    if (chan_resp2 == 0i64) {
+        drop(_ssh_set_error(pane_slot, "No channel confirm (fd)"));
+        drop(SSH_disconnect(session));
+        pass(-1i64);
+    }
+    drop(raw SSH_channel_open_confirm(session, chan_resp2));
+    drop(raw SSH_buf_free(chan_resp2));
+
+    int64:pty_buf2 = raw SSH_channel_request_pty(session, chan_id2,
+        "xterm-256color",
+        @cast_unchecked<int32>(cols), @cast_unchecked<int32>(rows));
+    drop(raw SSH_send_packet(session, pty_buf2));
+    drop(raw SSH_buf_free(pty_buf2));
+    int64:pty_resp2 = raw SSH_recv_packet(session);
+    if (pty_resp2 != 0i64) { drop(raw SSH_buf_free(pty_resp2)); }
+
+    int64:shell_buf2 = raw SSH_channel_request_shell(session, chan_id2);
+    drop(raw SSH_send_packet(session, shell_buf2));
+    drop(raw SSH_buf_free(shell_buf2));
+    int64:shell_resp2 = raw SSH_recv_packet(session);
+    if (shell_resp2 != 0i64) { drop(raw SSH_buf_free(shell_resp2)); }
+
+    drop(pane_set_type(pane_slot, 1i64));            // PANE_TYPE_SSH
+    drop(pane_set_ssh_session(pane_slot, session));
+    drop(pane_set_ssh_channel(pane_slot, chan_id2));
+    ahset(session, "_shell_chan_id", raw SSH_handle_to_str(chan_id2));
+    g_ssh_state[pane_slot] = 4i64;  // SSH_SESS_OPEN
+    g_ssh_error[pane_slot] = "";
     pass(0i64);
 };

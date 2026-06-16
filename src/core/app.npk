@@ -45,6 +45,8 @@ use "../terminal/activity.npk".*;    // v0.7.4: activity monitor
 use "../terminal/process_monitor.npk".*; // v0.7.4: process completion
 use "../gui/connection_manager.npk".*;   // v0.8.3: connection manager sidebar
 use "../gui/profile_editor.npk".*;       // v0.8.3: profile editor dialog
+use "../ssh/ssh_forward.npk".{fwd_init}; // v0.8.4: port forward state init
+use "../ssh/ssh_jump.npk".{jump_init};   // v0.8.4: jump host state init
 
 // fd 1 = stdout
 int64:STDOUT = 1i64;
@@ -84,7 +86,10 @@ pub func:app_init = NIL() {
     drop(process_monitor_init(raw cfg_process_min_duration(), raw cfg_process_completion_notification()));
     // v0.8.3: Initialize connection profile store
     drop(cm_init());
-    drop(write_stdout("Nitty v0.8.3 initializing...\n"));
+    // v0.8.4: Initialize port forwarding and jump host state
+    drop(fwd_init());
+    drop(jump_init());
+    drop(write_stdout("Nitty v0.8.4 initializing...\n"));
     pass(NIL);
 };
 
@@ -276,5 +281,5 @@ pub func:app_shutdown = NIL() {
 };
 
 pub func:app_version = string() {
-    pass("0.8.3");
+    pass("0.8.4");
 };
