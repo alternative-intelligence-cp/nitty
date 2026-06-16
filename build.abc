@@ -575,3 +575,21 @@ deps = []
 flags = []
 link_libraries = ["nitpick_ssh_shim"]
 link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib"]
+
+# v0.8.1: SSH known_hosts tests (needs nitpick-ssh + nitpick-env for $HOME)
+[target.test_known_hosts]
+type = "binary"
+sources = ["tests/ssh/test_known_hosts.npk"]
+deps = []
+flags = []
+link_libraries = ["nitpick_ssh_shim", "nitpick_env_shim"]
+link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+
+# v0.8.1: SSH session struct/lifecycle tests (needs nitpick-ssh + nitpick-env)
+[target.test_ssh_session]
+type = "binary"
+sources = ["tests/ssh/test_ssh_session.npk"]
+deps = []
+flags = []
+link_libraries = ["nitpick_ssh_shim", "nitpick_env_shim"]
+link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
