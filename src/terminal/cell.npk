@@ -144,6 +144,6 @@ pub func:cell_flag_ul_style    = int64(int64:f) { pass((f & 0x7000i64) / 0x1000i
 
 // Compute flat array index for a (row, col) in a grid of given width.
 // Caller responsible for bounds checking.
-pub func:cell_index = int64(int64:row, int64:col, int64:grid_cols) {
-    pass(row * grid_cols + col);
+pub func:cell_index = int64(int64:row, int64:col, int64:ncols) {
+    pass(row * ncols + col);
 };

@@ -33,6 +33,14 @@ string:g_cfg_theme           = "default";
 int64:g_cfg_close_on_exit    = 1i64;
 int64:g_cfg_confirm_on_close = 1i64;
 
+// v0.6.3: quake mode state vars
+int64:g_cfg_quake_enabled       = 0i64;
+string:g_cfg_quake_hotkey       = "F12";
+int64:g_cfg_quake_width_pct     = 100i64;
+int64:g_cfg_quake_height_pct    = 50i64;
+string:g_cfg_quake_position     = "top";
+int64:g_cfg_quake_anim_duration = 150i64;
+
 // State flags
 int64:g_cfg_is_default = 1i64;  // 1 if no config file found; 0 if loaded from disk
 int64:g_cfg_loaded     = 0i64;  // set to 1 after config_load() completes
@@ -53,6 +61,13 @@ func:_load_defaults = NIL() {
     g_cfg_theme           = "default";
     g_cfg_close_on_exit   = 1i64;
     g_cfg_confirm_on_close = 1i64;
+    // v0.6.3 quake defaults
+    g_cfg_quake_enabled       = 0i64;
+    g_cfg_quake_hotkey        = "F12";
+    g_cfg_quake_width_pct     = 100i64;
+    g_cfg_quake_height_pct    = 50i64;
+    g_cfg_quake_position      = "top";
+    g_cfg_quake_anim_duration = 150i64;
     pass(NIL);
 };
 
@@ -153,6 +168,48 @@ func:_read_from_toml = NIL() {
         if (v == 0i32) { g_cfg_confirm_on_close = 0i64; }
     }
 
+    // v0.6.3: quake.* fields
+    int32:has_qen = raw Toml.has_key("quake.enabled");
+    if (has_qen == 1i32) {
+        int32:v = raw Toml.get_bool("quake.enabled");
+        if (v == 1i32) { g_cfg_quake_enabled = 1i64; }
+        if (v == 0i32) { g_cfg_quake_enabled = 0i64; }
+    }
+
+    int32:has_qhk = raw Toml.has_key("quake.hotkey");
+    if (has_qhk == 1i32) {
+        string:v = raw Toml.get_string("quake.hotkey");
+        if (string_length(v) > 0i64) { g_cfg_quake_hotkey = v; }
+    }
+
+    int32:has_qwp = raw Toml.has_key("quake.width_percent");
+    if (has_qwp == 1i32) {
+        int32:v = raw Toml.get_int("quake.width_percent");
+        int64:vv = @cast<int64>(v);
+        if (vv >= 20i64) { if (vv <= 100i64) { g_cfg_quake_width_pct = vv; } }
+    }
+
+    int32:has_qhp = raw Toml.has_key("quake.height_percent");
+    if (has_qhp == 1i32) {
+        int32:v = raw Toml.get_int("quake.height_percent");
+        int64:vv = @cast<int64>(v);
+        if (vv >= 10i64) { if (vv <= 100i64) { g_cfg_quake_height_pct = vv; } }
+    }
+
+    int32:has_qpos = raw Toml.has_key("quake.position");
+    if (has_qpos == 1i32) {
+        string:v = raw Toml.get_string("quake.position");
+        if (v == "bottom") { g_cfg_quake_position = "bottom"; }
+        if (v == "top")    { g_cfg_quake_position = "top"; }
+    }
+
+    int32:has_qad = raw Toml.has_key("quake.animation_duration");
+    if (has_qad == 1i32) {
+        int32:v = raw Toml.get_int("quake.animation_duration");
+        int64:vv = @cast<int64>(v);
+        if (vv >= 0i64) { if (vv <= 500i64) { g_cfg_quake_anim_duration = vv; } }
+    }
+
     pass(NIL);
 };
 
@@ -232,8 +289,8 @@ pub func:config_load = NIL() {
     // v0.6.2: Always init default hotkeys first (overrides applied after TOML parse)
     drop(hotkeys_init_defaults());
 
-    string:path    = raw config_file_path();
-    int32:file_exists = raw fs_exists(path);
+    string:cfg_path    = raw config_file_path();
+    int32:file_exists = raw fs_exists(cfg_path);
 
     // No config file found — use defaults and seed the file
     if (file_exists == 0i32) {
@@ -249,7 +306,7 @@ pub func:config_load = NIL() {
     g_cfg_is_default = 0i64;
     drop(_load_defaults());         // start from defaults (merge pattern)
     drop(Toml.clear());
-    int32:parsed = raw Toml.parse_file(path);
+    int32:parsed = raw Toml.parse_file(cfg_path);
     if (parsed >= 0i32) {
         drop(_read_from_toml());
         drop(profiles_load_toml());  // v0.6.1: load profiles from same document
@@ -321,22 +378,22 @@ pub func:config_save = int32() {
     }
 
     string:text      = raw Toml.serialize();
-    string:path      = raw config_file_path();
-    string:tmp_path  = string_concat(path, ".tmp");
+    string:cfg_path  = raw config_file_path();
+    string:tmp_path  = string_concat(cfg_path, ".tmp");
 
     int32:wrote = raw fs_write_file(tmp_path, text);
     if (wrote == 0i32) { pass(0i32); }
 
-    int32:renamed = raw fs_rename(tmp_path, path);
+    int32:renamed = raw fs_rename(tmp_path, cfg_path);
     pass(renamed);
 };
 
 /// Write a well-commented default config file to the config path.
 /// Returns 1 on success, 0 on failure.
 pub func:config_write_defaults = int32() {
-    string:path = raw config_file_path();
+    string:cfg_path = raw config_file_path();
     string:text = raw _default_toml_text();
-    int32:wrote = raw fs_write_file(path, text);
+    int32:wrote = raw fs_write_file(cfg_path, text);
     pass(wrote);
 };
 
@@ -369,3 +426,10 @@ pub func:cfg_set_cursor_style = NIL(string:v) { g_cfg_cursor_style = v; pass(NIL
 pub func:cfg_set_cursor_blink = NIL(int64:v)  { g_cfg_cursor_blink = v; pass(NIL); };
 pub func:cfg_set_opacity      = NIL(int64:v)  { g_cfg_opacity = v;     pass(NIL); };
 pub func:cfg_set_theme        = NIL(string:v) { g_cfg_theme = v;       pass(NIL); };
+// v0.6.3: Quake mode getters
+pub func:cfg_quake_enabled       = int64()  { pass(g_cfg_quake_enabled); };
+pub func:cfg_quake_hotkey        = string() { pass(g_cfg_quake_hotkey); };
+pub func:cfg_quake_width_percent = int64()  { pass(g_cfg_quake_width_pct); };
+pub func:cfg_quake_height_percent = int64() { pass(g_cfg_quake_height_pct); };
+pub func:cfg_quake_position      = string() { pass(g_cfg_quake_position); };
+pub func:cfg_quake_anim_duration = int64()  { pass(g_cfg_quake_anim_duration); };

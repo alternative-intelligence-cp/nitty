@@ -131,6 +131,21 @@ pub func:schema_init = NIL() {
     drop(_sch_add("general.close_on_exit",    T_BOOL, "1",         0i64,    0i64));
     drop(_sch_add("general.confirm_on_close", T_BOOL, "1",         0i64,    0i64));
 
+    // quake.* — v0.6.3: Quake mode (drop-down terminal + global hotkey)
+    //   quake.enabled:            bool  — 1 = quake mode on (window starts hidden)
+    //   quake.hotkey:             string — key name e.g. "F12", "grave" (default: "F12")
+    //   quake.width_percent:      int   — window width as % of screen (20-100, default: 100)
+    //   quake.height_percent:     int   — window height as % of screen (10-100, default: 50)
+    //   quake.position:           enum  — "top" or "bottom" (default: "top")
+    //   quake.animation_duration: int   — slide animation ms (0=instant, default: 150)
+    drop(_sch_add("quake.enabled",             T_BOOL, "0",         0i64,    0i64));
+    drop(_sch_add("quake.hotkey",              T_STR,  "F12",       0i64,    0i64));
+    drop(_sch_add("quake.width_percent",       T_INT,  "100",       20i64,  100i64));
+    drop(_sch_add("quake.height_percent",      T_INT,  "50",        10i64,  100i64));
+    drop(_sch_add_enum("quake.position",       "top",
+                       "top", "bottom", "", "", 2i64));
+    drop(_sch_add("quake.animation_duration",  T_INT,  "150",       0i64,   500i64));
+
     pass(NIL);
 };
 

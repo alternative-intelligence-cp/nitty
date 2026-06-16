@@ -55,9 +55,12 @@ use "../terminal/terminal_pipeline.npk".*;
 use "../terminal/terminal_state.npk".*;
 use "../terminal/scrollback.npk".*;
 use "../core/tab_manager.npk".*;
+use "../core/tab.npk".*;             // v0.5.4+: tab_get_broadcast_enabled, tab_get_pty_fd etc.
 use "../core/split_tree.npk".*;
 use "../core/session.npk".*;
 use "../core/hotkey.npk".*;
+use "../core/global_hotkey.npk".*;  // v0.6.3: global hotkey polling
+use "quake.npk".*;                  // v0.6.3: quake mode animation
 use "input.npk".*;
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -75,6 +78,8 @@ int64:g_tw_cell_h = 16i64;  // pixel height of one terminal cell (init guess)
 int64:g_tw_last_focused = 1i64;  // assume focused at startup
 // v0.4.4: monotonic timestamp (seconds) of last periodic session save
 int64:g_tw_last_save_time = 0i64;
+// v0.6.3: 1 after quake window setup has been applied (one-shot)
+int64:g_tw_quake_setup_done = 0i64;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Initialization
@@ -191,12 +196,45 @@ func:dispatch_action = NIL(string:action, int64:rows, int64:cols) {
         // App
         ("app.settings") { drop(nitty_gtk4_show_notification("Settings: coming in v0.7.x")); },
         ("app.quit")     { drop(nitty_gtk4_window_close(nitty_gtk4_get_main_window())); },
+        // v0.6.3: Quake mode toggle
+        ("quake.toggle") { drop(quake_toggle()); },
         (*) { }  // unknown action — no-op
     }
     pass(NIL);
 };
 
 pub func:tw_on_draw = NIL() {
+    // v0.6.3 Step 0a: Quake mode — one-shot window setup + per-frame tasks
+    if (raw quake_is_enabled() == 1i64) {
+        // One-shot: apply window hints after GdkSurface is realized (first draw).
+        // app.npk called quake_init(0, ...) to pre-load config. Now that the
+        // GTK window exists, we re-call with the real window pointer.
+        if (g_tw_quake_setup_done == 0i64) {
+            int64:win_ptr = nitty_gtk4_get_main_window();
+            if (win_ptr != 0i64) {
+                int64:qw = raw quake_get_win_w();
+                int64:qh = raw quake_get_win_h();
+                int64:sw = raw quake_get_screen_w();
+                int64:sh = raw quake_get_screen_h();
+                drop(quake_init(win_ptr,
+                                1i64,
+                                qw * 100i64 / (sw + 1i64),
+                                qh * 100i64 / (sh + 1i64),
+                                raw quake_get_anim_ms(),
+                                raw quake_get_position()));
+                g_tw_quake_setup_done = 1i64;
+            }
+        }
+        // Per-frame: advance slide animation
+        drop(quake_tick());
+    }
+    // v0.6.3 Step 0b: Poll global hotkey (fires quake.toggle)
+    if (raw global_hotkey_is_registered() == 1i64) {
+        if (raw global_hotkey_poll() == 1i64) {
+            drop(dispatch_action("quake.toggle", g_tw_rows, g_tw_cols));
+        }
+    }
+
     // Step 0: Focus change reporting (DECSET 1004)
     int64:cur_focused = nitty_gtk4_get_focused();
     if (cur_focused != g_tw_last_focused) {
@@ -565,13 +603,13 @@ pub func:tw_on_draw = NIL() {
             drop(nitty_gtk4_show_notification("Need at least 2 panes to swap"));
         }
         if (raw split_tree_pane_count() > 1i64) {
-            if (split_view_is_swap_mode() == 0i64) {
+            if (raw split_view_is_swap_mode() == 0i64) {
                 int64:sw_src = raw split_tree_get_active();
                 drop(split_view_enter_swap_mode(sw_src));
                 drop(nitty_gtk4_set_swap_mode(1i64));
                 drop(nitty_gtk4_show_notification("⇄ Click another pane to swap (Escape to cancel)"));
             }
-            if (split_view_is_swap_mode() != 0i64) {
+            if (raw split_view_is_swap_mode() != 0i64) {
                 drop(split_view_cancel_swap_mode());
                 drop(nitty_gtk4_set_swap_mode(0i64));
             }
@@ -668,10 +706,10 @@ pub func:tw_on_draw = NIL() {
             int64:btn = nitty_gtk4_mouse_get_button();
             // Left-click (btn=1) during swap mode: complete the swap
             if (btn == 1i64) {
-                if (split_view_is_swap_mode() != 0i64) {
+                if (raw split_view_is_swap_mode() != 0i64) {
                     int64:swm_x = nitty_gtk4_mouse_get_x();
                     int64:swm_y = nitty_gtk4_mouse_get_y();
-                    int64:swm_src = split_view_get_swap_source();
+                    int64:swm_src = raw split_view_get_swap_source();
                     int64:swm_dst = raw split_tree_find_pane_at(swm_x, swm_y);
                     drop(split_view_cancel_swap_mode());
                     drop(nitty_gtk4_set_swap_mode(0i64));
@@ -785,8 +823,8 @@ pub func:tw_on_resize = NIL(int64:w_px, int64:h_px) {
     // v0.5.2: Track pixel window and cell dimensions for split_view
     g_tw_win_w  = w_px;
     g_tw_win_h  = h_px;
-    int64:cw = raw nitty_render_get_cell_width();
-    int64:ch = raw nitty_render_get_cell_height();
+    int64:cw = nitty_render_get_cell_width();
+    int64:ch = nitty_render_get_cell_height();
     if (cw > 0i64) { g_tw_cell_w = cw; }
     if (ch > 0i64) { g_tw_cell_h = ch; }
 

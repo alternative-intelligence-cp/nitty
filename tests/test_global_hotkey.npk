@@ -1,0 +1,127 @@
+// tests/test_global_hotkey.npk — Unit tests for v0.6.3 global hotkey module
+
+use "../src/core/global_hotkey.npk".*;
+
+func:failsafe = int32(tbb32:_err) { exit 98i32; };
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:label, int64:got, int64:expected) {
+    if (got == expected) {
+        g_pass = g_pass + 1i64;
+        println(string_concat("  PASS: ", label));
+    }
+    if (got != expected) {
+        g_fail = g_fail + 1i64;
+        println(string_concat("  FAIL: ", string_concat(label,
+            string_concat(" got=", string_concat(string_from_int(got),
+            string_concat(" expected=", string_from_int(expected)))))));
+    }
+    pass(NIL);
+};
+
+func:check_bool = NIL(string:label, int64:val) {
+    int64:is_valid = 0i64;
+    if (val == 0i64) { is_valid = 1i64; }
+    if (val == 1i64) { is_valid = 1i64; }
+    drop(check(string_concat(label, " (must be 0 or 1)"), is_valid, 1i64));
+    pass(NIL);
+};
+
+func:test_starts_unregistered = NIL() {
+    println("Test 1: starts unregistered");
+    int64:reg = raw global_hotkey_is_registered();
+    drop(check("not registered at startup", reg, 0i64));
+    pass(NIL);
+};
+
+func:test_poll_when_not_registered = NIL() {
+    println("Test 2: poll returns 0 when not registered");
+    int64:fired = raw global_hotkey_poll();
+    drop(check("poll=0 when not registered", fired, 0i64));
+    pass(NIL);
+};
+
+func:test_register_unknown_key = NIL() {
+    println("Test 3: register with unknown key returns 0");
+    int64:res = raw global_hotkey_register("InvalidKey999", 0i64);
+    drop(check("unknown key → 0", res, 0i64));
+    pass(NIL);
+};
+
+func:test_unregister_safe = NIL() {
+    println("Test 4: unregister safe when not registered");
+    drop(global_hotkey_unregister());
+    int64:reg = raw global_hotkey_is_registered();
+    drop(check("still unregistered after no-op unregister", reg, 0i64));
+    pass(NIL);
+};
+
+func:test_is_available = NIL() {
+    println("Test 5: is_available returns 0 or 1");
+    int64:avail = raw global_hotkey_is_available();
+    drop(check_bool("is_available is boolean", avail));
+    pass(NIL);
+};
+
+func:test_still_unregistered_after_failed = NIL() {
+    println("Test 6: still unregistered after failed register");
+    int64:_res = raw global_hotkey_register("NoSuchKey", 0i64);
+    int64:reg = raw global_hotkey_is_registered();
+    drop(check("not registered after failed register", reg, 0i64));
+    pass(NIL);
+};
+
+func:test_poll_still_zero_after_failed = NIL() {
+    println("Test 7: poll still 0 after failed register");
+    int64:fired = raw global_hotkey_poll();
+    drop(check("poll=0 after failed register", fired, 0i64));
+    pass(NIL);
+};
+
+func:test_unregister_idempotent = NIL() {
+    println("Test 8: double unregister is safe");
+    drop(global_hotkey_unregister());
+    drop(global_hotkey_unregister());
+    int64:reg = raw global_hotkey_is_registered();
+    drop(check("unregistered after double call", reg, 0i64));
+    pass(NIL);
+};
+
+func:test_is_available_consistent = NIL() {
+    println("Test 9: is_available is consistent across calls");
+    int64:a1 = raw global_hotkey_is_available();
+    int64:a2 = raw global_hotkey_is_available();
+    drop(check_bool("first call is boolean", a1));
+    drop(check("consistent across calls", a1, a2));
+    pass(NIL);
+};
+
+func:test_unregistered_after_explicit_clear = NIL() {
+    println("Test 10: is_registered=0 after explicit unregister of nothing");
+    drop(global_hotkey_unregister());
+    int64:reg = raw global_hotkey_is_registered();
+    drop(check("is_registered=0", reg, 0i64));
+    pass(NIL);
+};
+
+func:main = int32() {
+    println("=== test_global_hotkey: Global Hotkey Module Tests ===");
+    drop(test_starts_unregistered());
+    drop(test_poll_when_not_registered());
+    drop(test_register_unknown_key());
+    drop(test_unregister_safe());
+    drop(test_is_available());
+    drop(test_still_unregistered_after_failed());
+    drop(test_poll_still_zero_after_failed());
+    drop(test_unregister_idempotent());
+    drop(test_is_available_consistent());
+    drop(test_unregistered_after_explicit_clear());
+
+    println("");
+    println(string_concat("=== Results: ", string_concat(string_from_int(g_pass),
+        string_concat(" passed, ", string_concat(string_from_int(g_fail), " failed ===")))));
+    if (g_fail == 0i64) { exit 0i32; }
+    exit 1i32;
+};

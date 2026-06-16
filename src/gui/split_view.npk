@@ -150,9 +150,9 @@ pub func:split_view_build = NIL() {
     // Case 1: single pane — just wrap the DA in a box
     if (pcount == 1i64) {
         int64:pid0    = raw split_tree_get_layout_pane_id(0i64);
-        int64:da0     = _get_or_create_da(pid0);
+        int64:da0     = raw _get_or_create_da(pid0);
         // Pack into a box so set_content_widget always gets a container
-        int64:wrap_box = raw nitty_gtk4_box_new(1i64, 0i64);  // vertical, 0 spacing
+        int64:wrap_box = nitty_gtk4_box_new(1i64, 0i64);  // vertical, 0 spacing
         drop(nitty_gtk4_box_append(wrap_box, da0));
         drop(nitty_gtk4_widget_set_expand(da0, 1i64, 1i64));
         new_root = wrap_box;
@@ -177,7 +177,7 @@ func:_get_or_create_da = int64(int64:pane_id) {
     int64:existing = g_sv_pane_da[pane_id];
     if (existing != 0i64) { pass(existing); }
     // Create new DrawingArea
-    int64:da = raw nitty_gtk4_pane_drawing_area_new();
+    int64:da = nitty_gtk4_pane_drawing_area_new();
     g_sv_pane_da[pane_id] = da;
     pass(da);
 };
@@ -308,7 +308,7 @@ func:_build_paned_tree = int64(int64:total_w, int64:total_h) {
             // dir: 0=Horiz(side-by-side) → GTK_ORIENTATION_HORIZONTAL(0)
             //      1=Vert(top-bottom)    → GTK_ORIENTATION_VERTICAL(1)
             int64:orient = dir;  // 0=H, 1=V (same convention)
-            int64:paned  = raw nitty_gtk4_paned_new(orient);
+            int64:paned  = nitty_gtk4_paned_new(orient);
 
             // Set position from ratio + total dimension
             int64:ratio = raw split_tree_get_node_ratio(nidx);
@@ -353,8 +353,8 @@ pub func:split_view_spawn_pane = int64(int64:pane_id, int64:rows, int64:cols) {
     int64:packed = nitty_gtk4_spawn_tab_shell(rows, cols);
     if (packed < 0i64) { pass(-1i64); }
 
-    int64:fd  = raw nitty_gtk4_spawn_result_fd(packed);
-    int64:pid = raw nitty_gtk4_spawn_result_pid(packed);
+    int64:fd  = nitty_gtk4_spawn_result_fd(packed);
+    int64:pid = nitty_gtk4_spawn_result_pid(packed);
 
     g_sv_pane_fd[pane_id]  = fd;
     g_sv_pane_pid[pane_id] = pid;
@@ -534,7 +534,7 @@ pub func:split_view_poll_paned_positions = NIL(int64:total_w, int64:total_h) {
     while (di < dcount) {
         int64:paned = g_sv_paned_ptrs[di];
         if (paned != 0i64) {
-            int64:cur_pos  = raw nitty_gtk4_paned_get_position(paned);
+            int64:cur_pos  = nitty_gtk4_paned_get_position(paned);
             int64:last_pos = g_sv_paned_last_pos[di];
 
             // Detect significant change (> 4px = ignore rounding)

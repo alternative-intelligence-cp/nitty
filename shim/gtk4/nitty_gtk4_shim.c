@@ -1764,3 +1764,280 @@ void nitty_gtk4_clipboard_paste(void)
     /* TODO v0.7.x: use GdkClipboard to read and write to g_pty_master_fd */
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.6.3: Global Hotkey Registration + Quake Mode Window Management
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * GTK4 notes:
+ *   - GDK event filters (GdkFilterReturn, gdk_window_add_filter) were removed
+ *     in GTK4. Instead we use XCheckMaskEvent() polling inside the idle-driven
+ *     nitty_global_hotkey_poll() to drain grabbed KeyPress events from the X11
+ *     event queue every frame.
+ *   - gtk_window_set_keep_above / set_skip_taskbar_hint were removed from GTK4's
+ *     GtkWindow API. The equivalent is now on the GdkSurface via the X11 backend:
+ *     gdk_x11_surface_set_skip_taskbar_hint(), etc.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+#ifdef GDK_WINDOWING_X11
+#include <gdk/x11/gdkx.h>
+#include <X11/Xlib.h>
+#include <X11/keysym.h>
+#endif
+
+/* Global hotkey state (X11) */
+static volatile int g_global_hotkey_fired = 0;
+static int          g_global_hotkey_keycode  = 0;
+static unsigned int g_global_hotkey_modmask  = 0;
+
+#ifdef GDK_WINDOWING_X11
+
+/* Convert Nitpick modifier bitmask → X11 modifier mask.
+ * Nitpick/hotkey.npk: Shift=1, Ctrl=2, Alt=4, Super=8
+ * X11: ShiftMask=1, ControlMask=4, Mod1Mask=8, Mod4Mask=64              */
+static unsigned int _gdk_mods_to_x11(int64_t npk_mods)
+{
+    unsigned int m = 0;
+    if (npk_mods & 1) m |= ShiftMask;    /* Shift  */
+    if (npk_mods & 2) m |= ControlMask;  /* Ctrl   */
+    if (npk_mods & 4) m |= Mod1Mask;     /* Alt    */
+    if (npk_mods & 8) m |= Mod4Mask;     /* Super  */
+    return m;
+}
+
+#endif /* GDK_WINDOWING_X11 */
+
+/**
+ * Returns 1 if the GDK display is an X11 display, 0 for Wayland or other.
+ */
+int64_t nitty_global_hotkey_is_x11(void)
+{
+#ifdef GDK_WINDOWING_X11
+    GdkDisplay *dpy = gdk_display_get_default();
+    if (dpy && GDK_IS_X11_DISPLAY(dpy))
+        return 1;
+#endif
+    return 0;
+}
+
+/**
+ * Register a global hotkey via XGrabKey (X11 only).
+ * keyval:   GDK keyval integer (e.g. nitty_gdk_key_f12() = 65481).
+ * mod_mask: Nitpick modifier bitmask (Shift=1, Ctrl=2, Alt=4, Super=8).
+ *           Pass 0 for no modifiers (bare F12 etc.).
+ * Returns 1 on success, 0 if not X11 or grab failed.
+ *
+ * Grab variants: we grab with and without NumLock (Mod2) and CapsLock
+ * so the hotkey fires regardless of those lock states.
+ */
+int64_t nitty_x11_grab_key(int64_t keyval, int64_t mod_mask)
+{
+#ifdef GDK_WINDOWING_X11
+    GdkDisplay *gdk_dpy = gdk_display_get_default();
+    if (!gdk_dpy || !GDK_IS_X11_DISPLAY(gdk_dpy))
+        return 0;
+
+    Display *xdpy = gdk_x11_display_get_xdisplay(gdk_dpy);
+    if (!xdpy) return 0;
+
+    /* Map GDK keyval → X11 KeySym → keycode */
+    KeySym   ksym = (KeySym)keyval;
+    KeyCode  kc   = XKeysymToKeycode(xdpy, ksym);
+    if (kc == 0) {
+        g_printerr("nitty_x11_grab_key: unknown keyval %ld\n", (long)keyval);
+        return 0;
+    }
+
+    unsigned int xmods = _gdk_mods_to_x11(mod_mask);
+    Window root = DefaultRootWindow(xdpy);
+
+    /* Grab with all Lock-key combinations */
+    XGrabKey(xdpy, kc, xmods,                         root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(xdpy, kc, xmods | Mod2Mask,              root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(xdpy, kc, xmods | LockMask,              root, True, GrabModeAsync, GrabModeAsync);
+    XGrabKey(xdpy, kc, xmods | Mod2Mask | LockMask,   root, True, GrabModeAsync, GrabModeAsync);
+    XSync(xdpy, False);
+
+    g_global_hotkey_keycode = (int)kc;
+    g_global_hotkey_modmask = xmods;
+    g_global_hotkey_fired   = 0;
+
+    /* Select KeyPress events on the root window so XCheckMaskEvent can find them.
+     * Note: XSelectInput may conflict with other apps doing the same — this is
+     * unavoidable without a proper compositor protocol. */
+    XSelectInput(xdpy, root, KeyPressMask);
+
+    return 1;
+#else
+    (void)keyval; (void)mod_mask;
+    return 0;
+#endif
+}
+
+/**
+ * Unregister the global hotkey.
+ */
+void nitty_x11_ungrab_key(int64_t keyval, int64_t mod_mask)
+{
+#ifdef GDK_WINDOWING_X11
+    GdkDisplay *gdk_dpy = gdk_display_get_default();
+    if (!gdk_dpy || !GDK_IS_X11_DISPLAY(gdk_dpy)) return;
+    Display *xdpy = gdk_x11_display_get_xdisplay(gdk_dpy);
+    if (!xdpy) return;
+
+    KeySym   ksym = (KeySym)keyval;
+    KeyCode  kc   = XKeysymToKeycode(xdpy, ksym);
+    if (kc == 0) return;
+
+    unsigned int xmods = _gdk_mods_to_x11(mod_mask);
+    Window root = DefaultRootWindow(xdpy);
+    XUngrabKey(xdpy, kc, xmods,                       root);
+    XUngrabKey(xdpy, kc, xmods | Mod2Mask,            root);
+    XUngrabKey(xdpy, kc, xmods | LockMask,            root);
+    XUngrabKey(xdpy, kc, xmods | Mod2Mask | LockMask, root);
+    XSync(xdpy, False);
+
+    g_global_hotkey_keycode = 0;
+    g_global_hotkey_modmask = 0;
+    g_global_hotkey_fired   = 0;
+#else
+    (void)keyval; (void)mod_mask;
+#endif
+}
+
+/**
+ * Poll whether the global hotkey fired since the last call.
+ * Returns 1 and clears the flag, or 0 if not fired.
+ *
+ * GTK4 approach: since GDK event filters were removed, we drain grabbed
+ * KeyPress events directly from the X11 queue via XCheckMaskEvent().
+ * This is safe to call every frame from the draw/idle callback.
+ */
+int64_t nitty_global_hotkey_poll(void)
+{
+#ifdef GDK_WINDOWING_X11
+    if (g_global_hotkey_keycode != 0) {
+        GdkDisplay *gdk_dpy = gdk_display_get_default();
+        if (gdk_dpy && GDK_IS_X11_DISPLAY(gdk_dpy)) {
+            Display *xdpy = gdk_x11_display_get_xdisplay(gdk_dpy);
+            if (xdpy) {
+                XEvent xe;
+                /* Drain all pending KeyPress events from the X11 queue */
+                while (XCheckMaskEvent(xdpy, KeyPressMask, &xe)) {
+                    if (xe.type == KeyPress) {
+                        XKeyEvent *ke = (XKeyEvent *)&xe;
+                        if ((int)ke->keycode == g_global_hotkey_keycode) {
+                            unsigned int clean = ke->state & ~(Mod2Mask | LockMask);
+                            if (clean == g_global_hotkey_modmask) {
+                                g_global_hotkey_fired = 1;
+                                /* Drain any remaining events for this same key */
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+#endif
+
+    if (g_global_hotkey_fired) {
+        g_global_hotkey_fired = 0;
+        return 1;
+    }
+    return 0;
+}
+
+/* ── Quake mode window management ──────────────────────────────────────── */
+
+/**
+ * Configure window hints for quake mode:
+ * - Remove window decorations (title bar, borders)
+ * - Skip taskbar and pager (X11 only via GdkSurface API)
+ *
+ * Must be called AFTER the GtkWindow is realized (i.e., after gtk_window_present).
+ * GTK4 removed gtk_window_set_keep_above / gtk_window_set_skip_taskbar_hint.
+ * Use the GdkSurface X11 backend equivalents instead.
+ */
+void nitty_quake_setup_window(int64_t win_ptr)
+{
+    GtkWindow *win = (GtkWindow *)(intptr_t)win_ptr;
+    if (!win) return;
+
+    /* Remove window decorations (works on all backends) */
+    gtk_window_set_decorated(win, FALSE);
+
+#ifdef GDK_WINDOWING_X11
+    /* X11-specific: skip taskbar and pager via GdkSurface */
+    GdkDisplay *gdk_dpy = gdk_display_get_default();
+    if (gdk_dpy && GDK_IS_X11_DISPLAY(gdk_dpy)) {
+        GtkNative  *native  = GTK_NATIVE(win);
+        GdkSurface *surface = gtk_native_get_surface(native);
+        if (surface) {
+            gdk_x11_surface_set_skip_taskbar_hint(surface, TRUE);
+            gdk_x11_surface_set_skip_pager_hint(surface, TRUE);
+        }
+    }
+#endif
+}
+
+/**
+ * Move the quake window to screen position (x, y).
+ * X11: uses XMoveWindow for precise positioning.
+ * Wayland: no-op — position is controlled by the compositor.
+ */
+void nitty_quake_move_window(int64_t win_ptr, int64_t x, int64_t y)
+{
+#ifdef GDK_WINDOWING_X11
+    GdkDisplay *gdk_dpy = gdk_display_get_default();
+    if (!gdk_dpy || !GDK_IS_X11_DISPLAY(gdk_dpy)) return;
+
+    GtkWindow  *win     = (GtkWindow *)(intptr_t)win_ptr;
+    if (!win) return;
+
+    GtkNative  *native  = GTK_NATIVE(win);
+    GdkSurface *surface = gtk_native_get_surface(native);
+    if (!surface) return;
+
+    Display *xdpy = gdk_x11_display_get_xdisplay(gdk_dpy);
+    Window   xwin = gdk_x11_surface_get_xid(surface);
+
+    XMoveWindow(xdpy, xwin, (int)x, (int)y);
+    XSync(xdpy, False);
+#else
+    (void)win_ptr; (void)x; (void)y;
+#endif
+}
+
+/**
+ * Get the primary monitor width in pixels.
+ */
+int64_t nitty_quake_get_monitor_w(void)
+{
+    GdkDisplay *dpy = gdk_display_get_default();
+    if (!dpy) return 1920;
+    GListModel *monitors = gdk_display_get_monitors(dpy);
+    if (!monitors || g_list_model_get_n_items(monitors) == 0) return 1920;
+    GdkMonitor *mon = GDK_MONITOR(g_list_model_get_item(monitors, 0));
+    if (!mon) return 1920;
+    GdkRectangle geo;
+    gdk_monitor_get_geometry(mon, &geo);
+    g_object_unref(mon);
+    return (int64_t)geo.width;
+}
+
+/**
+ * Get the primary monitor height in pixels.
+ */
+int64_t nitty_quake_get_monitor_h(void)
+{
+    GdkDisplay *dpy = gdk_display_get_default();
+    if (!dpy) return 1080;
+    GListModel *monitors = gdk_display_get_monitors(dpy);
+    if (!monitors || g_list_model_get_n_items(monitors) == 0) return 1080;
+    GdkMonitor *mon = GDK_MONITOR(g_list_model_get_item(monitors, 0));
+    if (!mon) return 1080;
+    GdkRectangle geo;
+    gdk_monitor_get_geometry(mon, &geo);
+    g_object_unref(mon);
+    return (int64_t)geo.height;
+}
+

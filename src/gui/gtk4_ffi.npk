@@ -478,4 +478,24 @@ extern "nitty_gtk4_shim" {
     func:nitty_gtk4_key_was_consumed   = int64();
     func:nitty_gtk4_clipboard_copy     = NIL();
     func:nitty_gtk4_clipboard_paste    = NIL();
+
+    // v0.6.3: Global hotkey registration (X11 XGrabKey).
+    // nitty_x11_grab_key: register hotkey. keyval = GDK keyval (see nitty_gdk_key_f12 etc).
+    //   mod_mask = Nitpick bitmask (Shift=1, Ctrl=2, Alt=4, Super=8). Returns 1 on success.
+    // nitty_x11_ungrab_key: unregister the hotkey (same keyval/mod_mask as grab).
+    // nitty_global_hotkey_poll: returns 1 if hotkey fired since last poll; clears flag.
+    // nitty_global_hotkey_is_x11: returns 1 if X11 backend is active, 0 for Wayland.
+    func:nitty_x11_grab_key            = int64(int64:keyval, int64:mod_mask);
+    func:nitty_x11_ungrab_key          = NIL(int64:keyval, int64:mod_mask);
+    func:nitty_global_hotkey_poll      = int64();
+    func:nitty_global_hotkey_is_x11    = int64();
+
+    // v0.6.3: Quake mode window management.
+    // nitty_quake_setup_window: remove decorations + skip taskbar/pager. Call after realize.
+    // nitty_quake_move_window:  X11 only — move window to (x, y). No-op on Wayland.
+    // nitty_quake_get_monitor_w/h: primary monitor width/height in logical pixels.
+    func:nitty_quake_setup_window      = NIL(int64:win_ptr);
+    func:nitty_quake_move_window       = NIL(int64:win_ptr, int64:x, int64:y);
+    func:nitty_quake_get_monitor_w     = int64();
+    func:nitty_quake_get_monitor_h     = int64();
 }

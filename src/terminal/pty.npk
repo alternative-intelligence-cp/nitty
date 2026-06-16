@@ -75,8 +75,8 @@ pub func:pty_slave_path = string() {
     if (g_master_fd < 0i64) {
         pass("");
     }
-    string:path = nitty_pty_get_slave_path_str(g_master_fd);
-    pass(path);
+    string:slave_path = nitty_pty_get_slave_path_str(g_master_fd);
+    pass(slave_path);
 };
 
 // ═══════════════════════════════════════════════════════════════════

@@ -1,0 +1,131 @@
+// tests/test_quake.npk — Unit tests for v0.6.3 quake mode (state machine)
+
+use "../src/gui/quake.npk".*;
+
+func:failsafe = int32(tbb32:_err) { exit 98i32; };
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:label, int64:got, int64:expected) {
+    if (got == expected) {
+        g_pass = g_pass + 1i64;
+        println(string_concat("  PASS: ", label));
+    }
+    if (got != expected) {
+        g_fail = g_fail + 1i64;
+        println(string_concat("  FAIL: ", string_concat(label,
+            string_concat(" got=", string_concat(string_from_int(got),
+            string_concat(" expected=", string_from_int(expected)))))));
+    }
+    pass(NIL);
+};
+
+func:test_disabled_state = NIL() {
+    println("Test 1: quake_init with enabled=0");
+    drop(quake_init(0i64, 0i64, 100i64, 50i64, 150i64, 0i64));
+    drop(check("quake_is_enabled=0", raw quake_is_enabled(), 0i64));
+    drop(check("quake_is_visible=0", raw quake_is_visible(), 0i64));
+    pass(NIL);
+};
+
+func:test_enabled_state = NIL() {
+    println("Test 2: quake_init with enabled=1");
+    drop(quake_init(0i64, 1i64, 100i64, 50i64, 150i64, 0i64));
+    drop(check("quake_is_enabled=1", raw quake_is_enabled(), 1i64));
+    drop(check("quake_is_visible initial=0", raw quake_is_visible(), 0i64));
+    pass(NIL);
+};
+
+func:test_bottom_position = NIL() {
+    println("Test 3: quake_init bottom position");
+    drop(quake_init(0i64, 1i64, 100i64, 50i64, 150i64, 1i64));
+    drop(check("position=1 (bottom)", raw quake_get_position(), 1i64));
+    drop(quake_init(0i64, 1i64, 100i64, 50i64, 150i64, 0i64));
+    drop(check("position=0 (top)", raw quake_get_position(), 0i64));
+    pass(NIL);
+};
+
+func:test_initial_visibility = NIL() {
+    println("Test 4: initial visibility and animation state are 0");
+    drop(quake_init(0i64, 1i64, 100i64, 50i64, 200i64, 0i64));
+    drop(check("not visible at startup", raw quake_is_visible(), 0i64));
+    drop(check("not animating at startup", raw quake_is_animating(), 0i64));
+    pass(NIL);
+};
+
+func:test_toggle_disabled_noop = NIL() {
+    println("Test 5: quake_toggle no-op when disabled");
+    drop(quake_init(0i64, 0i64, 100i64, 50i64, 150i64, 0i64));
+    drop(quake_toggle());
+    drop(check("still not visible after toggle when disabled", raw quake_is_visible(), 0i64));
+    pass(NIL);
+};
+
+func:test_show_sets_visible = NIL() {
+    println("Test 6: quake_show sets visible=1");
+    drop(quake_init(0i64, 1i64, 100i64, 50i64, 0i64, 0i64));
+    drop(quake_show());
+    drop(check("visible after show", raw quake_is_visible(), 1i64));
+    pass(NIL);
+};
+
+func:test_hide_clears_visible = NIL() {
+    println("Test 7: quake_hide clears visible");
+    drop(quake_init(0i64, 1i64, 100i64, 50i64, 0i64, 0i64));
+    drop(quake_show());
+    drop(quake_hide());
+    drop(check("not visible after hide", raw quake_is_visible(), 0i64));
+    pass(NIL);
+};
+
+func:test_toggle_show_hide = NIL() {
+    println("Test 8: quake_toggle show then hide sequence");
+    drop(quake_init(0i64, 1i64, 100i64, 50i64, 0i64, 0i64));
+    drop(check("starts hidden", raw quake_is_visible(), 0i64));
+    drop(quake_toggle());
+    drop(check("visible after first toggle", raw quake_is_visible(), 1i64));
+    drop(quake_toggle());
+    drop(check("hidden after second toggle", raw quake_is_visible(), 0i64));
+    pass(NIL);
+};
+
+func:test_anim_ms_stored = NIL() {
+    println("Test 9: quake_get_anim_ms returns configured value");
+    drop(quake_init(0i64, 1i64, 100i64, 50i64, 250i64, 0i64));
+    drop(check("anim_ms=250", raw quake_get_anim_ms(), 250i64));
+    drop(quake_init(0i64, 1i64, 100i64, 50i64, 0i64, 0i64));
+    drop(check("anim_ms=0 (instant)", raw quake_get_anim_ms(), 0i64));
+    pass(NIL);
+};
+
+func:test_reinit_resets = NIL() {
+    println("Test 10: re-init resets visible state");
+    drop(quake_init(0i64, 1i64, 100i64, 50i64, 0i64, 0i64));
+    drop(quake_show());
+    drop(check("visible before reinit", raw quake_is_visible(), 1i64));
+    drop(quake_init(0i64, 1i64, 80i64, 40i64, 100i64, 1i64));
+    drop(check("not visible after reinit", raw quake_is_visible(), 0i64));
+    drop(check("position updated to bottom", raw quake_get_position(), 1i64));
+    pass(NIL);
+};
+
+func:main = int32() {
+    println("=== test_quake: Quake Mode State Machine Tests ===");
+    drop(test_disabled_state());
+    drop(test_enabled_state());
+    drop(test_bottom_position());
+    drop(test_initial_visibility());
+    drop(test_toggle_disabled_noop());
+    drop(test_show_sets_visible());
+    drop(test_hide_clears_visible());
+    drop(test_toggle_show_hide());
+    drop(test_anim_ms_stored());
+    drop(test_reinit_resets());
+
+    println("");
+    println(string_concat("=== Results: ", string_concat(string_from_int(g_pass),
+        string_concat(" passed, ", string_concat(string_from_int(g_fail), " failed ===")))));
+    if (g_fail == 0i64) { exit 0i32; }
+    exit 1i32;
+};

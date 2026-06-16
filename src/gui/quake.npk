@@ -1,0 +1,183 @@
+// src/gui/quake.npk — Quake mode window management (v0.6.3)
+//
+// Manages the Quake-style drop-down terminal:
+//   - Borderless, no taskbar entry, positioned at top (or bottom) of screen
+//   - Slides in/out over animation_ms ms (X11 only)
+//   - On Wayland: instant show/hide (no position control without layer-shell)
+
+use "../gui/gtk4_ffi.npk".*;
+
+// ── Module state ──────────────────────────────────────────────────────────────
+
+int64:g_qm_enabled       = 0i64;
+int64:g_qm_visible       = 0i64;
+int64:g_qm_win_ptr       = 0i64;
+int64:g_qm_width_pct     = 100i64;
+int64:g_qm_height_pct    = 50i64;
+int64:g_qm_anim_ms       = 150i64;
+int64:g_qm_position      = 0i64;   // 0 = top, 1 = bottom
+int64:g_qm_is_x11        = 0i64;
+
+// Animation state
+int64:g_qm_anim_active   = 0i64;
+int64:g_qm_anim_dir      = 0i64;   // 1 = showing, -1 = hiding
+int64:g_qm_anim_start_ms = 0i64;
+
+// Computed geometry (pixels)
+int64:g_qm_screen_w      = 0i64;
+int64:g_qm_screen_h      = 0i64;
+int64:g_qm_win_w         = 0i64;
+int64:g_qm_win_h         = 0i64;
+int64:g_qm_shown_y       = 0i64;
+int64:g_qm_hidden_y      = 0i64;
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/// Initialize quake mode. Call once after the GTK window is realized.
+/// win_ptr=0 is valid for pre-init (geometry is still computed from monitor).
+pub func:quake_init = NIL(int64:win_ptr, int64:enabled,
+                          int64:width_pct, int64:height_pct,
+                          int64:anim_ms, int64:pos_bottom) {
+    g_qm_win_ptr     = win_ptr;
+    g_qm_enabled     = enabled;
+    g_qm_width_pct   = width_pct;
+    g_qm_height_pct  = height_pct;
+    g_qm_anim_ms     = anim_ms;
+    g_qm_position    = pos_bottom;
+    g_qm_visible     = 0i64;
+    g_qm_anim_active = 0i64;
+    g_qm_is_x11      = nitty_global_hotkey_is_x11();
+
+    if (enabled == 0i64) { pass(NIL); }
+
+    g_qm_screen_w = nitty_quake_get_monitor_w();
+    g_qm_screen_h = nitty_quake_get_monitor_h();
+
+    g_qm_win_w = g_qm_screen_w * g_qm_width_pct / 100i64;
+    g_qm_win_h = g_qm_screen_h * g_qm_height_pct / 100i64;
+
+    if (pos_bottom == 0i64) {
+        g_qm_shown_y  = 0i64;
+        g_qm_hidden_y = 0i64 - g_qm_win_h;
+    }
+    if (pos_bottom == 1i64) {
+        g_qm_shown_y  = g_qm_screen_h - g_qm_win_h;
+        g_qm_hidden_y = g_qm_screen_h;
+    }
+
+    if (win_ptr != 0i64) {
+        drop(nitty_gtk4_window_set_size(win_ptr, g_qm_win_w, g_qm_win_h));
+        drop(nitty_quake_setup_window(win_ptr));
+        if (g_qm_is_x11 == 1i64) {
+            drop(nitty_quake_move_window(win_ptr, 0i64, g_qm_hidden_y));
+        }
+    }
+
+    pass(NIL);
+};
+
+/// Toggle quake window visibility.
+pub func:quake_toggle = NIL() {
+    if (g_qm_enabled == 0i64) { pass(NIL); }
+    if (g_qm_visible == 0i64) {
+        drop(quake_show());
+        pass(NIL);
+    }
+    drop(quake_hide());
+    pass(NIL);
+};
+
+/// Show the quake window.
+pub func:quake_show = NIL() {
+    if (g_qm_enabled == 0i64) { pass(NIL); }
+    if (g_qm_visible == 1i64) { pass(NIL); }
+
+    g_qm_visible = 1i64;
+    drop(nitty_gtk4_window_show(g_qm_win_ptr));
+
+    if (g_qm_anim_ms == 0i64) {
+        if (g_qm_is_x11 == 1i64) {
+            drop(nitty_quake_move_window(g_qm_win_ptr, 0i64, g_qm_shown_y));
+        }
+        g_qm_anim_active = 0i64;
+        pass(NIL);
+    }
+    if (g_qm_is_x11 == 1i64) {
+        g_qm_anim_active   = 1i64;
+        g_qm_anim_dir      = 1i64;
+        g_qm_anim_start_ms = nitty_gtk4_get_monotonic_ms();
+    }
+    pass(NIL);
+};
+
+/// Hide the quake window.
+pub func:quake_hide = NIL() {
+    if (g_qm_enabled == 0i64) { pass(NIL); }
+    if (g_qm_visible == 0i64) { pass(NIL); }
+
+    g_qm_visible = 0i64;
+
+    if (g_qm_anim_ms == 0i64) {
+        if (g_qm_is_x11 == 1i64) {
+            drop(nitty_quake_move_window(g_qm_win_ptr, 0i64, g_qm_hidden_y));
+        }
+        drop(nitty_gtk4_window_close(g_qm_win_ptr));
+        g_qm_anim_active = 0i64;
+        pass(NIL);
+    }
+    if (g_qm_is_x11 == 1i64) {
+        g_qm_anim_active   = 1i64;
+        g_qm_anim_dir      = -1i64;
+        g_qm_anim_start_ms = nitty_gtk4_get_monotonic_ms();
+        pass(NIL);
+    }
+    drop(nitty_gtk4_window_close(g_qm_win_ptr));
+    pass(NIL);
+};
+
+/// Advance animation one frame. Call from tw_on_draw() every frame.
+pub func:quake_tick = NIL() {
+    if (g_qm_enabled == 0i64)     { pass(NIL); }
+    if (g_qm_anim_active == 0i64) { pass(NIL); }
+    if (g_qm_is_x11 == 0i64)      { pass(NIL); }
+
+    int64:now     = nitty_gtk4_get_monotonic_ms();
+    int64:elapsed = now - g_qm_anim_start_ms;
+
+    // Progress: 0..1000 (1000 = 100%)
+    int64:prog = elapsed * 1000i64 / g_qm_anim_ms;
+    if (prog > 1000i64) { prog = 1000i64; }
+
+    int64:cur_y = 0i64;
+    if (g_qm_anim_dir == 1i64) {
+        int64:dist = g_qm_shown_y - g_qm_hidden_y;
+        cur_y = g_qm_hidden_y + dist * prog / 1000i64;
+    }
+    if (g_qm_anim_dir == -1i64) {
+        int64:dist = g_qm_hidden_y - g_qm_shown_y;
+        cur_y = g_qm_shown_y + dist * prog / 1000i64;
+    }
+
+    drop(nitty_quake_move_window(g_qm_win_ptr, 0i64, cur_y));
+
+    if (prog >= 1000i64) {
+        g_qm_anim_active = 0i64;
+        if (g_qm_anim_dir == -1i64) {
+            drop(nitty_gtk4_window_close(g_qm_win_ptr));
+        }
+    }
+
+    pass(NIL);
+};
+
+// ── Accessors ─────────────────────────────────────────────────────────────────
+
+pub func:quake_is_enabled   = int64() { pass(g_qm_enabled); };
+pub func:quake_is_visible   = int64() { pass(g_qm_visible); };
+pub func:quake_is_animating = int64() { pass(g_qm_anim_active); };
+pub func:quake_get_screen_w = int64() { pass(g_qm_screen_w); };
+pub func:quake_get_screen_h = int64() { pass(g_qm_screen_h); };
+pub func:quake_get_win_w    = int64() { pass(g_qm_win_w); };
+pub func:quake_get_win_h    = int64() { pass(g_qm_win_h); };
+pub func:quake_get_anim_ms  = int64() { pass(g_qm_anim_ms); };
+pub func:quake_get_position = int64() { pass(g_qm_position); };

@@ -385,7 +385,7 @@ pub func:session_save = int32() {
 
             drop(Toml.set_string(raw _tab_key(n, "title"),  title));
             drop(Toml.set_int(raw _tab_key(n, "custom_color"),  color));
-            drop(Toml.set_bool(raw _tab_key(n, "custom_title"), @cast<int32>(custom)));
+            drop(Toml.set_bool(raw _tab_key(n, "custom_title"), @cast_unchecked<int32>(custom)));
             drop(Toml.set_bool(raw _tab_key(n, "active"),       is_active));
             drop(Toml.set_string(raw _tab_key(n, "cwd"),    cwd));
             // v0.5.5: save pane_count for active tab, 1 for others
@@ -419,12 +419,12 @@ pub func:session_load = int32() {
     g_sess_win_width  = 0i64;
     g_sess_win_height = 0i64;
 
-    string:path = raw _session_path();
-    int32:exists = raw fs_exists(path);
+    string:sess_path = raw _session_path();
+    int32:exists = raw fs_exists(sess_path);
     if (exists == 0i32) { pass(0i32); }
 
     drop(Toml.clear());
-    int32:n = raw Toml.parse_file(path);
+    int32:n = raw Toml.parse_file(sess_path);
     if (n < 0i32) { pass(0i32); }
 
     // Validate version

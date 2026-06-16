@@ -1,0 +1,8 @@
+// tmp test to narrow down compile error
+use "../src/gui/quake.npk".*;
+
+func:failsafe = int32(tbb32:_err) { exit 98i32; };
+
+func:main = int32() {
+    exit 0i32;
+};

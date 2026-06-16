@@ -550,6 +550,36 @@ int64_t nitty_gtk4_key_was_consumed(void);
 void    nitty_gtk4_clipboard_copy(void);
 void    nitty_gtk4_clipboard_paste(void);
 
+/**
+ * v0.6.3: Global hotkey registration (X11 XGrabKey) and Quake mode.
+ *
+ * nitty_x11_grab_key:          Register a global hotkey via XGrabKey on the root window.
+ *                              keyval: GDK keyval (e.g. GDK_KEY_F12).
+ *                              mod_mask: GDK modifier mask (e.g. 0 = no mods).
+ *                              Returns 1 on success, 0 on failure.
+ * nitty_x11_ungrab_key:        Unregister the global hotkey.
+ * nitty_global_hotkey_poll:    Returns 1 if the global hotkey fired since last poll, 0 otherwise.
+ *                              Clears the fired flag on read.
+ * nitty_global_hotkey_is_x11:  Returns 1 if the GDK backend is X11, 0 if Wayland/other.
+ *                              Used to decide which registration path to take.
+ *
+ * nitty_quake_setup_window:    Set window hints for quake mode (no decorations, skip taskbar).
+ *                              Must be called after the window is realized.
+ * nitty_quake_move_window:     Move the quake window to (x, y) in screen coordinates.
+ *                              Only works on X11; no-op on Wayland.
+ * nitty_quake_get_monitor_w:   Primary monitor width in pixels.
+ * nitty_quake_get_monitor_h:   Primary monitor height in pixels.
+ */
+int64_t nitty_x11_grab_key(int64_t keyval, int64_t mod_mask);
+void    nitty_x11_ungrab_key(int64_t keyval, int64_t mod_mask);
+int64_t nitty_global_hotkey_poll(void);
+int64_t nitty_global_hotkey_is_x11(void);
+
+void    nitty_quake_setup_window(int64_t win_ptr);
+void    nitty_quake_move_window(int64_t win_ptr, int64_t x, int64_t y);
+int64_t nitty_quake_get_monitor_w(void);
+int64_t nitty_quake_get_monitor_h(void);
+
 #ifdef __cplusplus
 }
 #endif

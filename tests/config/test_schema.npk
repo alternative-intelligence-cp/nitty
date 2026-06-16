@@ -48,7 +48,7 @@ func:main = int32() {
     drop(schema_init());
 
     // T01: schema_count() == 12
-    drop(check("T01_schema_count", 12i64, raw schema_count()));
+    drop(check("T01_schema_count", 18i64, raw schema_count()));
 
     // T02: default for terminal.font_family == "Monospace"
     drop(check_str("T02_default_font_family",

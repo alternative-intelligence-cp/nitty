@@ -40,8 +40,8 @@ type = "binary"
 sources = ["src/main.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = ["-O2"]
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
 
 # ── Test suite ────────────────────────────────────────────────────────────────
 
@@ -50,15 +50,15 @@ type = "binary"
 sources = ["tests/test_app.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
 
 [target.test_gtk4_ffi]
 type = "binary"
 sources = ["tests/test_gtk4_ffi.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_renderer]
@@ -66,7 +66,7 @@ type = "binary"
 sources = ["tests/test_renderer.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_input]
@@ -74,7 +74,7 @@ type = "binary"
 sources = ["tests/test_input.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_terminal_grid]
@@ -82,7 +82,7 @@ type = "binary"
 sources = ["tests/test_terminal_grid.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_pty]
@@ -122,7 +122,7 @@ type = "binary"
 sources = ["tests/test_output_processing.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_utf8]
@@ -233,7 +233,7 @@ type = "binary"
 sources = ["tests/test_terminal_integration.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
 
 [target.test_terminal_widget]
@@ -241,15 +241,15 @@ type = "binary"
 sources = ["tests/test_terminal_widget.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
 
 [target.test_color_scheme]
 type = "binary"
 sources = ["tests/test_color_scheme.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_color_resolve]
@@ -257,7 +257,7 @@ type = "binary"
 sources = ["tests/test_color_resolve.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_text_attributes]
@@ -265,7 +265,7 @@ type = "binary"
 sources = ["tests/test_text_attributes.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_cursor]
@@ -273,7 +273,7 @@ type = "binary"
 sources = ["tests/test_cursor.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_scrollback]
@@ -281,7 +281,7 @@ type = "binary"
 sources = ["tests/test_scrollback.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_unicode_width]
@@ -289,7 +289,7 @@ type = "binary"
 sources = ["tests/test_unicode_width.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_font_config]
@@ -297,7 +297,7 @@ type = "binary"
 sources = ["tests/test_font_config.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_glyph_atlas]
@@ -305,7 +305,7 @@ type = "binary"
 sources = ["tests/test_glyph_atlas.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_damage_tracker]
@@ -313,7 +313,7 @@ type = "binary"
 sources = ["tests/test_damage_tracker.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_render_perf]
@@ -321,7 +321,7 @@ type = "binary"
 sources = ["tests/test_render_perf.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build"]
 
 [target.test_tab]
@@ -337,8 +337,8 @@ type = "binary"
 sources = ["tests/test_tab_manager.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
 
 # v0.4.4: Session persistence tests
 [target.test_session]
@@ -346,8 +346,8 @@ type = "binary"
 sources = ["tests/test_session.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
 
 # v0.5.0: Split tree data model tests (pure Nitpick, no shim deps)
 [target.test_split_tree]
@@ -427,7 +427,7 @@ type = "binary"
 sources = ["tests/config/test_config.npk"]
 deps = ["gtk4_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
 
 # v0.6.1: Profile system tests
@@ -445,5 +445,31 @@ type = "binary"
 sources = ["tests/test_hotkey.npk"]
 deps = ["gtk4_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
+link_libraries = ["nitty_gtk4_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build"]
+
+# v0.6.3: Quake mode state machine tests
+[target.test_quake]
+type = "binary"
+sources = ["tests/test_quake.npk"]
+deps = ["gtk4_shim", "pty_shim"]
+flags = []
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build"]
+
+# v0.6.3: Global hotkey module tests
+[target.test_global_hotkey]
+type = "binary"
+sources = ["tests/test_global_hotkey.npk"]
+deps = ["gtk4_shim", "pty_shim"]
+flags = []
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build"]
+
+[target.test_quake_minimal]
+type = "binary"
+sources = ["tests/test_quake_minimal.npk"]
+deps = ["gtk4_shim", "pty_shim"]
+flags = []
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build"]

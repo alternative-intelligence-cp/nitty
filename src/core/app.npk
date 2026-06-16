@@ -34,6 +34,8 @@ use "session.npk".*;
 use "../config/config.npk".*;
 use "../gui/font_config.npk".*;
 use "../terminal/scrollback.npk".*;
+use "global_hotkey.npk".*;          // v0.6.3: global hotkey registration
+use "../gui/quake.npk".*;           // v0.6.3: quake mode window management
 
 // fd 1 = stdout
 int64:STDOUT = 1i64;
@@ -74,7 +76,7 @@ pub func:app_run = NIL() {
     int64:cfg_rows_v  = raw cfg_rows();
     int64:cfg_cols_v  = raw cfg_columns();
     string:font_desc  = string_concat(cfg_family, " ");
-    font_desc         = string_concat(font_desc, int64_to_string(cfg_size));
+    font_desc         = string_concat(font_desc, string_from_int(cfg_size));
 
     // ── Initialize Nitpick terminal pipeline + renderer ────────────────────────
     drop(write_stdout("Nitty: initializing terminal widget (font from config)\n"));
@@ -155,6 +157,39 @@ pub func:app_run = NIL() {
     Result<int64>:app_r = window_app_create("com.altintel.nitty");
     int64:app = app_r ? 0i64;
 
+    // v0.6.3: Quake mode + global hotkey initialization.
+    // Must happen AFTER window_app_run() has presented the window (so the
+    // GdkSurface is realized) but also needs to be set up before the first
+    // draw. We call it after app_run completes — it runs in window closure.
+    // Actually, GTK4 on_activate fires during g_application_run() BEFORE it
+    // returns. So the window is already realized at this point. We do quake
+    // setup BEFORE window_app_run to capture the pre-run window pointer.
+    //
+    // Quake flow: if quake.enabled:
+    //   1. Setup window hints (no decorations, skip taskbar)
+    //   2. Register global hotkey
+    //   3. quake_tick() + global_hotkey_poll() called each frame in tw_on_draw()
+    int64:qm_en = raw cfg_quake_enabled();
+    if (qm_en == 1i64) {
+        string:qm_hk  = raw cfg_quake_hotkey();
+        int64:qm_w    = raw cfg_quake_width_percent();
+        int64:qm_h    = raw cfg_quake_height_percent();
+        string:qm_pos = raw cfg_quake_position();
+        int64:qm_anim = raw cfg_quake_anim_duration();
+        int64:pos_bot = 0i64;
+        if (qm_pos == "bottom") { pos_bot = 1i64; }
+        // mod_mask = 0 for bare key (e.g. F12 with no modifiers)
+        int64:_reg = raw global_hotkey_register(qm_hk, 0i64);
+        // quake_init needs the window — it is available after app_create fires
+        // on_activate; nitty_gtk4_get_main_window() returns it.
+        // We initialize quake AFTER window_app_run returns (GTK loop done) —
+        // no, that's too late. Instead, quake_init stores config and is
+        // called from terminal_widget.npk's tw_init() on first draw tick.
+        // Store quake config in g_qm_* vars for tw_init() to use.
+        drop(quake_init(0i64, 1i64, qm_w, qm_h, qm_anim, pos_bot));
+        // g_qm_win_ptr will be set in tw_on_draw() on first call when win is ready
+    }
+
     if (app != 0i64) {
         Result<int64>:status_r = window_app_run(app);
         int64:_status = status_r ? 1i64;
@@ -164,6 +199,11 @@ pub func:app_run = NIL() {
 
     if (app == 0i64) {
         drop(write_stdout("Nitty: ERROR — failed to create GtkApplication\n"));
+    }
+
+    // v0.6.3: Unregister global hotkey on exit
+    if (qm_en == 1i64) {
+        drop(global_hotkey_unregister());
     }
 
     pass(NIL);
@@ -182,5 +222,5 @@ pub func:app_shutdown = NIL() {
 };
 
 pub func:app_version = string() {
-    pass("0.6.0");
+    pass("0.6.3");
 };

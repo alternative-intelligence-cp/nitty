@@ -1,0 +1,122 @@
+// src/core/global_hotkey.npk — Cross-platform global hotkey registration (v0.6.3)
+//
+// Registers a system-wide hotkey that fires even when Nitty is not focused.
+// X11:     Uses XGrabKey on the root window + XCheckMaskEvent polling.
+// Wayland: Not supported. Prints warning, returns 0.
+
+use "../gui/gtk4_ffi.npk".*;
+
+// ── Module state ──────────────────────────────────────────────────────────────
+
+int64:g_gh_registered = 0i64;
+int64:g_gh_keyval     = 0i64;
+int64:g_gh_mods       = 0i64;
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/// Returns 1 if global hotkeys are supported (X11 only for now), 0 otherwise.
+pub func:global_hotkey_is_available = int64() {
+    pass(nitty_global_hotkey_is_x11());
+};
+
+/// Register a global hotkey.
+/// key_name: e.g. "F12", "t", "Return"
+/// mod_mask: Nitpick modifier bitmask (0 = no mods, 4 = Alt, etc.)
+/// Returns 1 on success, 0 if not supported or key is unknown.
+pub func:global_hotkey_register = int64(string:key_name, int64:mod_mask) {
+    int64:kv = raw _gh_keyname_to_keyval(key_name);
+    if (kv == 0i64) {
+        println(string_concat("global_hotkey_register: unknown key name: ", key_name));
+        pass(0i64);
+    }
+
+    if (nitty_global_hotkey_is_x11() == 0i64) {
+        println("Global hotkeys: not available on Wayland (no layer-shell).");
+        pass(0i64);
+    }
+
+    if (g_gh_registered == 1i64) {
+        drop(global_hotkey_unregister());
+    }
+
+    int64:grab_result = nitty_x11_grab_key(kv, mod_mask);
+    if (grab_result == 1i64) {
+        g_gh_registered = 1i64;
+        g_gh_keyval     = kv;
+        g_gh_mods       = mod_mask;
+        println(string_concat("Global hotkey registered: ", key_name));
+    }
+    if (grab_result != 1i64) {
+        println(string_concat("Global hotkey FAILED for: ", key_name));
+    }
+    pass(grab_result);
+};
+
+/// Unregister the current global hotkey.
+pub func:global_hotkey_unregister = NIL() {
+    if (g_gh_registered == 0i64) { pass(NIL); }
+    drop(nitty_x11_ungrab_key(g_gh_keyval, g_gh_mods));
+    g_gh_registered = 0i64;
+    g_gh_keyval     = 0i64;
+    g_gh_mods       = 0i64;
+    pass(NIL);
+};
+
+/// Poll whether the global hotkey fired since the last call.
+/// Returns 1 if fired, 0 otherwise. Safe to call every frame.
+pub func:global_hotkey_poll = int64() {
+    if (g_gh_registered == 0i64) { pass(0i64); }
+    pass(nitty_global_hotkey_poll());
+};
+
+/// Returns 1 if the hotkey is currently registered.
+pub func:global_hotkey_is_registered = int64() {
+    pass(g_gh_registered);
+};
+
+// ── Key name → GDK keyval ─────────────────────────────────────────────────────
+
+func:_gh_keyname_to_keyval = int64(string:name) {
+    int64:nlen = string_length(name);
+    if (nlen == 1i64) {
+        string:lower = string_to_lower(name);
+        if (lower == "a") { pass(97i64); }   if (lower == "b") { pass(98i64); }
+        if (lower == "c") { pass(99i64); }   if (lower == "d") { pass(100i64); }
+        if (lower == "e") { pass(101i64); }  if (lower == "f") { pass(102i64); }
+        if (lower == "g") { pass(103i64); }  if (lower == "h") { pass(104i64); }
+        if (lower == "i") { pass(105i64); }  if (lower == "j") { pass(106i64); }
+        if (lower == "k") { pass(107i64); }  if (lower == "l") { pass(108i64); }
+        if (lower == "m") { pass(109i64); }  if (lower == "n") { pass(110i64); }
+        if (lower == "o") { pass(111i64); }  if (lower == "p") { pass(112i64); }
+        if (lower == "q") { pass(113i64); }  if (lower == "r") { pass(114i64); }
+        if (lower == "s") { pass(115i64); }  if (lower == "t") { pass(116i64); }
+        if (lower == "u") { pass(117i64); }  if (lower == "v") { pass(118i64); }
+        if (lower == "w") { pass(119i64); }  if (lower == "x") { pass(120i64); }
+        if (lower == "y") { pass(121i64); }  if (lower == "z") { pass(122i64); }
+        if (name == "0") { pass(48i64); }  if (name == "1") { pass(49i64); }
+        if (name == "2") { pass(50i64); }  if (name == "3") { pass(51i64); }
+        if (name == "4") { pass(52i64); }  if (name == "5") { pass(53i64); }
+        if (name == "6") { pass(54i64); }  if (name == "7") { pass(55i64); }
+        if (name == "8") { pass(56i64); }  if (name == "9") { pass(57i64); }
+        if (name == "`") { pass(96i64); }
+        pass(0i64);
+    }
+
+    if (name == "F1")     { pass(nitty_gdk_key_f1()); }
+    if (name == "F2")     { pass(nitty_gdk_key_f2()); }
+    if (name == "F3")     { pass(nitty_gdk_key_f3()); }
+    if (name == "F4")     { pass(nitty_gdk_key_f4()); }
+    if (name == "F5")     { pass(nitty_gdk_key_f5()); }
+    if (name == "F6")     { pass(nitty_gdk_key_f6()); }
+    if (name == "F7")     { pass(nitty_gdk_key_f7()); }
+    if (name == "F8")     { pass(nitty_gdk_key_f8()); }
+    if (name == "F9")     { pass(nitty_gdk_key_f9()); }
+    if (name == "F10")    { pass(nitty_gdk_key_f10()); }
+    if (name == "F11")    { pass(nitty_gdk_key_f11()); }
+    if (name == "F12")    { pass(nitty_gdk_key_f12()); }
+    if (name == "Return") { pass(nitty_gdk_key_return()); }
+    if (name == "Escape") { pass(nitty_gdk_key_escape()); }
+    if (name == "Space")  { pass(nitty_gdk_key_space()); }
+    if (name == "Tab")    { pass(nitty_gdk_key_tab()); }
+    pass(0i64);
+};
