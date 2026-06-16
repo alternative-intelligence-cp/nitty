@@ -1,4 +1,4 @@
-// src/core/split_tree.npk -- Split pane binary tree (v0.5.0)
+// src/core/split_tree.npk -- Split pane binary tree (v0.5.2)
 //
 // Models the layout of panes within a single tab as a binary tree.
 // Each node is either a Leaf (terminal pane) or a Split (two children
@@ -572,4 +572,217 @@ pub func:split_tree_find_pane_at = int64(int64:px, int64:py) {
         i = i + 1i64;
     }
     pass(found);
+};
+
+// ===================================================================
+// Public API: Resize helpers (v0.5.2)
+// ===================================================================
+
+/// Return the orientation of the active pane's parent split node.
+/// 0=Horizontal (left|right), 1=Vertical (top|bottom), -1=no parent (root leaf).
+/// Used to determine whether Ctrl+Shift+Left/Right is applicable.
+pub func:split_tree_get_active_parent_orient = int64() {
+    int64:active = g_ms[1];  // g_active_pane
+
+    // Find the leaf node index for active pane
+    int64:leaf_idx = 63i64;
+    int64:pi = 0i64;
+    while (pi < g_ms[0]) {
+        if (g_kind[pi] == 1i64 && g_val_a[pi] == active) {
+            leaf_idx = pi;
+        }
+        pi = pi + 1i64;
+    }
+    if (leaf_idx >= 63i64) { pass(-1i64); }
+
+    // Find the split node whose left or right child is leaf_idx
+    int64:si = 0i64;
+    while (si < g_ms[0]) {
+        if (g_kind[si] == 2i64) {
+            if (g_val_c[si] == leaf_idx || g_val_d[si] == leaf_idx) {
+                pass(g_val_a[si]);  // direction: 0=Horiz, 1=Vert
+            }
+        }
+        si = si + 1i64;
+    }
+    pass(-1i64);  // no parent — root is a leaf (single pane)
+};
+
+// ===================================================================
+// Public API: Spatial navigation (v0.5.2)
+// ===================================================================
+
+/// Find the nearest pane in the given direction from pane_id.
+/// dir: 0=Left, 1=Right, 2=Up, 3=Down
+/// total_w, total_h: full widget dimensions (used for layout run).
+/// Returns target pane_id, or the original pane_id if no neighbor found.
+/// Requires a prior or inline split_tree_layout call to populate g_lo arrays.
+pub func:split_tree_find_neighbor = int64(int64:pane_id, int64:dir, int64:total_w, int64:total_h) {
+    // Run layout to get fresh geometry
+    drop(split_tree_layout(0i64, 0i64, total_w, total_h));
+
+    int64:lcount = g_ms[3];  // layout_count
+    if (lcount <= 1i64) { pass(pane_id); }  // single pane, no neighbors
+
+    // Find the geometry of pane_id in layout output
+    int64:ax = 0i64;
+    int64:ay = 0i64;
+    int64:aw = 0i64;
+    int64:ah = 0i64;
+    int64:found_self = 0i64;
+    int64:li = 0i64;
+    while (li < lcount) {
+        if (g_lo_pane_id[li] == pane_id) {
+            ax = g_lo_x[li];
+            ay = g_lo_y[li];
+            aw = g_lo_w[li];
+            ah = g_lo_h[li];
+            found_self = 1i64;
+        }
+        li = li + 1i64;
+    }
+    if (found_self == 0i64) { pass(pane_id); }  // not found — no-op
+
+    // Scan all panes for candidates in the requested direction
+    // Track best: minimum distance and corresponding pane_id
+    int64:best_dist = 999999i64;
+    int64:best_pid  = pane_id;  // default: no movement
+
+    int64:ci = 0i64;
+    while (ci < lcount) {
+        int64:cpid = g_lo_pane_id[ci];
+        if (cpid != pane_id) {
+            int64:cx = g_lo_x[ci];
+            int64:cy = g_lo_y[ci];
+            int64:cw = g_lo_w[ci];
+            int64:ch = g_lo_h[ci];
+
+            // Compute overlap and distance for each direction
+            // dir=0 Left: candidate must be to the left (cx+cw <= ax), vertical overlap
+            if (dir == 0i64) {
+                int64:right_edge = cx + cw;
+                int64:dist = ax - right_edge;
+                // vertical overlap: max(ay, cy) < min(ay+ah, cy+ch)
+                int64:ov_top = ay;
+                if (cy > ov_top) { ov_top = cy; }
+                int64:ov_bot = ay + ah;
+                if (cy + ch < ov_bot) { ov_bot = cy + ch; }
+                if (ov_top < ov_bot && dist >= 0i64 && dist < best_dist) {
+                    best_dist = dist;
+                    best_pid  = cpid;
+                }
+            }
+
+            // dir=1 Right: candidate must be to the right (cx >= ax+aw), vertical overlap
+            if (dir == 1i64) {
+                int64:left_edge = cx;
+                int64:dist = left_edge - (ax + aw);
+                int64:ov_top = ay;
+                if (cy > ov_top) { ov_top = cy; }
+                int64:ov_bot = ay + ah;
+                if (cy + ch < ov_bot) { ov_bot = cy + ch; }
+                if (ov_top < ov_bot && dist >= 0i64 && dist < best_dist) {
+                    best_dist = dist;
+                    best_pid  = cpid;
+                }
+            }
+
+            // dir=2 Up: candidate must be above (cy+ch <= ay), horizontal overlap
+            if (dir == 2i64) {
+                int64:bot_edge = cy + ch;
+                int64:dist = ay - bot_edge;
+                int64:ov_lft = ax;
+                if (cx > ov_lft) { ov_lft = cx; }
+                int64:ov_rgt = ax + aw;
+                if (cx + cw < ov_rgt) { ov_rgt = cx + cw; }
+                if (ov_lft < ov_rgt && dist >= 0i64 && dist < best_dist) {
+                    best_dist = dist;
+                    best_pid  = cpid;
+                }
+            }
+
+            // dir=3 Down: candidate must be below (cy >= ay+ah), horizontal overlap
+            if (dir == 3i64) {
+                int64:top_edge = cy;
+                int64:dist = top_edge - (ay + ah);
+                int64:ov_lft = ax;
+                if (cx > ov_lft) { ov_lft = cx; }
+                int64:ov_rgt = ax + aw;
+                if (cx + cw < ov_rgt) { ov_rgt = cx + cw; }
+                if (ov_lft < ov_rgt && dist >= 0i64 && dist < best_dist) {
+                    best_dist = dist;
+                    best_pid  = cpid;
+                }
+            }
+        }
+        ci = ci + 1i64;
+    }
+    pass(best_pid);
+};
+
+// ===================================================================
+// Public API: Sequential cycling (v0.5.2)
+// ===================================================================
+
+/// Return the next pane_id after the active pane in node-pool order.
+/// Wraps around. Returns active pane if only one pane exists.
+pub func:split_tree_next_pane = int64() {
+    int64:active = g_ms[1];  // g_active_pane
+    // Collect leaf pane_ids in pool order (stable insertion order)
+    // We scan up to g_ms[0] (node_count) for leaf nodes
+    int64:first_pid  = active;   // for wrap
+    int64:found_self = 0i64;
+    int64:next_pid   = active;   // result: default no-move
+    int64:count      = 0i64;
+
+    int64:ni = 0i64;
+    while (ni < g_ms[0]) {
+        if (g_kind[ni] == 1i64) {
+            // This is a leaf node
+            int64:pid = g_val_a[ni];
+            if (count == 0i64) { first_pid = pid; }
+            if (found_self == 1i64 && next_pid == active) {
+                // We just passed the active pane — this is the next one
+                next_pid = pid;
+            }
+            if (pid == active) { found_self = 1i64; }
+            count = count + 1i64;
+        }
+        ni = ni + 1i64;
+    }
+    // Wrap-around: if active was the last, next is first
+    if (next_pid == active && count > 1i64) {
+        next_pid = first_pid;
+    }
+    pass(next_pid);
+};
+
+/// Return the previous pane_id before the active pane in node-pool order.
+/// Wraps around. Returns active pane if only one pane exists.
+pub func:split_tree_prev_pane = int64() {
+    int64:active = g_ms[1];  // g_active_pane
+    int64:last_pid  = active;  // last leaf seen before active
+    int64:prev_pid  = active;  // result: default no-move
+    int64:final_pid = active;  // last leaf seen overall (for wrap)
+    int64:count     = 0i64;
+
+    int64:ni = 0i64;
+    while (ni < g_ms[0]) {
+        if (g_kind[ni] == 1i64) {
+            int64:pid = g_val_a[ni];
+            if (pid == active && count > 0i64) {
+                // prev is the leaf we saw just before active
+                prev_pid = last_pid;
+            }
+            last_pid  = pid;
+            final_pid = pid;
+            count = count + 1i64;
+        }
+        ni = ni + 1i64;
+    }
+    // Wrap-around: if active was the first, prev is the last
+    if (prev_pid == active && count > 1i64) {
+        prev_pid = final_pid;
+    }
+    pass(prev_pid);
 };

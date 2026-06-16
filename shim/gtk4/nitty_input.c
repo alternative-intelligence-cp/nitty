@@ -61,7 +61,12 @@ static int g_scroll_event = 0;
  * 5..13=direct(idx 0..8) 14=move_left 15=move_right */
 static int g_tab_event = 0;
 
-/* v0.5.1: Pane event queue: 0=none 16=split_horiz 17=split_vert 18=close_pane_or_tab */
+/* v0.5.1: Pane event queue:
+ *   0=none 16=split_horiz 17=split_vert 18=close_pane_or_tab
+ *   19=resize_up 20=resize_down (Ctrl+Shift+Up/Down)
+ *   21=nav_left 22=nav_right 23=nav_up 24=nav_down (Alt+Arrow)
+ *   25=cycle_next 26=cycle_prev (Ctrl+Tab / Ctrl+Shift+Tab)
+ */
 static int g_pane_event = 0;
 
 /* v0.4.2: Tab drag-and-drop state */
@@ -105,6 +110,7 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
 
     /* v0.4.1: Intercept Ctrl+Shift tab shortcuts before PTY routing */
     /* v0.5.1: Added E=split_horiz, O=split_vert; W now emits pane_event=18 */
+    /* v0.5.2: Added Up=resize_up(19), Down=resize_down(20) */
     if ((state & GDK_CONTROL_MASK) && (state & GDK_SHIFT_MASK)) {
         switch (keyval) {
             case GDK_KEY_t: case GDK_KEY_T:
@@ -112,11 +118,17 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
             case GDK_KEY_w: case GDK_KEY_W:
                 /* v0.5.1: pane_event=18 lets Nitpick decide: close pane or tab */
                 g_pane_event = 18; return TRUE;
-            /* v0.4.2: Ctrl+Shift+Left/Right to move active tab */
+            /* v0.4.2: Ctrl+Shift+Left/Right: dual-mode (tab move OR pane resize) */
+            /* Nitpick checks pane_count to decide which action to take.          */
             case GDK_KEY_Left:  case GDK_KEY_KP_Left:
-                g_tab_event = 14; return TRUE; /* move tab left */
+                g_tab_event = 14; return TRUE; /* dual: tab-move-left or pane-resize-left */
             case GDK_KEY_Right: case GDK_KEY_KP_Right:
-                g_tab_event = 15; return TRUE; /* move tab right */
+                g_tab_event = 15; return TRUE; /* dual: tab-move-right or pane-resize-right */
+            /* v0.5.2: Ctrl+Shift+Up/Down for vertical pane resize */
+            case GDK_KEY_Up:    case GDK_KEY_KP_Up:
+                g_pane_event = 19; return TRUE; /* resize_up: shrink active pane vertically */
+            case GDK_KEY_Down:  case GDK_KEY_KP_Down:
+                g_pane_event = 20; return TRUE; /* resize_down: grow active pane vertically */
             /* v0.5.1: Split pane shortcuts */
             case GDK_KEY_e: case GDK_KEY_E:
                 g_pane_event = 16; return TRUE; /* split horizontal */
@@ -126,7 +138,23 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
         }
     }
 
+    /* v0.5.2: Intercept Alt+Arrow for pane focus navigation before PTY routing */
+    if ((state & GDK_ALT_MASK) && !(state & GDK_CONTROL_MASK) && !(state & GDK_SHIFT_MASK)) {
+        switch (keyval) {
+            case GDK_KEY_Left:  case GDK_KEY_KP_Left:
+                g_pane_event = 21; return TRUE; /* nav_left */
+            case GDK_KEY_Right: case GDK_KEY_KP_Right:
+                g_pane_event = 22; return TRUE; /* nav_right */
+            case GDK_KEY_Up:    case GDK_KEY_KP_Up:
+                g_pane_event = 23; return TRUE; /* nav_up */
+            case GDK_KEY_Down:  case GDK_KEY_KP_Down:
+                g_pane_event = 24; return TRUE; /* nav_down */
+            default: break;
+        }
+    }
+
     /* v0.4.1: Intercept Ctrl+PgUp/PgDn tab switching before PTY routing */
+    /* v0.5.2: Added Ctrl+Tab (25) / Ctrl+Shift+Tab (26) for pane cycling */
     if (state & GDK_CONTROL_MASK) {
         switch (keyval) {
             case GDK_KEY_Page_Up:   g_tab_event = 3; return TRUE;  /* prev tab */
@@ -141,6 +169,14 @@ static gboolean on_key_pressed(GtkEventControllerKey *controller,
             case GDK_KEY_7: g_tab_event = 11; return TRUE;
             case GDK_KEY_8: g_tab_event = 12; return TRUE;
             case GDK_KEY_9: g_tab_event = 13; return TRUE;
+            /* v0.5.2: Ctrl+Tab / Ctrl+Shift+Tab — cycle panes */
+            case GDK_KEY_Tab: case GDK_KEY_ISO_Left_Tab:
+                if (state & GDK_SHIFT_MASK) {
+                    g_pane_event = 26; /* cycle_prev */
+                } else {
+                    g_pane_event = 25; /* cycle_next */
+                }
+                return TRUE;
             default: break;
         }
     }

@@ -1,5 +1,9 @@
 // src/gui/split_view.npk — GTK4 widget hierarchy for split pane layout
 //
+// v0.5.2: Paned position tracking for keyboard resize and mouse drag sync.
+//   split_view_update_paned_positions: push split_tree ratios → GtkPaned
+//   split_view_poll_paned_positions:   pull GtkPaned positions → split_tree
+//   split_view_resize_all_ptys:        TIOCSWINSZ for all live panes
 // v0.5.1: New module. Renders the binary split tree (split_tree.npk) as
 // nested GTK4 containers: leaf nodes become GtkDrawingArea, split nodes
 // become GtkPaned. The hierarchy is rebuilt from scratch on each split/close.
@@ -489,4 +493,164 @@ pub func:split_view_get_pane_pid = int64(int64:pane_id) {
     if (pane_id < 0i64) { pass(-1i64); }
     if (pane_id >= 63i64) { pass(-1i64); }
     pass(g_sv_pane_pid[pane_id]);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// v0.5.2: GtkPaned position tracking (keyboard resize and mouse drag sync)
+// ═══════════════════════════════════════════════════════════════════════
+
+// g_sv_paned_ptrs[i] = GtkPaned widget pointer for divider index i (or 0)
+// populated by split_view_build via split_view_register_paned()
+int64[63]:g_sv_paned_ptrs = [
+    0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+    0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+    0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+    0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+    0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+    0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+    0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+    0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64
+];
+
+// g_sv_paned_last_pos[i] = last-polled GtkPaned position for drag detection
+int64[63]:g_sv_paned_last_pos = [
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
+    -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64
+];
+
+/// Register a GtkPaned pointer for a given divider index.
+/// Called from split_view_build after creating each GtkPaned widget.
+pub func:split_view_register_paned = NIL(int64:divider_idx, int64:paned_ptr) {
+    if (divider_idx < 0i64)  { pass(NIL); }
+    if (divider_idx >= 63i64) { pass(NIL); }
+    g_sv_paned_ptrs[divider_idx]     = paned_ptr;
+    g_sv_paned_last_pos[divider_idx] = -1i64;  // reset polling baseline
+    pass(NIL);
+};
+
+/// Push keyboard-resize result to GtkPaned widgets.
+/// After calling split_tree_adjust_ratio(), call this to
+/// update all GtkPaned positions from the current ratios.
+/// total_w and total_h are the pixel dimensions of the split area.
+pub func:split_view_update_paned_positions = NIL(int64:total_w, int64:total_h) {
+    // Rerun layout with actual pixel dimensions
+    drop(split_tree_layout(0i64, 0i64, total_w, total_h));
+
+    int64:dcount = raw split_tree_get_divider_count();
+    int64:di = 0i64;
+    while (di < dcount) {
+        int64:paned = g_sv_paned_ptrs[di];
+        if (paned != 0i64) {
+            // Divider geometry: x=position for horiz, y=position for vert
+            int64:dw  = raw split_tree_get_divider_w(di);
+            int64:dh  = raw split_tree_get_divider_h(di);
+            int64:dx  = raw split_tree_get_divider_x(di);
+            int64:dy  = raw split_tree_get_divider_y(di);
+            int64:pos = dx;  // horizontal paned: position = x-offset of divider
+            if (dw > dh) { pos = dy; }  // vertical paned (top/bottom): position = y
+            drop(nitty_gtk4_paned_set_position(paned, pos));
+            g_sv_paned_last_pos[di] = pos;  // update baseline
+        }
+        di = di + 1i64;
+    }
+    pass(NIL);
+};
+
+/// Poll GtkPaned positions and sync any mouse-drag changes back to split_tree.
+/// Call this once per frame from tw_on_draw.
+/// total_w, total_h: pixel dimensions for ratio calculation.
+pub func:split_view_poll_paned_positions = NIL(int64:total_w, int64:total_h) {
+    if (total_w <= 0i64) { pass(NIL); }
+    if (total_h <= 0i64) { pass(NIL); }
+
+    int64:dcount = raw split_tree_get_divider_count();
+    int64:di = 0i64;
+    while (di < dcount) {
+        int64:paned = g_sv_paned_ptrs[di];
+        if (paned != 0i64) {
+            int64:cur_pos  = raw nitty_gtk4_paned_get_position(paned);
+            int64:last_pos = g_sv_paned_last_pos[di];
+
+            // Detect significant change (> 4px = ignore rounding)
+            int64:delta = cur_pos - last_pos;
+            if (delta < 0i64) { delta = last_pos - cur_pos; }  // abs
+
+            if (last_pos >= 0i64 && delta > 4i64) {
+                // Determine orientation of this divider
+                drop(split_tree_layout(0i64, 0i64, total_w, total_h));
+                int64:dw = raw split_tree_get_divider_w(di);
+                int64:dh = raw split_tree_get_divider_h(di);
+                int64:extent = total_w;  // horizontal paned: extent = total_w
+                if (dw > dh) { extent = total_h; }  // vertical paned
+
+                // Convert pixel position to mille ratio (0..1000)
+                int64:new_ratio = 500i64;  // default 50/50
+                if (extent > 0i64) {
+                    new_ratio = (cur_pos * 1000i64) / extent;
+                }
+                if (new_ratio < 100i64) { new_ratio = 100i64; }
+                if (new_ratio > 900i64) { new_ratio = 900i64; }
+
+                // Apply to split_tree via the first leaf in start side
+                // Use layout entry 0's pane_id as the "target" for set_ratio
+                int64:pid0 = raw split_tree_get_layout_pane_id(0i64);
+                drop(split_tree_set_ratio(pid0, new_ratio));
+                g_sv_paned_last_pos[di] = cur_pos;
+            }
+
+            // First-time initialization: just record position
+            if (last_pos < 0i64) {
+                g_sv_paned_last_pos[di] = cur_pos;
+            }
+        }
+        di = di + 1i64;
+    }
+    pass(NIL);
+};
+
+/// Resize all live panes' PTYs to match their current pixel geometry.
+/// Call after any keyboard resize or mouse drag that changes pane dimensions.
+/// cell_w and cell_h are the pixel dimensions of a single terminal cell.
+pub func:split_view_resize_all_ptys = NIL(int64:total_w, int64:total_h, int64:cell_w, int64:cell_h) {
+    if (cell_w <= 0i64) { pass(NIL); }
+    if (cell_h <= 0i64) { pass(NIL); }
+
+    // Re-run layout to get current pane geometries
+    drop(split_tree_layout(0i64, 0i64, total_w, total_h));
+    int64:lcount = raw split_tree_get_layout_count();
+
+    int64:li = 0i64;
+    while (li < lcount) {
+        int64:pid = raw split_tree_get_layout_pane_id(li);
+        int64:pw  = raw split_tree_get_layout_w(li);
+        int64:ph  = raw split_tree_get_layout_h(li);
+
+        // Compute rows and cols from pixel dimensions and cell metrics
+        int64:new_cols = pw / cell_w;
+        int64:new_rows = ph / cell_h;
+        if (new_cols < 1i64) { new_cols = 1i64; }
+        if (new_rows < 1i64) { new_rows = 1i64; }
+
+        // Get the PTY fd for this pane
+        if (pid >= 0i64 && pid < 63i64) {
+            int64:fd = g_sv_pane_fd[pid];
+            if (fd >= 0i64) {
+                // Send TIOCSWINSZ (xpix=0, ypix=0 are standard no-ops)
+                drop(nitty_pty_set_winsize(fd, new_rows, new_cols, 0i64, 0i64));
+                // Update pane registry
+                int64:slot = raw pane_find_by_id(pid);
+                if (slot >= 0i64) {
+                    drop(pane_set_size(slot, new_rows, new_cols));
+                }
+            }
+        }
+        li = li + 1i64;
+    }
+    pass(NIL);
 };

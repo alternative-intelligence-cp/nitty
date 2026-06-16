@@ -161,5 +161,5 @@ pub func:app_shutdown = NIL() {
 };
 
 pub func:app_version = string() {
-    pass("0.5.1");
+    pass("0.5.2");
 };

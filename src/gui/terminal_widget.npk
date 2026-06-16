@@ -64,6 +64,11 @@ use "../core/session.npk".*;
 
 int64:g_tw_rows = 24i64;
 int64:g_tw_cols = 80i64;
+// v0.5.2: pixel window and cell dimensions (for split_view resize APIs)
+int64:g_tw_win_w  = 0i64;   // pixel width of full window content area
+int64:g_tw_win_h  = 0i64;   // pixel height of full window content area
+int64:g_tw_cell_w = 8i64;   // pixel width of one terminal cell (init guess)
+int64:g_tw_cell_h = 16i64;  // pixel height of one terminal cell (init guess)
 // v0.3.3: track focus state to detect transitions for DECSET 1004 reporting
 int64:g_tw_last_focused = 1i64;  // assume focused at startup
 // v0.4.4: monotonic timestamp (seconds) of last periodic session save
@@ -183,18 +188,42 @@ pub func:tw_on_draw = NIL() {
             drop(tw_queue_redraw());
         }
     }
-    // v0.4.2: Move active tab left/right
+    // v0.4.2: Move active tab left/right (dual-mode in v0.5.2: tab move OR pane resize)
+    // If pane_count > 1: adjust horizontal split ratio; else: move tab order.
     if (tev == 14i64) {
-        drop(tm_move_left());
-        drop(tw_queue_redraw());
+        int64:pc14 = raw split_tree_pane_count();
+        if (pc14 > 1i64) {
+            // Horizontal resize: shrink active pane (move divider left = -50 mille)
+            int64:act14 = raw split_tree_get_active();
+            drop(split_tree_adjust_ratio(act14, -50i64));
+            drop(split_view_update_paned_positions(g_tw_win_w, g_tw_win_h));
+            drop(split_view_resize_all_ptys(g_tw_win_w, g_tw_win_h, g_tw_cell_w, g_tw_cell_h));
+            drop(tw_queue_redraw());
+        }
+        if (pc14 <= 1i64) {
+            drop(tm_move_left());
+            drop(tw_queue_redraw());
+        }
     }
     if (tev == 15i64) {
-        drop(tm_move_right());
-        drop(tw_queue_redraw());
+        int64:pc15 = raw split_tree_pane_count();
+        if (pc15 > 1i64) {
+            // Horizontal resize: grow active pane (move divider right = +50 mille)
+            int64:act15 = raw split_tree_get_active();
+            drop(split_tree_adjust_ratio(act15, 50i64));
+            drop(split_view_update_paned_positions(g_tw_win_w, g_tw_win_h));
+            drop(split_view_resize_all_ptys(g_tw_win_w, g_tw_win_h, g_tw_cell_w, g_tw_cell_h));
+            drop(tw_queue_redraw());
+        }
+        if (pc15 <= 1i64) {
+            drop(tm_move_right());
+            drop(tw_queue_redraw());
+        }
     }
 
-    // v0.5.1 Step 0d: Poll pane events (split / close pane)
+    // v0.5.1 Step 0d: Poll pane events
     // 16=split_horiz 17=split_vert 18=close_pane_or_tab
+    // v0.5.2: 19=resize_up 20=resize_down 21-24=navigate 25-26=cycle
     int64:pev = nitty_gtk4_pane_event_poll();
     if (pev == 16i64) {
         // Ctrl+Shift+E: split active pane horizontally (left | right)
@@ -265,6 +294,103 @@ pub func:tw_on_draw = NIL() {
             drop(tw_queue_redraw());
         }
     }
+
+    // v0.5.2: Ctrl+Shift+Up/Down — vertical resize
+    if (pev == 19i64) {
+        // Ctrl+Shift+Up: shrink active pane vertically (-50 mille = move divider up)
+        int64:act19 = raw split_tree_get_active();
+        drop(split_tree_adjust_ratio(act19, -50i64));
+        drop(split_view_update_paned_positions(g_tw_win_w, g_tw_win_h));
+        drop(split_view_resize_all_ptys(g_tw_win_w, g_tw_win_h, g_tw_cell_w, g_tw_cell_h));
+        drop(tw_queue_redraw());
+    }
+    if (pev == 20i64) {
+        // Ctrl+Shift+Down: grow active pane vertically (+50 mille = move divider down)
+        int64:act20 = raw split_tree_get_active();
+        drop(split_tree_adjust_ratio(act20, 50i64));
+        drop(split_view_update_paned_positions(g_tw_win_w, g_tw_win_h));
+        drop(split_view_resize_all_ptys(g_tw_win_w, g_tw_win_h, g_tw_cell_w, g_tw_cell_h));
+        drop(tw_queue_redraw());
+    }
+
+    // v0.5.2: Alt+Arrow — spatial pane navigation
+    if (pev == 21i64) {
+        // Alt+Left: navigate to pane to the left
+        int64:cur21 = raw split_tree_get_active();
+        int64:nb21  = raw split_tree_find_neighbor(cur21, 0i64, g_tw_win_w, g_tw_win_h);
+        if (nb21 != cur21) {
+            drop(split_tree_set_active(nb21));
+            int64:nb21_fd  = raw split_view_get_pane_fd(nb21);
+            int64:nb21_pid = raw split_view_get_pane_pid(nb21);
+            if (nb21_fd >= 0i64) { drop(nitty_gtk4_set_active_pty_fd(nb21_fd, nb21_pid)); }
+            drop(tw_queue_redraw());
+        }
+    }
+    if (pev == 22i64) {
+        // Alt+Right: navigate to pane to the right
+        int64:cur22 = raw split_tree_get_active();
+        int64:nb22  = raw split_tree_find_neighbor(cur22, 1i64, g_tw_win_w, g_tw_win_h);
+        if (nb22 != cur22) {
+            drop(split_tree_set_active(nb22));
+            int64:nb22_fd  = raw split_view_get_pane_fd(nb22);
+            int64:nb22_pid = raw split_view_get_pane_pid(nb22);
+            if (nb22_fd >= 0i64) { drop(nitty_gtk4_set_active_pty_fd(nb22_fd, nb22_pid)); }
+            drop(tw_queue_redraw());
+        }
+    }
+    if (pev == 23i64) {
+        // Alt+Up: navigate to pane above
+        int64:cur23 = raw split_tree_get_active();
+        int64:nb23  = raw split_tree_find_neighbor(cur23, 2i64, g_tw_win_w, g_tw_win_h);
+        if (nb23 != cur23) {
+            drop(split_tree_set_active(nb23));
+            int64:nb23_fd  = raw split_view_get_pane_fd(nb23);
+            int64:nb23_pid = raw split_view_get_pane_pid(nb23);
+            if (nb23_fd >= 0i64) { drop(nitty_gtk4_set_active_pty_fd(nb23_fd, nb23_pid)); }
+            drop(tw_queue_redraw());
+        }
+    }
+    if (pev == 24i64) {
+        // Alt+Down: navigate to pane below
+        int64:cur24 = raw split_tree_get_active();
+        int64:nb24  = raw split_tree_find_neighbor(cur24, 3i64, g_tw_win_w, g_tw_win_h);
+        if (nb24 != cur24) {
+            drop(split_tree_set_active(nb24));
+            int64:nb24_fd  = raw split_view_get_pane_fd(nb24);
+            int64:nb24_pid = raw split_view_get_pane_pid(nb24);
+            if (nb24_fd >= 0i64) { drop(nitty_gtk4_set_active_pty_fd(nb24_fd, nb24_pid)); }
+            drop(tw_queue_redraw());
+        }
+    }
+
+    // v0.5.2: Ctrl+Tab / Ctrl+Shift+Tab — sequential pane cycling
+    if (pev == 25i64) {
+        // Ctrl+Tab: cycle to next pane
+        int64:next25 = raw split_tree_next_pane();
+        int64:cur25  = raw split_tree_get_active();
+        if (next25 != cur25) {
+            drop(split_tree_set_active(next25));
+            int64:n25_fd  = raw split_view_get_pane_fd(next25);
+            int64:n25_pid = raw split_view_get_pane_pid(next25);
+            if (n25_fd >= 0i64) { drop(nitty_gtk4_set_active_pty_fd(n25_fd, n25_pid)); }
+            drop(tw_queue_redraw());
+        }
+    }
+    if (pev == 26i64) {
+        // Ctrl+Shift+Tab: cycle to prev pane
+        int64:prev26 = raw split_tree_prev_pane();
+        int64:cur26  = raw split_tree_get_active();
+        if (prev26 != cur26) {
+            drop(split_tree_set_active(prev26));
+            int64:p26_fd  = raw split_view_get_pane_fd(prev26);
+            int64:p26_pid = raw split_view_get_pane_pid(prev26);
+            if (p26_fd >= 0i64) { drop(nitty_gtk4_set_active_pty_fd(p26_fd, p26_pid)); }
+            drop(tw_queue_redraw());
+        }
+    }
+
+    // v0.5.2: Per-frame GtkPaned drag-sync (poll for mouse divider drags)
+    drop(split_view_poll_paned_positions(g_tw_win_w, g_tw_win_h));
 
     // v0.4.2: Tab drag-and-drop — process each frame for live indicator + drop
     drop(tb_process_drag());
@@ -354,6 +480,14 @@ pub func:tw_on_resize = NIL(int64:w_px, int64:h_px) {
     // Update stored dimensions
     g_tw_rows = new_rows;
     g_tw_cols = new_cols;
+
+    // v0.5.2: Track pixel window and cell dimensions for split_view
+    g_tw_win_w  = w_px;
+    g_tw_win_h  = h_px;
+    int64:cw = raw nitty_render_get_cell_width();
+    int64:ch = raw nitty_render_get_cell_height();
+    if (cw > 0i64) { g_tw_cell_w = cw; }
+    if (ch > 0i64) { g_tw_cell_h = ch; }
 
     // Resize the terminal state (pipeline's TS module)
     drop(ts_resize(new_rows, new_cols));

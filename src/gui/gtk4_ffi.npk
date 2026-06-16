@@ -447,5 +447,9 @@ extern "nitty_gtk4_shim" {
 
     // Widget expand flags
     func:nitty_gtk4_widget_set_expand = NIL(int64:widget_ptr, int64:fill_h, int64:fill_v);
+
+    // v0.5.2: Per-pane PTY terminal resize via TIOCSWINSZ
+    // Call with explicit fd (from split_view pane pool) rather than pty.npk singleton.
+    func:nitty_pty_set_winsize = int64(int64:fd, int64:rows, int64:cols, int64:xpix, int64:ypix);
 }
 

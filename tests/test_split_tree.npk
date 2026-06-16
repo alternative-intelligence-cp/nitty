@@ -1,4 +1,4 @@
-// tests/test_split_tree.npk -- Split tree manipulation unit tests (v0.5.0)
+// tests/test_split_tree.npk -- Split tree manipulation unit tests (v0.5.2)
 
 use "../src/core/split_tree.npk".*;
 
@@ -88,6 +88,82 @@ pub func:main = int32() {
     drop(raw split_tree_layout(0i64, 0i64, 1000i64, 600i64));
     drop(check("T07: clamped RATIO_MAX -> left_w=900",
                900i64, raw split_tree_get_layout_w(0i64)));
+
+    // T08: adjust_ratio increases ratio correctly
+    // Setup: fresh 2-pane horizontal split at default 500 mille (50/50)
+    print("T08: split_tree_adjust_ratio increase");
+    drop(raw split_tree_reset());
+    drop(raw split_tree_split(0i64, 0i32));  // pane 0 (left), pane 1 (right)
+    // Set known baseline: 500 mille
+    drop(raw split_tree_set_ratio(0i64, 500i64));
+    // Adjust by +100 -> should become 600 mille
+    drop(raw split_tree_adjust_ratio(0i64, 100i64));
+    drop(raw split_tree_layout(0i64, 0i64, 1000i64, 600i64));
+    // Left pane width should be 600px (600/1000 * 996 ≈ 597, accounting for 4px divider)
+    // We check that it's > 550 (well past 50/50) and < 650
+    int64:t08_w = raw split_tree_get_layout_w(0i64);
+    // Formula: ratio * total_w / 1000 = 600 * 1000 / 1000 = 600
+    drop(check("T08: left_w=600 after +100 mille to 600", 600i64, t08_w));
+
+    // T09: adjust_ratio clamps at RATIO_MIN (100 mille)
+    print("T09: split_tree_adjust_ratio clamp at min");
+    drop(raw split_tree_set_ratio(0i64, 110i64));   // set just above min
+    drop(raw split_tree_adjust_ratio(0i64, -50i64)); // -50 would go to 60, clamp to 100
+    drop(raw split_tree_layout(0i64, 0i64, 1000i64, 600i64));
+    // At 100 mille: left_w = 100/1000 * 996 = ~99px. Check < 120.
+    int64:t09_w = raw split_tree_get_layout_w(0i64);
+    // Formula: 100 * 1000 / 1000 = 100 (matches T07 RATIO_MIN test)
+    drop(check("T09: left_w=100 (clamped to RATIO_MIN=100 mille)", 100i64, t09_w));
+
+    // T10: adjust_ratio clamps at RATIO_MAX (900 mille)
+    print("T10: split_tree_adjust_ratio clamp at max");
+    drop(raw split_tree_set_ratio(0i64, 890i64));    // just below max
+    drop(raw split_tree_adjust_ratio(0i64, 50i64));  // +50 would go to 940, clamp to 900
+    drop(raw split_tree_layout(0i64, 0i64, 1000i64, 600i64));
+    // At 900 mille: left_w = 900/1000 * 996 = ~896px. Check > 870.
+    int64:t10_w = raw split_tree_get_layout_w(0i64);
+    // Formula: 900 * 1000 / 1000 = 900 (matches T07 RATIO_MAX test)
+    drop(check("T10: left_w=900 (clamped to RATIO_MAX=900 mille)", 900i64, t10_w));
+
+    // T11: find_neighbor -- right of left pane in 2-pane horizontal split
+    print("T11: split_tree_find_neighbor right of pane 0");
+    drop(raw split_tree_reset());
+    drop(raw split_tree_split(0i64, 0i32));  // pane 0 (left), pane 1 (right)
+    drop(raw split_tree_set_active(0i64));
+    // dir=1 = Right. Should find pane 1.
+    int64:t11_nb = raw split_tree_find_neighbor(0i64, 1i64, 1000i64, 600i64);
+    drop(check("T11: neighbor right of pane 0 = pane 1", 1i64, t11_nb));
+
+    // T12: find_neighbor -- left of right pane
+    print("T12: split_tree_find_neighbor left of pane 1");
+    // dir=0 = Left. From pane 1, should find pane 0.
+    int64:t12_nb = raw split_tree_find_neighbor(1i64, 0i64, 1000i64, 600i64);
+    drop(check("T12: neighbor left of pane 1 = pane 0", 0i64, t12_nb));
+
+    // T13: find_neighbor -- no neighbor in orthogonal direction returns same pane
+    print("T13: split_tree_find_neighbor orthogonal = no-op");
+    // pane 0 and pane 1 are side-by-side (horizontal split).
+    // Looking Up (dir=2) from pane 0 should return pane 0 (no neighbor above).
+    int64:t13_nb = raw split_tree_find_neighbor(0i64, 2i64, 1000i64, 600i64);
+    drop(check("T13: no neighbor above pane 0 = self (0)", 0i64, t13_nb));
+
+    // T14: next_pane / prev_pane cycling with 2 panes
+    print("T14: split_tree_next_pane / split_tree_prev_pane");
+    drop(raw split_tree_set_active(0i64));
+    // next from 0 should be 1
+    int64:t14_next = raw split_tree_next_pane();
+    drop(check("T14: next_pane from 0 = 1", 1i64, t14_next));
+    // set active to 1, prev from 1 should be 0
+    drop(raw split_tree_set_active(1i64));
+    int64:t14_prev = raw split_tree_prev_pane();
+    drop(check("T14: prev_pane from 1 = 0", 0i64, t14_prev));
+    // set active to 1, next from 1 should wrap to 0
+    int64:t14_wrap = raw split_tree_next_pane();
+    drop(check("T14: next_pane from 1 wraps to 0", 0i64, t14_wrap));
+    // set active to 0, prev from 0 should wrap to 1
+    drop(raw split_tree_set_active(0i64));
+    int64:t14_wrapb = raw split_tree_prev_pane();
+    drop(check("T14: prev_pane from 0 wraps to 1", 1i64, t14_wrapb));
 
     // Summary
     print("=== Results ===");
