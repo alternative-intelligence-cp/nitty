@@ -176,6 +176,59 @@ const char *nitty_serial_port_name(int64_t i);
  */
 const char *nitty_serial_port_desc(int64_t i);
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * Serial control signals and modem status (v0.9.1)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Send a BREAK signal. duration_ms=0 uses tcsendbreak() default (~250ms).
+ * Returns 0 on success, -1 on error. */
+int64_t nitty_serial_send_break(int64_t fd, int64_t duration_ms);
+
+/* Set or clear DTR (Data Terminal Ready) line.
+ * state=1 asserts DTR, state=0 clears it.
+ * Returns 0 on success, -1 on error. */
+int64_t nitty_serial_set_dtr(int64_t fd, int64_t state);
+
+/* Set or clear RTS (Request To Send) line.
+ * state=1 asserts RTS, state=0 clears it.
+ * Returns 0 on success, -1 on error. */
+int64_t nitty_serial_set_rts(int64_t fd, int64_t state);
+
+/* Read modem status register via TIOCMGET.
+ * Returns bitmask (TIOCM_CTS | TIOCM_DSR | TIOCM_CD | TIOCM_RI), or -1 on error. */
+int64_t nitty_serial_get_modem_status(int64_t fd);
+
+/* Bitmask extractor helpers (operate on the value from get_modem_status) */
+int64_t nitty_serial_modem_cts(int64_t status); /* 1 if CTS is asserted */
+int64_t nitty_serial_modem_dsr(int64_t status); /* 1 if DSR is asserted */
+int64_t nitty_serial_modem_dcd(int64_t status); /* 1 if DCD (carrier) is asserted */
+int64_t nitty_serial_modem_ri(int64_t status);  /* 1 if RI (ring indicator) is asserted */
+
+/* Write a single byte then sleep for delay_us microseconds.
+ * Used for slow-feed mode (paste with inter-character delay).
+ * Returns 1 on success, -1 on write error. */
+int64_t nitty_serial_write_byte_delayed(int64_t fd, int64_t byte_val, int64_t delay_us);
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Byte-level string helpers (v0.9.1)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Extract the integer byte value of character at index i in a string.
+ * Returns the byte value (0–255), or -1 if i is out of range. */
+int64_t nitty_serial_byte_at(const char *s, int64_t i);
+
+/* Format data as an xxd-style hex dump starting at byte_offset.
+ * Output is stored in an internal static 64KB buffer.
+ * Returns a pointer to the null-terminated hex dump string.
+ * The string remains valid until the next call to nitty_serial_hexdump.
+ * max_bytes: maximum number of bytes from data to format (0 = no limit). */
+const char *nitty_serial_hexdump(const char *data, int64_t len,
+                                  int64_t byte_offset, int64_t max_bytes);
+
+/* Returns the length in bytes of the last nitty_serial_hexdump result. */
+int64_t nitty_serial_hexdump_len(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,0 +1,561 @@
+// src/serial/serial_modes.npk — Serial input/output modes (v0.9.1)
+//
+// Implements serial-specific I/O modes for practical embedded development:
+//
+// Input Modes:
+//   SERIAL_INPUT_RAW      — every keystroke sent immediately, no local processing
+//   SERIAL_INPUT_TEXT     — buffer until Enter, basic echo
+//   SERIAL_INPUT_READLINE — full line editing: arrow keys, backspace, history
+//
+// Output Modes:
+//   SERIAL_OUTPUT_TEXT    — feed received bytes to VT parser (normal rendering)
+//   SERIAL_OUTPUT_HEXDUMP — show raw bytes as xxd-style hex+ASCII dump
+//
+// Newline Conversion:
+//   serial_newline_convert_send(data, mode) — convert outgoing Enter
+//   serial_newline_convert_recv(data, mode) — normalize incoming newlines
+//   serial_newline_detect(data)             — auto-detect from received data
+//
+// Slow Feed (for paste into buggy firmware):
+//   serial_slow_feed(fd, data, char_delay_ms, line_delay_ms)
+//
+// History (per-pane slot 0..63, up to 100 entries via ahash ring buffer):
+//   serial_history_add(slot, line)
+//   serial_history_prev(slot) / serial_history_next(slot)
+//   serial_history_clear(slot)
+//
+// Readline Line Edit (per-pane slot 0..63):
+//   serial_input_handle_key(slot, key, mode) → data to send to port
+//   serial_input_get_echo(slot, key, mode)   → what to display locally
+
+use "../../src/serial/serial_ffi.npk".*;
+use "../../src/serial/serial_port.npk".*;
+
+// ── Input mode constants ──────────────────────────────────────────────────────
+
+pub fixed int64:SERIAL_INPUT_RAW      = 0i64;
+pub fixed int64:SERIAL_INPUT_TEXT     = 1i64;
+pub fixed int64:SERIAL_INPUT_READLINE = 2i64;
+
+// ── Output mode constants ─────────────────────────────────────────────────────
+
+pub fixed int64:SERIAL_OUTPUT_TEXT    = 0i64;
+pub fixed int64:SERIAL_OUTPUT_HEXDUMP = 1i64;
+
+// NOTE: Special key escape sequences are inlined as string literals in comparisons
+// below (e.g. key == "\r" for Enter) to avoid npkbld zeroing pub fixed string data.
+
+// ── Per-pane readline line buffer ─────────────────────────────────────────────
+// 64 slots (one per pane). Uninitialized (will be lazily set to "" at first use).
+
+string[64]:g_rl_line;
+int64[64]:g_rl_cursor = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+
+// ── Per-pane hexdump running offset ──────────────────────────────────────────
+
+int64[64]:g_hex_offset = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+
+// ── Per-pane history (ahash ring buffer, 100 entries max) ────────────────────
+// ahash handle per slot (-1 = not initialized). Keys "0".."99" → history lines.
+// g_rl_hist_head: index of next write position (0..99)
+// g_rl_hist_count: total entries stored (0..100)
+// g_rl_hist_nav: current navigation offset (0 = current line, 1 = prev, etc.)
+
+int64[64]:g_rl_hist_handle = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+int64[64]:g_rl_hist_head   = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+int64[64]:g_rl_hist_count  = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+int64[64]:g_rl_hist_nav    = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
+
+// Saved "draft" line while navigating history (so we can restore it on Next).
+string[64]:g_rl_hist_draft;
+
+// Initialization tracker (set to 1 after first call to serial_modes_init)
+int64:g_modes_initialized = 0i64;
+
+// ── Runtime initialization ────────────────────────────────────────────────────
+// Called lazily at the start of any public function that uses string arrays.
+// Ensures all string arrays are set to "" (not NULL) even after npkbld zeroing.
+
+func:_ensure_init = NIL() {
+    if (g_modes_initialized != 0i64) { pass(NIL); }
+    g_modes_initialized = 1i64;
+    int64:i = 0i64;
+    while (i < 64i64) {
+        g_rl_line[i]       = "";
+        g_rl_hist_draft[i] = "";
+        i = i + 1i64;
+    }
+    pass(NIL);
+};
+
+// ── History helpers ───────────────────────────────────────────────────────────
+
+/// Lazily initialize the ahash for a slot (100-entry capacity for history ring buffer).
+func:_hist_ensure = NIL(int64:slot) {
+    if (g_rl_hist_handle[slot] == 0i64) {
+        g_rl_hist_handle[slot] = ahash(100i64);
+    }
+    pass(NIL);
+};
+
+/// Add a non-empty line to history for the given pane slot (ring buffer).
+pub func:serial_history_add = NIL(int64:slot, string:line) {
+    drop(_ensure_init());
+    if (slot < 0i64 || slot >= 64i64) { pass(NIL); }
+    if (string_is_empty(line)) { pass(NIL); }
+    drop(_hist_ensure(slot));
+    int64:h    = g_rl_hist_handle[slot];
+    int64:head = g_rl_hist_head[slot];
+    string:key = string_from_int(head);
+    drop(ahset(h, key, line));
+    g_rl_hist_head[slot]  = (head + 1i64) % 100i64;
+    if (g_rl_hist_count[slot] < 100i64) {
+        g_rl_hist_count[slot] = g_rl_hist_count[slot] + 1i64;
+    }
+    g_rl_hist_nav[slot] = 0i64;  // reset navigation on new entry
+    pass(NIL);
+};
+
+/// Navigate one step back in history. Returns the previous line, or "" if at start.
+pub func:serial_history_prev = string(int64:slot) {
+    drop(_ensure_init());
+    if (slot < 0i64 || slot >= 64i64) { pass(""); }
+    int64:cnt = g_rl_hist_count[slot];
+    if (cnt == 0i64) { pass(""); }
+    int64:nav = g_rl_hist_nav[slot];
+    if (nav >= cnt) { pass(""); }  // already at oldest
+    if (nav == 0i64) {
+        // Save the current draft before navigating away
+        g_rl_hist_draft[slot] = g_rl_line[slot];
+    }
+    g_rl_hist_nav[slot] = nav + 1i64;
+    // head points to next-write, so (head - nav - 1) mod 100 is the nav-th entry
+    int64:h    = g_rl_hist_handle[slot];
+    int64:head = g_rl_hist_head[slot];
+    int64:idx  = ((head - nav - 1i64) + 100i64) % 100i64;
+    string:key = string_from_int(idx);
+    string:entry = ahget(h, key);
+    pass(entry);
+};
+
+/// Navigate one step forward in history. Returns the next line, or "" (draft) if at current.
+pub func:serial_history_next = string(int64:slot) {
+    drop(_ensure_init());
+    if (slot < 0i64 || slot >= 64i64) { pass(""); }
+    int64:nav = g_rl_hist_nav[slot];
+    if (nav == 0i64) { pass(""); }  // already at current line
+    int64:new_nav = nav - 1i64;
+    g_rl_hist_nav[slot] = new_nav;
+    if (new_nav == 0i64) {
+        // Returned to current line — restore the saved draft
+        pass(g_rl_hist_draft[slot]);
+    }
+    // Return the history entry at the new nav position
+    int64:h    = g_rl_hist_handle[slot];
+    int64:head = g_rl_hist_head[slot];
+    int64:idx  = (head - new_nav + 100i64) % 100i64;
+    string:key = string_from_int(idx);
+    string:entry = ahget(h, key);
+    pass(entry);
+};
+
+/// Clear the history and reset navigation for the given pane slot.
+pub func:serial_history_clear = NIL(int64:slot) {
+    drop(_ensure_init());
+    if (slot < 0i64 || slot >= 64i64) { pass(NIL); }
+    drop(_hist_ensure(slot));
+    int64:h = g_rl_hist_handle[slot];
+    int64:i = 0i64;
+    while (i < 100i64) {
+        drop(ahset(h, string_from_int(i), ""));
+        i = i + 1i64;
+    }
+    g_rl_hist_head[slot]  = 0i64;
+    g_rl_hist_count[slot] = 0i64;
+    g_rl_hist_nav[slot]   = 0i64;
+    g_rl_hist_draft[slot] = "";
+    pass(NIL);
+};
+
+// ── Readline line edit helpers ────────────────────────────────────────────────
+
+/// Append a printable character to the line buffer at cursor position.
+func:_rl_insert = NIL(int64:slot, string:ch) {
+    string:line = g_rl_line[slot];
+    int64:cur   = g_rl_cursor[slot];
+    int64:len   = string_length(line);
+    if (cur >= len) {
+        // Append at end
+        g_rl_line[slot]   = string_concat(line, ch);
+        g_rl_cursor[slot] = len + 1i64;
+    }
+    if (cur < len) {
+        // Insert at cursor
+        string:before = string_substring(line, 0i64, cur);
+        string:after  = string_substring(line, cur, len);
+        g_rl_line[slot]   = string_concat(before, string_concat(ch, after));
+        g_rl_cursor[slot] = cur + 1i64;
+    }
+    pass(NIL);
+};
+
+/// Delete the character before the cursor (Backspace).
+func:_rl_backspace = NIL(int64:slot) {
+    string:line = g_rl_line[slot];
+    int64:cur   = g_rl_cursor[slot];
+    int64:len   = string_length(line);
+    if (cur <= 0i64 || len == 0i64) { pass(NIL); }
+    string:before = string_substring(line, 0i64, cur - 1i64);
+    string:after  = string_substring(line, cur, len);
+    g_rl_line[slot]   = string_concat(before, after);
+    g_rl_cursor[slot] = cur - 1i64;
+    pass(NIL);
+};
+
+/// Delete the character at the cursor (Delete key).
+func:_rl_delete = NIL(int64:slot) {
+    string:line = g_rl_line[slot];
+    int64:cur   = g_rl_cursor[slot];
+    int64:len   = string_length(line);
+    if (cur >= len) { pass(NIL); }
+    string:before = string_substring(line, 0i64, cur);
+    string:after  = string_substring(line, cur + 1i64, len);
+    g_rl_line[slot] = string_concat(before, after);
+    pass(NIL);
+};
+
+// ── Readline input handling ───────────────────────────────────────────────────
+
+/// Process a keystroke in readline mode for the given pane slot.
+/// Returns the string to SEND to the serial port (empty until Enter is pressed).
+/// Also updates g_rl_line[slot] and g_rl_cursor[slot] as a side effect.
+func:_handle_readline = string(int64:slot, string:key) {
+    // Enter: send the completed line + reset buffer
+    if (key == "\r") {
+        string:line = g_rl_line[slot];
+        drop(serial_history_add(slot, line));
+        g_rl_line[slot]   = "";
+        g_rl_cursor[slot] = 0i64;
+        pass(string_concat(line, "\r\n"));  // send with CRLF
+    }
+
+    // Ctrl+C: clear line buffer, send ^C
+    if (key == "\x03") {
+        g_rl_line[slot]   = "";
+        g_rl_cursor[slot] = 0i64;
+        g_rl_hist_nav[slot] = 0i64;
+        pass("\x03");
+    }
+
+    // Ctrl+U: kill line from cursor to start
+    if (key == "\x15") {
+        int64:cur = g_rl_cursor[slot];
+        string:line = g_rl_line[slot];
+        if (cur > 0i64) {
+            g_rl_line[slot]   = string_substring(line, cur, string_length(line));
+            g_rl_cursor[slot] = 0i64;
+        }
+        pass("");
+    }
+
+    // Ctrl+D: send EOF (don't consume — pass through to device)
+    if (key == "\x04") { pass("\x04"); }
+
+    // Backspace: delete char before cursor
+    if (key == "\x7f") {
+        drop(_rl_backspace(slot));
+        pass("");
+    }
+
+    // Delete: delete char at cursor
+    if (key == "\x1b[3~") {
+        drop(_rl_delete(slot));
+        pass("");
+    }
+
+    // Left arrow: move cursor left
+    if (key == "\x1b[D") {
+        if (g_rl_cursor[slot] > 0i64) {
+            g_rl_cursor[slot] = g_rl_cursor[slot] - 1i64;
+        }
+        pass("");
+    }
+
+    // Right arrow: move cursor right
+    if (key == "\x1b[C") {
+        int64:len = string_length(g_rl_line[slot]);
+        if (g_rl_cursor[slot] < len) {
+            g_rl_cursor[slot] = g_rl_cursor[slot] + 1i64;
+        }
+        pass("");
+    }
+
+    // Home: jump to start of line
+    if (key == "\x1b[H") {
+        g_rl_cursor[slot] = 0i64;
+        pass("");
+    }
+
+    // End: jump to end of line
+    if (key == "\x1b[F") {
+        g_rl_cursor[slot] = string_length(g_rl_line[slot]);
+        pass("");
+    }
+
+    // Up arrow: navigate to previous history entry
+    if (key == "\x1b[A") {
+        string:prev = raw serial_history_prev(slot);
+        if (!string_is_empty(prev)) {
+            g_rl_line[slot]   = prev;
+            g_rl_cursor[slot] = string_length(prev);
+        }
+        pass("");
+    }
+
+    // Down arrow: navigate forward in history
+    if (key == "\x1b[B") {
+        string:nxt = raw serial_history_next(slot);
+        g_rl_line[slot]   = nxt;
+        g_rl_cursor[slot] = string_length(nxt);
+        pass("");
+    }
+
+    // Printable character: insert at cursor
+    int64:klen = string_length(key);
+    if (klen == 1i64) {
+        int64:code = nitty_serial_byte_at(key, 0i64);
+        // Printable range: 0x20..0x7e
+        bool:printable = code >= 32i64 && code <= 126i64;
+        if (printable) {
+            drop(_rl_insert(slot, key));
+            pass("");
+        }
+    }
+
+    // Unknown/escape sequence — ignore
+    pass("");
+};
+
+// ── Public: input handling ────────────────────────────────────────────────────
+
+/// Process a keystroke according to the given input mode.
+/// Returns the data string to send to the serial port (may be empty).
+/// In readline mode, also updates the per-slot line buffer.
+pub func:serial_input_handle_key = string(int64:slot, string:key, int64:mode) {
+    drop(_ensure_init());
+    if (slot < 0i64 || slot >= 64i64) { pass(""); }
+    if (string_is_empty(key)) { pass(""); }
+
+    // RAW: pass every keystroke through immediately
+    if (mode == SERIAL_INPUT_RAW) {
+        pass(key);
+    }
+
+    // TEXT: buffer until Enter, then send
+    if (mode == SERIAL_INPUT_TEXT) {
+        if (key == "\r") {
+            string:line = g_rl_line[slot];
+            g_rl_line[slot]   = "";
+            g_rl_cursor[slot] = 0i64;
+            pass(string_concat(line, "\r\n"));
+        }
+        if (key == "\x7f") {
+            drop(_rl_backspace(slot));
+            pass("");
+        }
+        int64:klen = string_length(key);
+        if (klen == 1i64) {
+            drop(_rl_insert(slot, key));
+            pass("");
+        }
+        pass("");
+    }
+
+    // READLINE: full line editing
+    if (mode == SERIAL_INPUT_READLINE) {
+        pass(raw _handle_readline(slot, key));
+    }
+
+    pass(key);
+};
+
+/// Get the local echo string for a keystroke (what to display in the terminal).
+/// In RAW mode: echo what was typed (the key itself).
+/// In TEXT/READLINE mode: echo printable chars, show cursor movements, etc.
+pub func:serial_input_get_echo = string(int64:slot, string:key, int64:mode) {
+    drop(_ensure_init());
+    if (mode == SERIAL_INPUT_RAW) {
+        pass(key);  // raw: device echoes; we echo locally too
+    }
+    // TEXT/READLINE: echo printable keys, clear screen for backspace
+    if (key == "\x7f") {
+        pass("\x08 \x08");  // VT100: move back, erase, move back
+    }
+    int64:klen = string_length(key);
+    if (klen == 1i64) {
+        string:k1 = string_substring(key, 0i64, 1i64);
+        // Only echo printable chars directly
+        // Use string comparison to check character range instead of string_to_int
+        // (avoids potential int-parse issues with control chars)
+        if (!string_starts_with(key, "\x1b") && key != "\x03" && key != "\x04") {
+            pass(key);
+        }
+    }
+    pass("");  // control sequences / escape — no local echo
+};
+
+/// Returns the current readline buffer for display (e.g. in a status bar).
+pub func:serial_input_get_line = string(int64:slot) {
+    drop(_ensure_init());
+    if (slot < 0i64 || slot >= 64i64) { pass(""); }
+    pass(g_rl_line[slot]);
+};
+
+/// Returns the current cursor position within the readline buffer.
+pub func:serial_input_get_cursor = int64(int64:slot) {
+    drop(_ensure_init());
+    if (slot < 0i64 || slot >= 64i64) { pass(0i64); }
+    pass(g_rl_cursor[slot]);
+};
+
+// ── Hexdump formatting ────────────────────────────────────────────────────────
+// Delegates to nitty_serial_hexdump() in the C shim for byte-accurate formatting.
+
+/// Format received data as an xxd-style hex dump starting at the given byte offset.
+/// Returns the formatted string to display in the terminal.
+pub func:hexdump_format = string(string:data, int64:offset) {
+    int64:data_len = string_length(data);
+    if (data_len == 0i64) { pass(""); }
+    string:dump = nitty_serial_hexdump(data, data_len, offset, 0i64);
+    pass(dump);
+};
+
+/// Format received bytes for display according to the given output mode.
+/// In TEXT mode: returns data unchanged (VT parser handles it).
+/// In HEXDUMP mode: formats as hex dump, advances slot's running offset.
+pub func:serial_output_format = string(int64:slot, string:data, int64:mode) {
+    if (string_is_empty(data)) { pass(""); }
+
+    if (mode == SERIAL_OUTPUT_TEXT) {
+        pass(data);
+    }
+
+    if (mode == SERIAL_OUTPUT_HEXDUMP) {
+        if (slot >= 0i64 && slot < 64i64) {
+            int64:off   = g_hex_offset[slot];
+            string:dump = raw hexdump_format(data, off);
+            g_hex_offset[slot] = off + string_length(data);
+            pass(dump);
+        }
+        pass(raw hexdump_format(data, 0i64));
+    }
+
+    pass(data);
+};
+
+/// Reset the hexdump byte-offset counter for a pane slot.
+pub func:serial_hex_offset_reset = NIL(int64:slot) {
+    if (slot >= 0i64 && slot < 64i64) {
+        g_hex_offset[slot] = 0i64;
+    }
+    pass(NIL);
+};
+
+// ── Newline conversion ────────────────────────────────────────────────────────
+
+/// Convert outgoing Enter key to the configured newline sequence.
+/// data: the string being sent (may contain \n from Enter key or pasted text)
+pub func:serial_newline_convert_send = string(string:data, int64:mode) {
+    if (string_is_empty(data)) { pass(""); }
+
+    if (mode == NEWLINE_CR) {
+        pass(string_replace(data, "\n", "\r"));
+    }
+    if (mode == NEWLINE_LF) {
+        pass(data);  // already \n, no conversion needed
+    }
+    if (mode == NEWLINE_CRLF) {
+        // First normalize any bare \r\n to \n, then expand all \n to \r\n
+        string:norm = string_replace(data, "\r\n", "\n");
+        pass(string_replace(norm, "\n", "\r\n"));
+    }
+    if (mode == NEWLINE_NONE) {
+        pass(data);  // raw, no conversion
+    }
+    pass(data);
+};
+
+/// Normalize incoming newlines from the serial device for display.
+/// Converts bare \r (without following \n) to \r\n for proper terminal rendering.
+pub func:serial_newline_convert_recv = string(string:data, int64:mode) {
+    if (string_is_empty(data)) { pass(""); }
+
+    if (mode == NEWLINE_NONE) { pass(data); }
+    if (mode == NEWLINE_LF)   { pass(data); }
+
+    // For CR and CRLF: normalize bare \r to \r\n.
+    // Strategy: protect existing \r\n pairs with a placeholder, then expand
+    // remaining bare \r chars to \r\n, then restore the placeholder.
+    // Use a placeholder that cannot appear in serial data: \x00 is not valid
+    // ASCII text, but may appear in binary data. Use a two-step approach:
+    //   Step 1: mark existing \r\n pairs → \n only (normalize CRLF to LF)
+    //   Step 2: expand remaining \r → \r\n (now only bare CRs remain)
+    //   Step 3: expand \n → \r\n (to re-add the CR before the preserved LFs)
+    // Net result: all \r and \n are normalized to \r\n.
+    if (mode == NEWLINE_CR || mode == NEWLINE_CRLF) {
+        string:step1 = string_replace(data, "\r\n", "\n");
+        string:step2 = string_replace(step1, "\r", "\n");
+        string:step3 = string_replace(step2, "\n", "\r\n");
+        pass(step3);
+    }
+    pass(data);
+};
+
+/// Auto-detect the newline convention in a sample of received data.
+/// Returns a NEWLINE_* constant.
+pub func:serial_newline_detect = int64(string:data) {
+    if (string_is_empty(data)) { pass(NEWLINE_CRLF); }  // default
+    bool:has_crlf = string_contains(data, "\r\n");
+    if (has_crlf) { pass(NEWLINE_CRLF); }
+    bool:has_cr   = string_contains(data, "\r");
+    bool:has_lf   = string_contains(data, "\n");
+    if (has_cr && !has_lf) { pass(NEWLINE_CR); }
+    if (has_lf && !has_cr) { pass(NEWLINE_LF); }
+    pass(NEWLINE_CRLF);  // default fallback
+};
+
+// ── Slow feed ─────────────────────────────────────────────────────────────────
+
+/// Send data one byte at a time with configurable inter-character delay.
+/// char_delay_ms: milliseconds between each character (min 1, max 1000)
+/// line_delay_ms: additional delay after each newline (min 1, max 5000)
+/// This function blocks for the total duration of the send.
+pub func:serial_slow_feed = NIL(int64:fd, string:data, int64:char_delay_ms, int64:line_delay_ms) {
+    if (fd < 0i64) { pass(NIL); }
+    if (string_is_empty(data)) { pass(NIL); }
+
+    // Clamp delays to sane ranges
+    int64:cdly = char_delay_ms;
+    if (cdly < 1i64)    { cdly = 1i64; }
+    if (cdly > 1000i64) { cdly = 1000i64; }
+    int64:ldly = line_delay_ms;
+    if (ldly < 1i64)    { ldly = 1i64; }
+    if (ldly > 5000i64) { ldly = 5000i64; }
+
+    int64:char_us = cdly * 1000i64;  // ms → µs
+    int64:line_us = ldly * 1000i64;
+
+    int64:len = string_length(data);
+    int64:i   = 0i64;
+    while (i < len) {
+        int64:code = nitty_serial_byte_at(data, i);
+        if (code >= 0i64) {
+            int64:delay = char_us;
+            bool:is_nl  = code == 10i64 || code == 13i64;
+            if (is_nl) { delay = delay + line_us; }
+            drop(nitty_serial_write_byte_delayed(fd, code, delay));
+        }
+        i = i + 1i64;
+    }
+    pass(NIL);
+};

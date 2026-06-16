@@ -564,3 +564,158 @@ const char *nitty_serial_port_desc(int64_t i)
     if (i < 0 || i >= (int64_t)g_port_count) return "";
     return g_port_descs[(int)i];
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Serial control signals and modem status (v0.9.1)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+#include <sys/ioctl.h>
+#include <linux/serial.h>
+
+int64_t nitty_serial_send_break(int64_t fd, int64_t duration_ms)
+{
+    if (fd < 0) return -1;
+    /* tcsendbreak duration=0 is implementation-defined (~250ms per POSIX).
+     * For non-zero duration we use tcsendbreak with duration in units of 100ms.
+     * Since POSIX doesn't guarantee the unit, we use 0 for the default. */
+    int dur = (duration_ms > 0) ? (int)(duration_ms / 100) : 0;
+    if (tcsendbreak((int)fd, dur) != 0) {
+        fprintf(stderr, "SERIAL: tcsendbreak(%d, %d) failed: %s\n",
+                (int)fd, dur, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+int64_t nitty_serial_set_dtr(int64_t fd, int64_t state)
+{
+    if (fd < 0) return -1;
+    int flag = TIOCM_DTR;
+    int req  = state ? TIOCMBIS : TIOCMBIC;
+    if (ioctl((int)fd, req, &flag) != 0) {
+        fprintf(stderr, "SERIAL: set_dtr(%d, %lld) failed: %s\n",
+                (int)fd, (long long)state, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+int64_t nitty_serial_set_rts(int64_t fd, int64_t state)
+{
+    if (fd < 0) return -1;
+    int flag = TIOCM_RTS;
+    int req  = state ? TIOCMBIS : TIOCMBIC;
+    if (ioctl((int)fd, req, &flag) != 0) {
+        fprintf(stderr, "SERIAL: set_rts(%d, %lld) failed: %s\n",
+                (int)fd, (long long)state, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+int64_t nitty_serial_get_modem_status(int64_t fd)
+{
+    if (fd < 0) return -1;
+    int status = 0;
+    if (ioctl((int)fd, TIOCMGET, &status) != 0) {
+        fprintf(stderr, "SERIAL: get_modem_status(%d) failed: %s\n",
+                (int)fd, strerror(errno));
+        return -1;
+    }
+    return (int64_t)status;
+}
+
+int64_t nitty_serial_modem_cts(int64_t status) { return (status & TIOCM_CTS)  ? 1 : 0; }
+int64_t nitty_serial_modem_dsr(int64_t status) { return (status & TIOCM_DSR)  ? 1 : 0; }
+int64_t nitty_serial_modem_dcd(int64_t status) { return (status & TIOCM_CD)   ? 1 : 0; }
+int64_t nitty_serial_modem_ri(int64_t status)  { return (status & TIOCM_RI)   ? 1 : 0; }
+
+int64_t nitty_serial_write_byte_delayed(int64_t fd, int64_t byte_val, int64_t delay_us)
+{
+    char c = (char)(byte_val & 0xFF);
+    ssize_t n;
+    do {
+        n = write((int)fd, &c, 1);
+    } while (n < 0 && errno == EINTR);
+
+    if (n != 1) {
+        fprintf(stderr, "SERIAL: write_byte_delayed(%d, 0x%02X) failed: %s\n",
+                (int)fd, (int)(byte_val & 0xFF), strerror(errno));
+        return -1;
+    }
+
+    if (delay_us > 0) {
+        usleep((useconds_t)delay_us);
+    }
+    return 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Byte-level string helpers (v0.9.1)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+int64_t nitty_serial_byte_at(const char *s, int64_t i)
+{
+    if (!s || i < 0) return -1;
+    size_t len = strlen(s);
+    if ((size_t)i >= len) return -1;
+    return (int64_t)((unsigned char)s[i]);
+}
+
+/* Internal static hexdump buffer (64 KB). */
+static char s_hexdump_buf[65536];
+static int64_t s_hexdump_len = 0;
+
+const char *nitty_serial_hexdump(const char *data, int64_t len,
+                                  int64_t byte_offset, int64_t max_bytes)
+{
+    s_hexdump_buf[0] = '\0';
+    s_hexdump_len = 0;
+
+    if (!data || len <= 0) return s_hexdump_buf;
+
+    int64_t limit = (max_bytes > 0 && max_bytes < len) ? max_bytes : len;
+    char *out = s_hexdump_buf;
+    char *end = s_hexdump_buf + sizeof(s_hexdump_buf) - 2;
+
+    for (int64_t pos = 0; pos < limit && out < end - 80; pos += 16) {
+        int64_t chunk = limit - pos;
+        if (chunk > 16) chunk = 16;
+
+        /* Offset field: 8 hex digits + 2 spaces */
+        int written = snprintf(out, (size_t)(end - out), "%08llX  ",
+                               (unsigned long long)(byte_offset + pos));
+        out += written;
+
+        /* Hex bytes */
+        for (int64_t i = 0; i < 16 && out < end - 4; i++) {
+            if (i < chunk) {
+                written = snprintf(out, (size_t)(end - out), "%02X ",
+                                   (unsigned char)data[pos + i]);
+                out += written;
+            } else {
+                memcpy(out, "   ", 3);
+                out += 3;
+            }
+            if (i == 7) { *out++ = ' '; }  /* extra space between groups */
+        }
+
+        /* ASCII sidebar */
+        *out++ = ' ';
+        *out++ = '|';
+        for (int64_t i = 0; i < chunk && out < end - 1; i++) {
+            unsigned char b = (unsigned char)data[pos + i];
+            *out++ = (b >= 0x20 && b <= 0x7e) ? (char)b : '.';
+        }
+        *out++ = '|';
+        *out++ = '\n';
+    }
+    *out = '\0';
+    s_hexdump_len = (int64_t)(out - s_hexdump_buf);
+    return s_hexdump_buf;
+}
+
+int64_t nitty_serial_hexdump_len(void)
+{
+    return s_hexdump_len;
+}

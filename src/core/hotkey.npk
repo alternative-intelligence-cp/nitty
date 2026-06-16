@@ -275,7 +275,7 @@ func:_hk_add = NIL(string:action, int64:kv0, int64:m0,
 
 // ── Default hotkey map ────────────────────────────────────────────────────────
 
-/// Populate the binding table with all 22 default bindings.
+/// Populate the binding table with all 28 default bindings.
 /// Safe to call multiple times (resets count first).
 pub func:hotkeys_init_defaults = NIL() {
     g_hk_count = 0i64;
@@ -332,6 +332,12 @@ pub func:hotkeys_init_defaults = NIL() {
     drop(_hk_add("app.quit",            113i64, 3i64, 0i64, 0i64, 1i64));  // q = 113
     drop(_hk_add("connection.manager",  98i64,  3i64, 0i64, 0i64, 1i64));  // b = 98
     drop(_hk_add("sftp.browser",       115i64, 3i64, 0i64, 0i64, 1i64));  // s = 115 (Ctrl+Shift+S)
+
+    // Serial
+    // F8 = serial.toggle_hex (no mods — convenient toggle, no conflicts)
+    drop(_hk_add("serial.toggle_hex",  nitty_gdk_key_f8(), 0i64, 0i64, 0i64, 1i64));
+    // Ctrl+Shift+` = serial.send_break (backtick=96, mods=3)
+    drop(_hk_add("serial.send_break",  96i64, 3i64, 0i64, 0i64, 1i64));
 
     pass(NIL);
 };

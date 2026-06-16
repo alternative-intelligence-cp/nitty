@@ -657,3 +657,12 @@ deps = ["serial_shim"]
 flags = []
 link_libraries = ["nitty_serial_shim"]
 link_paths = [".nitpick_make/build"]
+
+# v0.9.1: Serial modes unit tests (input/output modes, newline, hexdump, history)
+[target.test_serial_modes]
+type = "binary"
+sources = ["tests/serial/test_serial_modes.npk"]
+deps = ["serial_shim"]
+flags = []
+link_libraries = ["nitty_serial_shim"]
+link_paths = [".nitpick_make/build"]
