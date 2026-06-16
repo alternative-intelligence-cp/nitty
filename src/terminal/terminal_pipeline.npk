@@ -39,6 +39,9 @@ use "terminal_state.npk".*;
 use "terminal_state_apply.npk".*;
 use "actions.npk".*;
 use "../core/tab_manager.npk".*;
+use "hyperlink_store.npk".*;          // v0.7.2: OSC 8 hyperlink store
+use "../gui/window_features.npk".*;   // v0.7.3: dynamic window title
+use "../gui/gtk4_ffi.npk".*;          // v0.7.3: nitty_gtk4_get_main_window
 
 // ═══════════════════════════════════════════════════════════════════════
 // Initialization
@@ -77,6 +80,7 @@ func:pl_apply_esc = NIL() {
 
 // Route E_OSC: dispatch_osc → ts_apply_action.
 // v0.4.1: If action is SET_WINDOW_TITLE, also update active tab title.
+// v0.7.2: If action is SET_HYPERLINK/END_HYPERLINK, update active hyperlink pen.
 func:pl_apply_osc = NIL() {
     drop(dispatch_osc(raw parser_get_event_data()));
     int64:act  = raw osc_dispatch_get_action();
@@ -105,8 +109,29 @@ func:pl_apply_osc = NIL() {
         }
         if (raw string_is_empty(title) == 0i64) {
             drop(tm_set_active_title(title));
+            // v0.7.3: also update the GTK window title
+            int64:wf_win = raw nitty_gtk4_get_main_window();
+            drop(wf_update_title(wf_win, title));
         }
     }
+
+    // v0.7.2: Wire OSC 8 to hyperlink pen (ACT_SET_HYPERLINK = 33, ACT_END_HYPERLINK = 34)
+    if (act == 33i64) {
+        // data1 = uri_start byte offset in osc_data buffer
+        // URI runs from dat1 to parser_get_osc_data_len()
+        int64:uri_start  = dat1;
+        int64:plen_osc   = raw parser_get_osc_data_len();
+        int64:uri_len    = plen_osc - uri_start;
+        if (uri_len > 0i64) {
+            int64:link_id = raw hl_intern_url(uri_start, uri_len);
+            drop(ts_set_active_link_id(link_id));
+        }
+    }
+    if (act == 34i64) {
+        // Empty URI = end hyperlink: clear active link pen
+        drop(ts_set_active_link_id(0i64));
+    }
+
     pass(NIL);
 };
 

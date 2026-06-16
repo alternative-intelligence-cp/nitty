@@ -153,6 +153,20 @@ pub func:schema_init = NIL() {
     drop(_sch_add("terminal.copy_on_select",       T_BOOL, "0", 0i64, 0i64));
     drop(_sch_add("terminal.warn_multiline_paste",  T_BOOL, "1", 0i64, 0i64));
     drop(_sch_add("terminal.right_click_paste",     T_BOOL, "0", 0i64, 0i64));
+    //   v0.7.2: Hyperlink/clickable-link behaviour
+    //   terminal.link_handler:        string — command used to open URLs (default: xdg-open)
+    //   terminal.link_click_modifier: string — modifier required to click links (default: none)
+    int64:T_STRING = 1i64;  // schema type for string values
+    drop(_sch_add("terminal.link_handler",          T_STRING, "xdg-open", 0i64, 0i64));
+    drop(_sch_add("terminal.link_click_modifier",   T_STRING, "none",     0i64, 0i64));
+
+    // window.* — v0.7.3: Window behaviour
+    //   window.always_on_top: bool   — 1 = keep window above others (_NET_WM_STATE_ABOVE)
+    //   window.decorated:     bool   — 1 = show title bar/borders (default: 1)
+    //   window.icon_name:     string — XDG icon name (default: "utilities-terminal")
+    drop(_sch_add("window.always_on_top", T_BOOL, "0", 0i64, 0i64));
+    drop(_sch_add("window.decorated",     T_BOOL, "1", 0i64, 0i64));
+    drop(_sch_add("window.icon_name",     T_STR,  "utilities-terminal", 0i64, 0i64));
 
     pass(NIL);
 };

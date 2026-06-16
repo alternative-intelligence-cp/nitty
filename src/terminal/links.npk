@@ -1,0 +1,297 @@
+// src/terminal/links.npk — Auto-URL detection engine for Nitty v0.7.2
+//
+// Scans a terminal row's cell content for URL-like strings and file paths.
+// Results are stored in module-level flat arrays (capacity: 64 links per row).
+//
+// Supports:
+//   https://...   http://...   ftp://...
+//
+// URL termination rules:
+//   - Stops at whitespace, control chars, or: " ' < > ` { }
+//   - Trims trailing: , . ) ] ; : (common punctuation after URLs in prose)
+//     but ONLY if not part of a balanced pair within the URL body.
+//
+// Per-frame scan: links_scan_active_row(active_row, cols)
+//   - Reads raw grid_get_cp(row, col) to populate g_lk_cps[]
+//   Detected URLs are interned in hyperlink_store.npk and their link_ids
+//   stored in g_lk_link_id[]. These link_ids can then be written back to
+//   grid_flags bits 16-23 via links_apply_to_active_row() and
+//   links_clear_row_link_flags().
+//
+// Note: This module handles AUTO-DETECTED URLs only. OSC 8 explicit
+// hyperlinks are handled in hyperlink_store.npk + terminal_pipeline.npk.
+
+use "hyperlink_store.npk".*;
+use "grid.npk".*;
+use "scrollback.npk".*;
+
+// ── Capacity ──────────────────────────────────────────────────────────────
+
+int64:LK_MAX     = 64i64;   // max detected links per scan
+int64:LK_CP_MAX  = 512i64;  // max row width in columns
+
+// ── Module state ──────────────────────────────────────────────────────────
+
+int64[64]:g_lk_col_start;  // inclusive start column of each link
+int64[64]:g_lk_col_end;  // inclusive end column   of each link
+int64[64]:g_lk_link_id;  // link_id in hyperlink_store (0 = invalid)
+int64:g_lk_count = 0i64;        // number of links found in last scan
+
+// Row codepoint buffer (populated by links_scan_active_row / links_scan_scrollback_row)
+int64[512]:g_lk_cps;
+
+// ── Public getters ────────────────────────────────────────────────────────
+
+pub func:links_count      = int64()       { pass(g_lk_count); };
+pub func:links_col_start  = int64(int64:i) { pass(g_lk_col_start[i]); };
+pub func:links_col_end    = int64(int64:i) { pass(g_lk_col_end[i]); };
+pub func:links_link_id    = int64(int64:i) { pass(g_lk_link_id[i]); };
+
+/// Return link_id for the given column (0 = not a link).
+pub func:links_col_has_link = int64(int64:col) {
+    int64:i = 0i64;
+    while (i < g_lk_count) {
+        if (col >= g_lk_col_start[i]) {
+            if (col <= g_lk_col_end[i]) {
+                pass(g_lk_link_id[i]);
+            }
+        }
+        i = i + 1i64;
+    }
+    pass(0i64);
+};
+
+// ── URL character class helpers ───────────────────────────────────────────
+
+/// Returns 1 if cp can appear inside a URL body (after the scheme://).
+func:_is_url_char = int64(int64:cp) {
+    if (cp <= 32i64)   { pass(0i64); }  // space or control
+    if (cp == 34i64)   { pass(0i64); }  // "
+    if (cp == 39i64)   { pass(0i64); }  // '
+    if (cp == 60i64)   { pass(0i64); }  // <
+    if (cp == 62i64)   { pass(0i64); }  // >
+    if (cp == 96i64)   { pass(0i64); }  // `
+    if (cp == 123i64)  { pass(0i64); }  // {
+    if (cp == 125i64)  { pass(0i64); }  // }
+    if (cp == 127i64)  { pass(0i64); }  // DEL
+    pass(1i64);
+};
+
+/// Returns 1 if cp is trailing punctuation to trim.
+func:_is_trail_punct = int64(int64:cp) {
+    if (cp == 44i64)   { pass(1i64); }  // ,
+    if (cp == 46i64)   { pass(1i64); }  // .
+    if (cp == 41i64)   { pass(1i64); }  // )
+    if (cp == 93i64)   { pass(1i64); }  // ]
+    if (cp == 59i64)   { pass(1i64); }  // ;
+    if (cp == 58i64)   { pass(1i64); }  // :
+    pass(0i64);
+};
+
+// ── Scheme match helpers (read directly from g_lk_cps) ───────────────────
+
+/// Returns 1 if g_lk_cps at col matches "https://" (8 chars).
+func:_match_https = int64(int64:col, int64:cols) {
+    if (col + 7i64 >= cols) { pass(0i64); }
+    if (g_lk_cps[col + 0i64] != 104i64) { pass(0i64); }  // h
+    if (g_lk_cps[col + 1i64] != 116i64) { pass(0i64); }  // t
+    if (g_lk_cps[col + 2i64] != 116i64) { pass(0i64); }  // t
+    if (g_lk_cps[col + 3i64] != 112i64) { pass(0i64); }  // p
+    if (g_lk_cps[col + 4i64] != 115i64) { pass(0i64); }  // s
+    if (g_lk_cps[col + 5i64] != 58i64)  { pass(0i64); }  // :
+    if (g_lk_cps[col + 6i64] != 47i64)  { pass(0i64); }  // /
+    if (g_lk_cps[col + 7i64] != 47i64)  { pass(0i64); }  // /
+    pass(1i64);
+};
+
+/// Returns 1 if g_lk_cps at col matches "http://" (7 chars).
+func:_match_http = int64(int64:col, int64:cols) {
+    if (col + 6i64 >= cols) { pass(0i64); }
+    if (g_lk_cps[col + 0i64] != 104i64) { pass(0i64); }  // h
+    if (g_lk_cps[col + 1i64] != 116i64) { pass(0i64); }  // t
+    if (g_lk_cps[col + 2i64] != 116i64) { pass(0i64); }  // t
+    if (g_lk_cps[col + 3i64] != 112i64) { pass(0i64); }  // p
+    if (g_lk_cps[col + 4i64] != 58i64)  { pass(0i64); }  // :
+    if (g_lk_cps[col + 5i64] != 47i64)  { pass(0i64); }  // /
+    if (g_lk_cps[col + 6i64] != 47i64)  { pass(0i64); }  // /
+    pass(1i64);
+};
+
+/// Returns 1 if g_lk_cps at col matches "ftp://" (6 chars).
+func:_match_ftp = int64(int64:col, int64:cols) {
+    if (col + 5i64 >= cols) { pass(0i64); }
+    if (g_lk_cps[col + 0i64] != 102i64) { pass(0i64); }  // f
+    if (g_lk_cps[col + 1i64] != 116i64) { pass(0i64); }  // t
+    if (g_lk_cps[col + 2i64] != 112i64) { pass(0i64); }  // p
+    if (g_lk_cps[col + 3i64] != 58i64)  { pass(0i64); }  // :
+    if (g_lk_cps[col + 4i64] != 47i64)  { pass(0i64); }  // /
+    if (g_lk_cps[col + 5i64] != 47i64)  { pass(0i64); }  // /
+    pass(1i64);
+};
+
+// ── Core scan logic ───────────────────────────────────────────────────────
+
+/// Scan g_lk_cps[0..cols) for URL schemes. Fills g_lk_* arrays.
+/// Reads module-level g_lk_cps (populated by caller).
+func:_scan_cps = NIL(int64:cols) {
+    g_lk_count = 0i64;
+    int64:c = 0i64;
+    while (c < cols) {
+        if (g_lk_count >= LK_MAX) { pass(NIL); }  // buffer full
+
+        // Try to match a scheme at position c
+        int64:scheme_len = 0i64;
+        if (raw _match_https(c, cols) == 1i64) { scheme_len = 8i64; }
+        if (scheme_len == 0i64) {
+            if (raw _match_http(c, cols) == 1i64) { scheme_len = 7i64; }
+        }
+        if (scheme_len == 0i64) {
+            if (raw _match_ftp(c, cols) == 1i64) { scheme_len = 6i64; }
+        }
+
+        if (scheme_len == 0i64) {
+            // No scheme here, advance
+            c = c + 1i64;
+        }
+        if (scheme_len > 0i64) {
+            // Found a scheme — extend right while URL chars remain
+            int64:url_start = c;
+            int64:url_end   = c + scheme_len - 1i64;
+            int64:j = c + scheme_len;
+            while (j < cols) {
+                if (raw _is_url_char(g_lk_cps[j]) == 1i64) {
+                    url_end = j;
+                    j = j + 1i64;
+                }
+                if (raw _is_url_char(g_lk_cps[j]) == 0i64) {
+                    j = cols;  // break
+                }
+            }
+
+            // Trim trailing punctuation
+            int64:trimming = 1i64;
+            while (trimming == 1i64) {
+                if (url_end <= url_start + scheme_len - 1i64) { trimming = 0i64; }
+                if (trimming == 1i64) {
+                    if (raw _is_trail_punct(g_lk_cps[url_end]) == 1i64) {
+                        url_end = url_end - 1i64;
+                    }
+                    if (raw _is_trail_punct(g_lk_cps[url_end]) == 0i64) {
+                        trimming = 0i64;
+                    }
+                }
+            }
+
+            // Must have at least 1 char after scheme://
+            if (url_end >= url_start + scheme_len) {
+                // Build URL string
+                string:url = "";
+                int64:k = url_start;
+                while (k <= url_end) {
+                    int64:b = g_lk_cps[k];
+                    if (b > 0i64) {
+                        url = url + string_from_char(b);
+                    }
+                    k = k + 1i64;
+                }
+
+                // Intern URL and register
+                int64:link_id = raw hl_intern_url_str(url);
+                if (link_id > 0i64) {
+                    int64:slot = g_lk_count;
+                    g_lk_col_start[slot] = url_start;
+                    g_lk_col_end[slot]   = url_end;
+                    g_lk_link_id[slot]   = link_id;
+                    g_lk_count = g_lk_count + 1i64;
+                }
+            }
+            // Resume scan after url_end of URL
+            c = url_end + 1i64;
+        }
+    }
+    pass(NIL);
+};
+
+// ── Public scan entry points ──────────────────────────────────────────────
+
+/// Scan an active grid row (active_row 0-based from top of screen).
+/// cols = number of terminal columns.
+/// Returns count of detected links.
+pub func:links_scan_active_row = int64(int64:active_row, int64:cols) {
+    // Load codepoints into module-level temp buffer
+    int64:c = 0i64;
+    while (c < cols) {
+        if (c < LK_CP_MAX) {
+            int64:cp = raw grid_get_cp(active_row, c);
+            if (cp == 0i64) { cp = 32i64; }
+            g_lk_cps[c] = cp;
+        }
+        c = c + 1i64;
+    }
+    drop(_scan_cps(cols));
+    pass(g_lk_count);
+};
+
+/// Scan a scrollback row (sb_idx = 0-based from newest).
+/// cols = number of terminal columns.
+/// Returns count of detected links.
+pub func:links_scan_scrollback_row = int64(int64:sb_idx, int64:cols) {
+    int64:c = 0i64;
+    while (c < cols) {
+        if (c < LK_CP_MAX) {
+            int64:cp = raw scrollback_get_cp(sb_idx, c);
+            if (cp == 0i64) { cp = 32i64; }
+            g_lk_cps[c] = cp;
+        }
+        c = c + 1i64;
+    }
+    drop(_scan_cps(cols));
+    pass(g_lk_count);
+};
+
+/// Write detected link_ids back into the active grid row's flags (bits 16-23).
+/// Call after links_scan_active_row() to make links clickable.
+pub func:links_apply_to_active_row = NIL(int64:active_row, int64:cols) {
+    int64:i = 0i64;
+    while (i < g_lk_count) {
+        int64:link_id = g_lk_link_id[i];
+        int64:cs = g_lk_col_start[i];
+        int64:ce = g_lk_col_end[i];
+        int64:c = cs;
+        while (c <= ce) {
+            int64:cp    = raw grid_get_cp(active_row, c);
+            int64:attrs = raw grid_get_attrs(active_row, c);
+            int64:flags = raw grid_get_flags(active_row, c);
+            // Clear bits 16-23 then OR in link_id
+            int64:old_id = (flags / 65536i64) & 255i64;
+            int64:masked = flags - old_id * 65536i64;
+            int64:new_flags = masked + link_id * 65536i64;
+            drop(grid_set(active_row, c, cp, attrs, new_flags));
+            c = c + 1i64;
+        }
+        i = i + 1i64;
+    }
+    pass(NIL);
+};
+
+/// Clear link_ids (bits 16-23 = 0) from a row's cells that are NOT covered
+/// by any detected link. Used to remove stale link highlights from previous scan.
+pub func:links_clear_row_link_flags = NIL(int64:active_row, int64:cols) {
+    int64:c = 0i64;
+    while (c < cols) {
+        int64:has_link = raw links_col_has_link(c);
+        if (has_link == 0i64) {
+            int64:cp    = raw grid_get_cp(active_row, c);
+            int64:attrs = raw grid_get_attrs(active_row, c);
+            int64:flags = raw grid_get_flags(active_row, c);
+            int64:link_in_flags = (flags / 65536i64) & 255i64;
+            if (link_in_flags != 0i64) {
+                // Clear bits 16-23
+                int64:new_flags = flags - link_in_flags * 65536i64;
+                drop(grid_set(active_row, c, cp, attrs, new_flags));
+            }
+        }
+        c = c + 1i64;
+    }
+    pass(NIL);
+};

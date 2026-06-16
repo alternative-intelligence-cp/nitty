@@ -1,0 +1,35 @@
+// src/gui/link_opener.npk — Non-blocking URL opener for Nitty v0.7.2
+//
+// Provides link_open(link_id): looks up the URL from hyperlink_store,
+// then execs xdg-open in a fork()ed child (non-blocking — parent returns
+// immediately; the child inherits the process group and execves /bin/sh).
+//
+// Used by:
+//   terminal_widget.npk  — left-click on a link cell calls link_open(link_id)
+//
+// Dependencies:
+//   src/terminal/hyperlink_store.npk  — hl_url_as_string()
+//   nitty_gtk4_shim (C)              — nitty_gtk4_open_url() via gtk4_ffi.npk
+//
+// On why we use the C shim (nitty_gtk4_open_url) rather than libc_fork directly:
+//   The GTK4 main loop owns a SIGCHLD handler. Forking from Nitpick and leaving
+//   a zombie child would confuse the GLib child-watch machinery. Using
+//   g_app_info_launch_default_for_uri() (GLib-native) is cleaner on the GTK side.
+//   The C shim is trivial and tested.
+
+use "../terminal/hyperlink_store.npk".*;
+use "gtk4_ffi.npk".*;
+
+/// Open the URL stored at link_id using the system default handler.
+/// Non-blocking: g_app_info_launch_default_for_uri spawns a subprocess and
+/// returns immediately. Returns 1 on success, 0 on failure or empty link_id.
+pub func:link_open = int64(int64:link_id) {
+    if (link_id <= 0i64)  { pass(0i64); }
+
+    string:url = raw hl_url_as_string(link_id);
+    if (raw string_is_empty(url) == 1i64) { pass(0i64); }
+
+    // Delegate to GTK4 C shim (fork-free, GLib-native URI launch)
+    int64:launch_ok = raw nitty_gtk4_open_url(url);
+    pass(launch_ok);
+};

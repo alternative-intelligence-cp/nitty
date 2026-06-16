@@ -45,6 +45,14 @@ int64:g_cfg_quake_anim_duration = 150i64;
 int64:g_cfg_copy_on_select       = 0i64;
 int64:g_cfg_warn_multiline_paste = 1i64;
 int64:g_cfg_right_click_paste    = 0i64;
+// v0.7.2: Link behaviour
+string:g_cfg_link_handler          = "xdg-open";
+string:g_cfg_link_click_modifier   = "none";
+
+// v0.7.3: Window behaviour
+int64:g_cfg_win_always_on_top = 0i64;
+int64:g_cfg_win_decorated     = 1i64;
+string:g_cfg_win_icon_name    = "utilities-terminal";
 
 // State flags
 int64:g_cfg_is_default = 1i64;  // 1 if no config file found; 0 if loaded from disk
@@ -73,6 +81,10 @@ func:_load_defaults = NIL() {
     g_cfg_quake_height_pct    = 50i64;
     g_cfg_quake_position      = "top";
     g_cfg_quake_anim_duration = 150i64;
+    // v0.7.3 window defaults
+    g_cfg_win_always_on_top = 0i64;
+    g_cfg_win_decorated     = 1i64;
+    g_cfg_win_icon_name     = "utilities-terminal";
     pass(NIL);
 };
 
@@ -235,6 +247,37 @@ func:_read_from_toml = NIL() {
         int32:v = raw Toml.get_bool("terminal.right_click_paste");
         if (v == 1i32) { g_cfg_right_click_paste = 1i64; }
         if (v == 0i32) { g_cfg_right_click_paste = 0i64; }
+    }
+
+    // v0.7.2: Link handler and click modifier
+    int32:has_lh = raw Toml.has_key("terminal.link_handler");
+    if (has_lh == 1i32) {
+        string:lh_v = raw Toml.get_string("terminal.link_handler");
+        if (raw string_is_empty(lh_v) == 0i64) { g_cfg_link_handler = lh_v; }
+    }
+    int32:has_lcm = raw Toml.has_key("terminal.link_click_modifier");
+    if (has_lcm == 1i32) {
+        string:lcm_v = raw Toml.get_string("terminal.link_click_modifier");
+        if (raw string_is_empty(lcm_v) == 0i64) { g_cfg_link_click_modifier = lcm_v; }
+    }
+
+    // v0.7.3: Window behaviour
+    int32:has_aot = raw Toml.has_key("window.always_on_top");
+    if (has_aot == 1i32) {
+        int32:v = raw Toml.get_bool("window.always_on_top");
+        if (v == 1i32) { g_cfg_win_always_on_top = 1i64; }
+        if (v == 0i32) { g_cfg_win_always_on_top = 0i64; }
+    }
+    int32:has_dec = raw Toml.has_key("window.decorated");
+    if (has_dec == 1i32) {
+        int32:v = raw Toml.get_bool("window.decorated");
+        if (v == 1i32) { g_cfg_win_decorated = 1i64; }
+        if (v == 0i32) { g_cfg_win_decorated = 0i64; }
+    }
+    int32:has_ico = raw Toml.has_key("window.icon_name");
+    if (has_ico == 1i32) {
+        string:ico_v = raw Toml.get_string("window.icon_name");
+        if (raw string_is_empty(ico_v) == 0i64) { g_cfg_win_icon_name = ico_v; }
     }
 
     pass(NIL);
@@ -476,3 +519,16 @@ pub func:cfg_copy_on_select       = int64() { pass(g_cfg_copy_on_select); };
 pub func:cfg_warn_multiline_paste = int64() { pass(g_cfg_warn_multiline_paste); };
 pub func:cfg_right_click_paste    = int64() { pass(g_cfg_right_click_paste); };
 
+// v0.7.2: Link behaviour getters
+pub func:cfg_link_handler          = string() { pass(g_cfg_link_handler); };
+pub func:cfg_link_click_modifier   = string() { pass(g_cfg_link_click_modifier); };
+
+// v0.7.3: Window behaviour getters
+pub func:cfg_win_always_on_top = int64()  { pass(g_cfg_win_always_on_top); };
+pub func:cfg_win_decorated     = int64()  { pass(g_cfg_win_decorated); };
+pub func:cfg_win_icon_name     = string() { pass(g_cfg_win_icon_name); };
+
+// v0.7.3: Setters for runtime changes
+pub func:cfg_set_win_always_on_top = NIL(int64:v)  { g_cfg_win_always_on_top = v; pass(NIL); };
+pub func:cfg_set_win_decorated     = NIL(int64:v)  { g_cfg_win_decorated = v;     pass(NIL); };
+pub func:cfg_set_win_icon_name     = NIL(string:v) { g_cfg_win_icon_name = v;     pass(NIL); };

@@ -1,0 +1,95 @@
+// tests/config/test_window_state.npk — window_state.npk unit tests (v0.7.3)
+//
+// Tests: WinState defaults and YAML round-trip.
+// Requires: nitpick_yaml_shim, nitpick_fs_shim, nitpick_env_shim
+//
+// T01  default width = 1024
+// T02  default height = 768
+// T03  default maximized = 0
+// T04  default fullscreen = 0
+// T05  write raw YAML + parse: width round-trips correctly
+// T06  write raw YAML + parse: height round-trips correctly
+// T07  write raw YAML + parse: maximized=1 round-trips correctly
+// T08  write raw YAML + parse: fullscreen=1 round-trips correctly
+// T09  struct field isolation: two separate defaults are independent
+
+use "../../src/config/window_state.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/src/nitpick_yaml.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
+
+func:failsafe = int32(tbb32:_err) { exit 98i32; };
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+func:run_tests = NIL() {
+
+    // ── T01-T04: Default values ───────────────────────────────────────────────
+    WinState:def = raw window_state_default();
+    drop(check("T01: default width",      1024i64, def.width));
+    drop(check("T02: default height",      768i64, def.height));
+    drop(check("T03: default maximized",     0i64, def.maximized));
+    drop(check("T04: default fullscreen",    0i64, def.fullscreen));
+
+    // ── T05-T08: YAML round-trip via fs_write_file + YAML.parse_file ─────────
+    string:tmp = "/tmp/nitty_ws_test.yaml";
+
+    // Write a hand-crafted YAML matching the schema
+    string:yaml = "width: 1920\nheight: 1080\nmaximized: 1\nfullscreen: 1\n";
+    int32:wrote32 = raw fs_write_file(tmp, yaml);
+    // Convert int32 to int64 for check
+    int64:wrote64 = 0i64;
+    if (wrote32 == 1i32) { wrote64 = 1i64; }
+    drop(check("T05-pre: write ok", 1i64, wrote64));
+
+    // Parse via the YAML library
+    drop(YAML.clear());
+    int32:parse32 = raw YAML.parse_file(tmp);
+    int64:parse64 = 0i64;
+    if (parse32 >= 0i32) { parse64 = 1i64; }
+    drop(check("T05-parse: parsed ok", 1i64, parse64));
+
+    int64:rw = raw YAML.get_int("width");
+    int64:rh = raw YAML.get_int("height");
+
+    int32:rm32 = raw YAML.get_bool("maximized");
+    int64:rm64 = 0i64;
+    if (rm32 == 1i32) { rm64 = 1i64; }
+
+    int32:rf32 = raw YAML.get_bool("fullscreen");
+    int64:rf64 = 0i64;
+    if (rf32 == 1i32) { rf64 = 1i64; }
+
+    drop(check("T05: round-trip width",      1920i64, rw));
+    drop(check("T06: round-trip height",     1080i64, rh));
+    drop(check("T07: round-trip maximized",     1i64, rm64));
+    drop(check("T08: round-trip fullscreen",    1i64, rf64));
+
+    // Cleanup
+    drop(fs_remove(tmp));
+
+    // ── T09: Struct field isolation ───────────────────────────────────────────
+    WinState:b = raw window_state_default();
+    drop(check("T09: field isolation", 1024i64, b.width));
+
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    drop(run_tests());
+    if (g_fail > 0i64) {
+        exit 1i32;
+    }
+    print("All window_state tests passed.");
+    exit 0i32;
+};

@@ -1,0 +1,183 @@
+// src/terminal/hyperlink_store.npk — Hyperlink URL intern table for Nitty v0.7.2
+//
+// Stores the unique URL strings associated with OSC 8 hyperlinks and
+// auto-detected URLs. Each URL is assigned a link_id (1-based, max 255).
+// Link IDs are encoded in grid_flags bits 16-23: link_id = (flags/65536) & 255.
+//
+// Two internalisation paths:
+//   hl_intern_url(uri_start, uri_len):  reads bytes from parser_get_osc_data_byte()
+//                                        (used by terminal_pipeline when handling
+//                                        ACT_SET_HYPERLINK — OSC data is available)
+//   hl_intern_url_str(url_str):         takes a Nitpick string directly
+//                                        (used by auto-URL scanner in links.npk)
+//
+// Capacity: 255 unique URLs (link_id 1..255). link_id 0 = no link.
+// Max URL length: 2048 bytes per entry.
+
+use "vt_parser.npk".*;
+
+// ── String byte access (Nitpick runtime built-in) ────────────────────────
+// npk_string_byte_at is built into the Nitpick runtime (strings/byte_at.c).
+// Returns the byte value at index i, or -1 if out of bounds.
+extern func:npk_string_byte_at = int64(string:s, int64:i);
+
+// ── Constants ─────────────────────────────────────────────────────────────
+
+int64:HL_MAX_URLS    = 255i64;   // max unique URLs (link_id 1..255)
+int64:HL_URL_MAXLEN  = 2048i64;  // max byte length per URL
+
+// ── URL store: flat 255×2048 byte array ──────────────────────────────────
+
+int64[522240]:g_hl_url_data;  // 255 * 2048 = 521920; use 522240 for alignment
+int64[256]:g_hl_url_len;  // byte length for each slot (index = link_id)
+int64:g_hl_url_count = 0i64;       // number of URLs currently registered (0-based)
+
+// ── Internal helpers ──────────────────────────────────────────────────────
+
+/// Byte offset into g_hl_url_data for (link_id, byte_pos).
+func:_hl_offset = int64(int64:link_id, int64:p) {
+    pass((link_id - 1i64) * HL_URL_MAXLEN + p);
+};
+
+/// Read byte p of the stored URL for link_id (0-indexed).
+func:_hl_read = int64(int64:link_id, int64:p) {
+    if (link_id <= 0i64)            { pass(0i64); }
+    if (link_id > HL_MAX_URLS)      { pass(0i64); }
+    if (p < 0i64)                   { pass(0i64); }
+    if (p >= g_hl_url_len[link_id]) { pass(0i64); }
+    int64:off = raw _hl_offset(link_id, p);
+    pass(g_hl_url_data[off]);
+};
+
+/// Compare URL stored at link_id with bytes from parser_get_osc_data_byte()
+/// at [uri_start .. uri_start+uri_len). Returns 1 if equal.
+func:_hl_match_osc = int64(int64:link_id, int64:uri_start, int64:uri_len) {
+    if (g_hl_url_len[link_id] != uri_len) { pass(0i64); }
+    int64:p = 0i64;
+    while (p < uri_len) {
+        int64:off    = raw _hl_offset(link_id, p);
+        int64:stored = g_hl_url_data[off];
+        int64:fresh  = raw parser_get_osc_data_byte(uri_start + p);
+        if (stored != fresh) { pass(0i64); }
+        p = p + 1i64;
+    }
+    pass(1i64);
+};
+
+/// Compare URL stored at link_id with a Nitpick string. Returns 1 if equal.
+func:_hl_match_str = int64(int64:link_id, string:s) {
+    int64:slen = string_length(s);
+    if (g_hl_url_len[link_id] != slen) { pass(0i64); }
+    int64:p = 0i64;
+    while (p < slen) {
+        int64:off    = raw _hl_offset(link_id, p);
+        int64:stored = g_hl_url_data[off];
+        int64:fresh  = npk_string_byte_at(s, p);
+        if (stored != fresh) { pass(0i64); }
+        p = p + 1i64;
+    }
+    pass(1i64);
+};
+
+// ── Public API ────────────────────────────────────────────────────────────
+
+/// Intern a URL from the OSC data buffer (bytes at [uri_start..uri_start+uri_len)).
+/// Returns link_id (1-255), or 0 on overflow/empty URL.
+pub func:hl_intern_url = int64(int64:uri_start, int64:uri_len) {
+    if (uri_len <= 0i64)           { pass(0i64); }
+    if (uri_len > HL_URL_MAXLEN)   { pass(0i64); }
+
+    // Check for existing match (dedup)
+    int64:i = 1i64;
+    while (i <= g_hl_url_count) {
+        if (raw _hl_match_osc(i, uri_start, uri_len) == 1i64) { pass(i); }
+        i = i + 1i64;
+    }
+
+    // Overflow?
+    if (g_hl_url_count >= HL_MAX_URLS) { pass(0i64); }
+
+    // Insert new entry
+    g_hl_url_count = g_hl_url_count + 1i64;
+    int64:new_id = g_hl_url_count;
+    g_hl_url_len[new_id] = uri_len;
+
+    int64:p = 0i64;
+    while (p < uri_len) {
+        int64:off = raw _hl_offset(new_id, p);
+        g_hl_url_data[off] = raw parser_get_osc_data_byte(uri_start + p);
+        p = p + 1i64;
+    }
+    pass(new_id);
+};
+
+/// Intern a URL from a Nitpick string directly (used by auto-URL scanner).
+/// Returns link_id (1-255), or 0 on overflow/empty.
+pub func:hl_intern_url_str = int64(string:url) {
+    int64:slen = string_length(url);
+    if (slen <= 0i64)         { pass(0i64); }
+    if (slen > HL_URL_MAXLEN) { pass(0i64); }
+
+    // Dedup
+    int64:i = 1i64;
+    while (i <= g_hl_url_count) {
+        if (raw _hl_match_str(i, url) == 1i64) { pass(i); }
+        i = i + 1i64;
+    }
+
+    if (g_hl_url_count >= HL_MAX_URLS) { pass(0i64); }
+
+    g_hl_url_count = g_hl_url_count + 1i64;
+    int64:new_id = g_hl_url_count;
+    g_hl_url_len[new_id] = slen;
+
+    int64:p = 0i64;
+    while (p < slen) {
+        int64:off = raw _hl_offset(new_id, p);
+        g_hl_url_data[off] = npk_string_byte_at(url, p);
+        p = p + 1i64;
+    }
+    pass(new_id);
+};
+
+/// Get byte p of the URL for link_id.
+pub func:hl_get_url_byte = int64(int64:link_id, int64:p) {
+    pass(raw _hl_read(link_id, p));
+};
+
+/// Get byte length of the URL for link_id.
+pub func:hl_get_url_len = int64(int64:link_id) {
+    if (link_id <= 0i64)       { pass(0i64); }
+    if (link_id > HL_MAX_URLS) { pass(0i64); }
+    pass(g_hl_url_len[link_id]);
+};
+
+/// Build and return the URL string for link_id.
+pub func:hl_url_as_string = string(int64:link_id) {
+    int64:url_len = raw hl_get_url_len(link_id);
+    if (url_len == 0i64) { pass(""); }
+    string:s = "";
+    int64:p = 0i64;
+    while (p < url_len) {
+        int64:b = raw hl_get_url_byte(link_id, p);
+        if (b > 0i64) {
+            s = s + string_from_char(b);
+        }
+        p = p + 1i64;
+    }
+    pass(s);
+};
+
+/// Count of currently registered URLs.
+pub func:hl_url_count = int64() { pass(g_hl_url_count); };
+
+/// Reset URL table (called on terminal reset / tab close).
+pub func:hl_clear = NIL() {
+    g_hl_url_count = 0i64;
+    int64:i = 0i64;
+    while (i < 256i64) {
+        g_hl_url_len[i] = 0i64;
+        i = i + 1i64;
+    }
+    pass(NIL);
+};

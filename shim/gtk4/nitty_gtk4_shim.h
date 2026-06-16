@@ -748,6 +748,69 @@ int64_t nitty_search_event_get_char(void);
  */
 int nitty_search_intercept_key(unsigned int keyval, unsigned int state);
 
+/* ── v0.7.2: Clickable links ─────────────────────────────────────────────── */
+
+/**
+ * Open a URI with the system default application (non-blocking).
+ * Uses g_app_info_launch_default_for_uri (GLib-native, GTK4-safe).
+ * Returns 1 on success, 0 on failure.
+ */
+int64_t nitty_gtk4_open_url(const char *url);
+
+/**
+ * Set the cursor on the terminal drawing area.
+ * is_pointer=1: hand/pointer cursor (hovering a link).
+ * is_pointer=0: default cursor.
+ */
+void nitty_gtk4_set_cursor_pointer(int64_t is_pointer);
+
+
+
+/* ── v0.7.3: Window Features ─────────────────────────────────────────────── */
+
+/**
+ * Pre-run: store opacity (fp×1000, 0–1000) to apply in on_activate.
+ * Uses gtk_widget_set_opacity(); 1000 = fully opaque, 0 = fully transparent.
+ */
+void nitty_gtk4_configure_opacity(int64_t opacity_fp1000);
+
+/**
+ * Pre-run: store default window size to apply in on_activate via
+ * gtk_window_set_default_size(). Pass 0/0 to leave unchanged.
+ */
+void nitty_gtk4_configure_default_size(int64_t width, int64_t height);
+
+/** Enter fullscreen. */
+void    nitty_gtk4_window_fullscreen(int64_t win_ptr);
+/** Leave fullscreen. */
+void    nitty_gtk4_window_unfullscreen(int64_t win_ptr);
+/** Returns 1 if window is currently fullscreen, 0 otherwise. */
+int64_t nitty_gtk4_window_is_fullscreen(int64_t win_ptr);
+
+/** Maximize the window. */
+void    nitty_gtk4_window_maximize(int64_t win_ptr);
+/** Restore (un-maximize) the window. */
+void    nitty_gtk4_window_unmaximize(int64_t win_ptr);
+/** Returns 1 if window is currently maximized, 0 otherwise. */
+int64_t nitty_gtk4_window_is_maximized(int64_t win_ptr);
+
+/**
+ * Show or hide window decorations (title bar, borders).
+ * decorated=1 → decorations on (default); decorated=0 → borderless.
+ */
+void nitty_gtk4_window_set_decorated(int64_t win_ptr, int64_t decorated);
+
+/**
+ * Set the window icon by XDG icon theme name (e.g. "utilities-terminal").
+ */
+void nitty_gtk4_window_set_icon_name(int64_t win_ptr, const char *name);
+
+/**
+ * Set always-on-top (keep-above) state via _NET_WM_STATE_ABOVE (X11 only).
+ * keep_above=1 → raise above other windows; keep_above=0 → restore normal.
+ * No-op on Wayland.
+ */
+void nitty_gtk4_window_set_keep_above(int64_t win_ptr, int64_t keep_above);
 
 
 #ifdef __cplusplus
@@ -755,4 +818,3 @@ int nitty_search_intercept_key(unsigned int keyval, unsigned int state);
 #endif
 
 #endif /* NITTY_GTK4_SHIM_H */
-

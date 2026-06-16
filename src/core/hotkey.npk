@@ -320,7 +320,9 @@ pub func:hotkeys_init_defaults = NIL() {
     drop(_hk_add("edit.clear",   107i64, 3i64, 0i64, 0i64, 1i64));  // k=107
 
     // View
-    drop(_hk_add("view.fullscreen",  nitty_gdk_key_f11(), 0i64, 0i64, 0i64, 1i64));  // F11, no mods
+    drop(_hk_add("view.fullscreen",    nitty_gdk_key_f11(), 0i64, 0i64, 0i64, 1i64));  // F11, no mods
+    drop(_hk_add("view.maximize",      nitty_gdk_key_f10(), 0i64, 0i64, 0i64, 1i64));  // F10, no mods
+    drop(_hk_add("view.always_on_top", 97i64, 3i64, 0i64, 0i64, 1i64));                 // Ctrl+Shift+A
     drop(_hk_add("view.zoom_in",     61i64, 3i64, 0i64, 0i64, 1i64));   // = = 61
     drop(_hk_add("view.zoom_out",    45i64, 3i64, 0i64, 0i64, 1i64));   // - = 45
     drop(_hk_add("view.zoom_reset",  48i64, 3i64, 0i64, 0i64, 1i64));   // 0 = 48

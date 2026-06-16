@@ -1,0 +1,165 @@
+// src/gui/window_features.npk — Window transparency, fullscreen, always-on-top
+//                               and title management. (v0.7.3)
+//
+// All state is in module-level globals for idempotent per-frame polling.
+//
+// Public API (called from app.npk and terminal_widget.npk):
+//
+//   wf_apply_opacity(win_ptr, opacity_fp1000)
+//     Apply opacity (0=transparent, 1000=opaque) to a GTK4 window.
+//     No-op if win_ptr == 0 or opacity unchanged.
+//
+//   wf_toggle_fullscreen(win_ptr)
+//     Toggle fullscreen state. On enter, saves current size to state.
+//     When exiting fullscreen the window_state.maximized is preserved.
+//
+//   wf_set_fullscreen(win_ptr, enabled)
+//     Set fullscreen directly.  enabled=1=enter, 0=exit.
+//
+//   wf_is_fullscreen(win_ptr) → int64
+//     Returns 1 if window is currently fullscreen.
+//
+//   wf_toggle_maximize(win_ptr)
+//     Toggle maximize/restore.
+//
+//   wf_is_maximized(win_ptr) → int64
+//     Returns 1 if window is currently maximized.
+//
+//   wf_set_keep_above(win_ptr, enabled)
+//     Set always-on-top via X11 _NET_WM_STATE_ABOVE.  1=raise, 0=normal.
+//     Reads from g_wf_keep_above so callers can just call this once at init.
+//
+//   wf_is_keep_above() → int64
+//     Returns g_wf_keep_above (the runtime flag, not queried from WM).
+//
+//   wf_apply_icon(win_ptr, icon_name)
+//     Set window icon by XDG theme name.
+//
+//   wf_apply_decorated(win_ptr, decorated)
+//     Show (1) or hide (0) window title bar and borders.
+//
+//   wf_update_title(win_ptr, shell_title)
+//     Compose "shell_title — Nitty" and apply to window title bar.
+//     No-op on empty string (uses last known title).
+
+use "gtk4_ffi.npk".*;
+
+// ── Module state ──────────────────────────────────────────────────────────────
+
+int64:g_wf_last_opacity       = -1i64;   // -1 = not yet applied
+int64:g_wf_keep_above         = 0i64;    // runtime keep-above state
+string:g_wf_last_title        = "";      // last composed title string
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/// Apply window opacity (0=fully transparent, 1000=fully opaque).
+/// Calls nitty_gtk4_configure_opacity which applies immediately if the
+/// window exists, or defers to on_activate if not yet shown.
+pub func:wf_apply_opacity = NIL(int64:win_ptr, int64:opacity_fp1000) {
+    if (opacity_fp1000 == g_wf_last_opacity) { pass(NIL); }  // no change
+    if (opacity_fp1000 < 0i64)    { opacity_fp1000 = 0i64; }
+    if (opacity_fp1000 > 1000i64) { opacity_fp1000 = 1000i64; }
+    drop(nitty_gtk4_configure_opacity(opacity_fp1000));
+    g_wf_last_opacity = opacity_fp1000;
+    pass(NIL);
+};
+
+/// Toggle fullscreen on/off.
+pub func:wf_toggle_fullscreen = NIL(int64:win_ptr) {
+    if (win_ptr == 0i64) { pass(NIL); }
+    int64:is_fs = nitty_gtk4_window_is_fullscreen(win_ptr);
+    if (is_fs != 0i64) {
+        drop(nitty_gtk4_window_unfullscreen(win_ptr));
+    }
+    if (is_fs == 0i64) {
+        drop(nitty_gtk4_window_fullscreen(win_ptr));
+    }
+    pass(NIL);
+};
+
+/// Set fullscreen directly: enabled=1=enter, 0=exit.
+pub func:wf_set_fullscreen = NIL(int64:win_ptr, int64:enabled) {
+    if (win_ptr == 0i64) { pass(NIL); }
+    if (enabled != 0i64) {
+        drop(nitty_gtk4_window_fullscreen(win_ptr));
+    }
+    if (enabled == 0i64) {
+        drop(nitty_gtk4_window_unfullscreen(win_ptr));
+    }
+    pass(NIL);
+};
+
+/// Returns 1 if the window is currently fullscreen, 0 otherwise.
+pub func:wf_is_fullscreen = int64(int64:win_ptr) {
+    if (win_ptr == 0i64) { pass(0i64); }
+    pass(nitty_gtk4_window_is_fullscreen(win_ptr));
+};
+
+/// Toggle maximize/restore.
+pub func:wf_toggle_maximize = NIL(int64:win_ptr) {
+    if (win_ptr == 0i64) { pass(NIL); }
+    int64:is_max = nitty_gtk4_window_is_maximized(win_ptr);
+    if (is_max != 0i64) {
+        drop(nitty_gtk4_window_unmaximize(win_ptr));
+    }
+    if (is_max == 0i64) {
+        drop(nitty_gtk4_window_maximize(win_ptr));
+    }
+    pass(NIL);
+};
+
+/// Returns 1 if the window is currently maximized, 0 otherwise.
+pub func:wf_is_maximized = int64(int64:win_ptr) {
+    if (win_ptr == 0i64) { pass(0i64); }
+    pass(nitty_gtk4_window_is_maximized(win_ptr));
+};
+
+/// Set always-on-top (keep-above) state via X11 _NET_WM_STATE_ABOVE.
+/// enabled=1 to raise above other windows, 0 to restore normal stacking.
+/// Stores runtime state in g_wf_keep_above.
+pub func:wf_set_keep_above = NIL(int64:win_ptr, int64:enabled) {
+    if (win_ptr == 0i64) { pass(NIL); }
+    g_wf_keep_above = enabled;
+    drop(nitty_gtk4_window_set_keep_above(win_ptr, enabled));
+    pass(NIL);
+};
+
+/// Returns the runtime keep-above state (1 = raised, 0 = normal).
+/// NOTE: queries the Nitpick-side flag, not the actual WM state.
+pub func:wf_is_keep_above = int64() {
+    pass(g_wf_keep_above);
+};
+
+/// Set window icon by XDG theme name (e.g. "utilities-terminal").
+pub func:wf_apply_icon = NIL(int64:win_ptr, string:icon_name) {
+    if (win_ptr == 0i64) { pass(NIL); }
+    if (string_length(icon_name) == 0i64) { pass(NIL); }
+    drop(nitty_gtk4_window_set_icon_name(win_ptr, icon_name));
+    pass(NIL);
+};
+
+/// Show (decorated=1) or hide (decorated=0) window title bar and borders.
+pub func:wf_apply_decorated = NIL(int64:win_ptr, int64:decorated) {
+    if (win_ptr == 0i64) { pass(NIL); }
+    drop(nitty_gtk4_window_set_decorated(win_ptr, decorated));
+    pass(NIL);
+};
+
+/// Compose and apply the window title: "shell_title — Nitty".
+/// If shell_title is empty, uses "Nitty".
+/// Skips the GTK call if the composed title hasn't changed.
+pub func:wf_update_title = NIL(int64:win_ptr, string:shell_title) {
+    if (win_ptr == 0i64) { pass(NIL); }
+    string:composed = "";
+    if (string_length(shell_title) > 0i64) {
+        composed = shell_title + " — Nitty";
+    }
+    if (string_length(shell_title) == 0i64) {
+        composed = "Nitty";
+    }
+    // Only call GTK if the title has actually changed (avoid per-frame jitter)
+    if (composed == g_wf_last_title) { pass(NIL); }
+    drop(nitty_gtk4_window_set_title(win_ptr, composed));
+    g_wf_last_title = composed;
+    pass(NIL);
+};

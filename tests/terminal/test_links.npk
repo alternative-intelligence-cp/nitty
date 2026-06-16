@@ -1,0 +1,262 @@
+// tests/terminal/test_links.npk — Unit tests for v0.7.2 link modules
+//
+// Tests:
+//   T01: hl_intern_url_str returns link_id > 0 for a valid URL
+//   T02: Same URL interned twice returns same link_id (dedup)
+//   T03: Different URLs get different link_ids
+//   T04: hl_url_as_string reconstructs the URL correctly
+//   T05: hl_get_url_len returns correct length
+//   T06: links_scan_active_row detects https://example.com
+//   T07: links_col_has_link returns correct link_id for covered columns
+//   T08: links_scan_active_row returns 0 for plain text row
+//   T09: links_scan trims trailing '.' from URL
+//   T10: Flags encoding: link_id=1 encodes as 65536; extracted via (flags/65536)&255
+//   T11: hl_clear resets URL count to 0
+//
+// All pass → exit 0. Any failure → exit 1.
+
+use "../../src/terminal/hyperlink_store.npk".*;
+use "../../src/terminal/links.npk".*;
+use "../../src/terminal/grid.npk".*;
+use "../../src/terminal/terminal_state.npk".*;
+use "../../src/terminal/scrollback.npk".*;
+
+// npk_string_byte_at is a Nitpick runtime built-in (strings/byte_at.c).
+extern func:npk_string_byte_at = int64(string:s, int64:i);
+
+// ── Test harness ──────────────────────────────────────────────────────────
+
+int64:STDOUT = 1i64;
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:print_line = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:check = NIL(string:label, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        drop(print_line("[PASS] " + label + "\n"));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    drop(print_line("[FAIL] " + label
+        + " expected=" + string_from_int(expected)
+        + " got=" + string_from_int(got) + "\n"));
+    pass(NIL);
+};
+
+func:check_str = NIL(string:label, string:expected, string:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        drop(print_line("[PASS] " + label + "\n"));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    drop(print_line("[FAIL] " + label
+        + " expected=\"" + expected
+        + "\" got=\"" + got + "\"\n"));
+    pass(NIL);
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+/// Write URL string as bytes (ASCII) into the active grid starting at col 0 of row 0.
+func:grid_write_str = NIL(string:s) {
+    int64:len = string_length(s);
+    int64:c = 0i64;
+    while (c < len) {
+        int64:cp = npk_string_byte_at(s, c);
+        if (cp < 0i64) { cp = 32i64; }  // out-of-bounds → space
+        drop(grid_set(0i64, c, cp, 0i64, 0i64));
+        c = c + 1i64;
+    }
+    pass(NIL);
+};
+
+// ── T01: Basic URL intern ─────────────────────────────────────────────────
+
+func:test_01 = NIL() {
+    drop(hl_clear());
+    int64:id = raw hl_intern_url_str("https://example.com");
+    int64:id_ok = 0i64;
+    if (id > 0i64) { id_ok = 1i64; }
+    drop(check("T01 link_id > 0",  1i64, id_ok));
+    drop(check("T01 count=1",      1i64, raw hl_url_count()));
+};
+
+// ── T02: Same URL → same link_id (dedup) ─────────────────────────────────
+
+func:test_02 = NIL() {
+    int64:id1 = raw hl_intern_url_str("https://example.com");
+    int64:id2 = raw hl_intern_url_str("https://example.com");
+    drop(check("T02 dedup same id",  id1, id2));
+    drop(check("T02 count stays 1",  1i64, raw hl_url_count()));
+};
+
+// ── T03: Different URLs → different link_ids ──────────────────────────────
+
+func:test_03 = NIL() {
+    drop(hl_clear());
+    int64:id1 = raw hl_intern_url_str("https://example.com");
+    int64:id2 = raw hl_intern_url_str("https://nitpick-lang.org");
+    int64:id1_ok = 0i64; if (id1 > 0i64) { id1_ok = 1i64; }
+    int64:id2_ok = 0i64; if (id2 > 0i64) { id2_ok = 1i64; }
+    int64:differ = 0i64; if (id1 != id2) { differ = 1i64; }
+    drop(check("T03 id1 > 0",        1i64, id1_ok));
+    drop(check("T03 id2 > 0",        1i64, id2_ok));
+    drop(check("T03 ids differ",     1i64, differ));
+    drop(check("T03 count=2",        2i64, raw hl_url_count()));
+};
+
+// ── T04: hl_url_as_string reconstructs URL ───────────────────────────────
+
+func:test_04 = NIL() {
+    drop(hl_clear());
+    string:url = "https://example.com/path?q=1&r=2";
+    int64:id = raw hl_intern_url_str(url);
+    string:got = raw hl_url_as_string(id);
+    drop(check_str("T04 url round-trip",  url, got));
+};
+
+// ── T05: hl_get_url_len ───────────────────────────────────────────────────
+
+func:test_05 = NIL() {
+    drop(hl_clear());
+    string:url = "http://localhost:3000";
+    int64:id = raw hl_intern_url_str(url);
+    drop(check("T05 url_len=21", 21i64, raw hl_get_url_len(id)));
+};
+
+// ── T06: links_scan_active_row detects https://example.com ───────────────
+
+func:test_06 = NIL() {
+    drop(hl_clear());
+    // Write "visit https://example.com now" into row 0
+    string:s = "visit https://example.com now";
+    drop(grid_write_str(s));
+    int64:cnt = raw links_scan_active_row(0i64, 80i64);
+    drop(check("T06 scan found 1 link",  1i64, cnt));
+    int64:cs = raw links_col_start(0i64);
+    int64:ce = raw links_col_end(0i64);
+    drop(check("T06 col_start=6",  6i64, cs));
+    drop(check("T06 col_end=24",   24i64, ce));
+};
+
+// ── T07: links_col_has_link returns correct link_id ───────────────────────
+
+func:test_07 = NIL() {
+    // After T06, links are already scanned in the module state
+    // Rescan to ensure deterministic state
+    drop(hl_clear());
+    string:s = "visit https://example.com now";
+    drop(grid_write_str(s));
+    drop(links_scan_active_row(0i64, 80i64));
+    int64:id_in = raw links_col_has_link(10i64);   // inside URL
+    int64:id_out = raw links_col_has_link(25i64);  // after URL (space 'n')
+    int64:in_ok = 0i64; if (id_in > 0i64) { in_ok = 1i64; }
+    drop(check("T07 col 10 has link",    1i64, in_ok));
+    drop(check("T07 col 25 has no link", 0i64, id_out));
+};
+
+// ── T08: links_scan returns 0 for plain text row ─────────────────────────
+
+func:test_08 = NIL() {
+    drop(hl_clear());
+    string:s = "Hello, World! No URLs here at all.";
+    drop(grid_write_str(s));
+    // Also clear remaining cells that may have URL from T06
+    int64:c = string_length(s);
+    while (c < 80i64) {
+        drop(grid_set(0i64, c, 32i64, 0i64, 0i64));  // space
+        c = c + 1i64;
+    }
+    int64:cnt = raw links_scan_active_row(0i64, 80i64);
+    drop(check("T08 no links in plain text", 0i64, cnt));
+    pass(NIL);
+};
+
+// ── T09: Scanner trims trailing '.' ──────────────────────────────────────
+
+func:test_09 = NIL() {
+    drop(hl_clear());
+    // URL followed by period (prose sentence ending)
+    string:s = "See https://example.com. Done.";
+    drop(grid_write_str(s));
+    int64:c = string_length(s);
+    while (c < 80i64) { drop(grid_set(0i64, c, 32i64, 0i64, 0i64)); c = c + 1i64; }
+    drop(links_scan_active_row(0i64, 80i64));
+    int64:ce = raw links_col_end(0i64);   // should be 22 (char 'm' of .com), not 23 ('.')
+    // "See " = 4, "https://example.com" = 19 chars → cols 4..22
+    drop(check("T09 col_end=22 (trailing . trimmed)", 22i64, ce));
+    pass(NIL);
+};
+
+// ── T10: Flags encoding ───────────────────────────────────────────────────
+
+func:test_10 = NIL() {
+    int64:link_id = 1i64;
+    int64:base_flags = 0i64;
+    int64:encoded = base_flags + link_id * 65536i64;
+    drop(check("T10 encoded=65536", 65536i64, encoded));
+    int64:extracted = (encoded / 65536i64) & 255i64;
+    drop(check("T10 extracted=1",   1i64, extracted));
+
+    // Multi-link: link_id=5, base_flags=8 (underline bit)
+    int64:encoded2 = 8i64 + 5i64 * 65536i64;
+    int64:ext_link2 = (encoded2 / 65536i64) & 255i64;
+    int64:ext_flags2 = encoded2 & 0xFFFFi64;
+    drop(check("T10 link_id=5 extracted", 5i64, ext_link2));
+    drop(check("T10 base flags preserved", 8i64, ext_flags2));
+    pass(NIL);
+};
+
+// ── T11: hl_clear resets ─────────────────────────────────────────────────
+
+func:test_11 = NIL() {
+    // Start fresh (prior tests may have interned URLs)
+    drop(hl_clear());
+    drop(hl_intern_url_str("https://a.com"));
+    drop(hl_intern_url_str("https://b.com"));
+    drop(check("T11 before clear count=2", 2i64, raw hl_url_count()));
+    drop(hl_clear());
+    drop(check("T11 after clear count=0",  0i64, raw hl_url_count()));
+    // id 0 yields empty string
+    string:empty = raw hl_url_as_string(0i64);
+    drop(check("T11 id0 url_len=0", 0i64, string_length(empty)));
+    pass(NIL);
+};
+
+// ── main ──────────────────────────────────────────────────────────────────
+
+func:main = int32() {
+    // Initialize grid (80 cols × 24 rows) and scrollback
+    drop(ts_init(24i64, 80i64));
+    drop(scrollback_init(80i64));
+
+    drop(test_01());
+    drop(test_02());
+    drop(test_03());
+    drop(test_04());
+    drop(test_05());
+    drop(test_06());
+    drop(test_07());
+    drop(test_08());
+    drop(test_09());
+    drop(test_10());
+    drop(test_11());
+
+    drop(print_line("---\n"));
+    drop(print_line("Passed: " + string_from_int(g_pass) + "\n"));
+    drop(print_line("Failed: " + string_from_int(g_fail) + "\n"));
+
+    if (g_fail == 0i64) {
+        drop(print_line("All tests passed.\n"));
+        exit(0i32);
+    }
+    exit(1i32);
+};

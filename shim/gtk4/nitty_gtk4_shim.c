@@ -24,6 +24,12 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+/* v0.7.3: X11 keep-above support */
+#ifdef GDK_WINDOWING_X11
+#include <gdk/x11/gdkx.h>
+#include <X11/Xlib.h>
+#include <X11/Xatom.h>
+#endif
 
 /* ═══════════════════════════════════════════════════════════════════════
  * v0.0.1: Application lifecycle + Window management (unchanged)
@@ -33,6 +39,10 @@
 static char   g_window_title[256] = "Nitty Terminal";
 static int    g_window_width      = 1024;
 static int    g_window_height     = 768;
+/* v0.7.3: pre-run window feature config */
+static int64_t g_cfg_opacity_fp1000    = 1000;  /* 1.0 = fully opaque */
+static int64_t g_cfg_default_width     = 0;     /* 0 = use g_window_width */
+static int64_t g_cfg_default_height    = 0;     /* 0 = use g_window_height */
 
 /* Main window created by on_activate */
 static GtkWidget *g_main_window  = NULL;
@@ -122,7 +132,17 @@ static void on_activate(GtkApplication *app, gpointer user_data)
     if (window == NULL) return;
 
     gtk_window_set_title(GTK_WINDOW(window), g_window_title);
-    gtk_window_set_default_size(GTK_WINDOW(window), g_window_width, g_window_height);
+
+    /* v0.7.3: apply default size (window_state restore or configure_window) */
+    int cfg_w = (g_cfg_default_width  > 0) ? (int)g_cfg_default_width  : g_window_width;
+    int cfg_h = (g_cfg_default_height > 0) ? (int)g_cfg_default_height : g_window_height;
+    gtk_window_set_default_size(GTK_WINDOW(window), cfg_w, cfg_h);
+
+    /* v0.7.3: apply opacity from config (0.0..1.0 maps to fp1000 0..1000) */
+    if (g_cfg_opacity_fp1000 < 1000) {
+        double opacity = (double)g_cfg_opacity_fp1000 / 1000.0;
+        gtk_widget_set_opacity(GTK_WIDGET(window), opacity);
+    }
 
     g_main_window = window;
 
@@ -2788,3 +2808,150 @@ void nitty_search_bar_draw(const char *query, const char *match_info,
     cairo_restore(cr);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.7.2: Link opening and pointer cursor
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Open a URI string with the system default handler.
+ * Uses GLib's g_app_info_launch_default_for_uri which is non-blocking and
+ * GTK4-safe (does not conflict with the main loop's SIGCHLD handler).
+ * Returns 1 on success, 0 on failure. */
+int64_t nitty_gtk4_open_url(const char *url)
+{
+    if (!url || url[0] == '\0') return 0;
+    GError *err = NULL;
+    gboolean ok = g_app_info_launch_default_for_uri(url, NULL, &err);
+    if (!ok) {
+        if (err) {
+            g_printerr("nitty: link open failed: %s\n", err->message);
+            g_error_free(err);
+        }
+        return 0;
+    }
+    return 1;
+}
+
+/* Change the drawing area cursor to a pointer hand (is_pointer=1) or
+ * the default cursor (is_pointer=0).  Called when hovering link cells. */
+void nitty_gtk4_set_cursor_pointer(int64_t is_pointer)
+{
+    if (g_drawing_area == NULL) return;
+    const char *name = (is_pointer != 0) ? "pointer" : "default";
+    gtk_widget_set_cursor_from_name(g_drawing_area, name);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.7.3: Window Features — opacity, fullscreen, maximize, decoration,
+ *          icon name, always-on-top (X11), default size
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+void nitty_gtk4_configure_opacity(int64_t opacity_fp1000)
+{
+    if (opacity_fp1000 < 0)    opacity_fp1000 = 0;
+    if (opacity_fp1000 > 1000) opacity_fp1000 = 1000;
+    g_cfg_opacity_fp1000 = opacity_fp1000;
+    /* If window is already open, apply immediately */
+    if (g_main_window != NULL) {
+        double opacity = (double)opacity_fp1000 / 1000.0;
+        gtk_widget_set_opacity(GTK_WIDGET(g_main_window), opacity);
+    }
+}
+
+void nitty_gtk4_configure_default_size(int64_t width, int64_t height)
+{
+    g_cfg_default_width  = width;
+    g_cfg_default_height = height;
+    /* If window is already shown, set default size for next resize */
+    if (g_main_window != NULL && width > 0 && height > 0) {
+        gtk_window_set_default_size(GTK_WINDOW(g_main_window),
+                                    (int)width, (int)height);
+    }
+}
+
+void nitty_gtk4_window_fullscreen(int64_t win_ptr)
+{
+    if (win_ptr == 0) return;
+    gtk_window_fullscreen(GTK_WINDOW((GtkWidget *)(uintptr_t)win_ptr));
+}
+
+void nitty_gtk4_window_unfullscreen(int64_t win_ptr)
+{
+    if (win_ptr == 0) return;
+    gtk_window_unfullscreen(GTK_WINDOW((GtkWidget *)(uintptr_t)win_ptr));
+}
+
+int64_t nitty_gtk4_window_is_fullscreen(int64_t win_ptr)
+{
+    if (win_ptr == 0) return 0;
+    return gtk_window_is_fullscreen(GTK_WINDOW((GtkWidget *)(uintptr_t)win_ptr)) ? 1 : 0;
+}
+
+void nitty_gtk4_window_maximize(int64_t win_ptr)
+{
+    if (win_ptr == 0) return;
+    gtk_window_maximize(GTK_WINDOW((GtkWidget *)(uintptr_t)win_ptr));
+}
+
+void nitty_gtk4_window_unmaximize(int64_t win_ptr)
+{
+    if (win_ptr == 0) return;
+    gtk_window_unmaximize(GTK_WINDOW((GtkWidget *)(uintptr_t)win_ptr));
+}
+
+int64_t nitty_gtk4_window_is_maximized(int64_t win_ptr)
+{
+    if (win_ptr == 0) return 0;
+    return gtk_window_is_maximized(GTK_WINDOW((GtkWidget *)(uintptr_t)win_ptr)) ? 1 : 0;
+}
+
+void nitty_gtk4_window_set_decorated(int64_t win_ptr, int64_t decorated)
+{
+    if (win_ptr == 0) return;
+    gtk_window_set_decorated(GTK_WINDOW((GtkWidget *)(uintptr_t)win_ptr),
+                             decorated ? TRUE : FALSE);
+}
+
+void nitty_gtk4_window_set_icon_name(int64_t win_ptr, const char *name)
+{
+    if (win_ptr == 0 || name == NULL || name[0] == '\0') return;
+    gtk_window_set_icon_name(GTK_WINDOW((GtkWidget *)(uintptr_t)win_ptr), name);
+}
+
+void nitty_gtk4_window_set_keep_above(int64_t win_ptr, int64_t keep_above)
+{
+    if (win_ptr == 0) return;
+    GtkWidget *win = (GtkWidget *)(uintptr_t)win_ptr;
+
+#ifdef GDK_WINDOWING_X11
+    /* Get the underlying GdkSurface */
+    GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(win));
+    if (surface == NULL) return;
+
+    /* Must be an X11 surface */
+    if (!GDK_IS_X11_SURFACE(surface)) return;
+
+    Display *dpy = gdk_x11_display_get_xdisplay(gdk_surface_get_display(surface));
+    Window   xwin = gdk_x11_surface_get_xid(surface);
+
+    Atom wm_state  = XInternAtom(dpy, "_NET_WM_STATE", False);
+    Atom wm_above  = XInternAtom(dpy, "_NET_WM_STATE_ABOVE", False);
+
+    XEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type                 = ClientMessage;
+    ev.xclient.window       = xwin;
+    ev.xclient.message_type = wm_state;
+    ev.xclient.format       = 32;
+    ev.xclient.data.l[0]    = keep_above ? 1 : 0;  /* 1=add, 0=remove */
+    ev.xclient.data.l[1]    = (long)wm_above;
+    ev.xclient.data.l[2]    = 0;
+    ev.xclient.data.l[3]    = 1;  /* source: normal application */
+
+    XSendEvent(dpy, DefaultRootWindow(dpy), False,
+               SubstructureNotifyMask | SubstructureRedirectMask, &ev);
+    XFlush(dpy);
+#else
+    /* Wayland: gtk-layer-shell would be needed; skip silently */
+    (void)keep_above;
+#endif
+}

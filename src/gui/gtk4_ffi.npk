@@ -589,5 +589,42 @@ extern "nitty_gtk4_shim" {
 
     // Get the Unicode codepoint of the last typed character (after poll returns 1).
     func:nitty_search_event_get_char = int64();
+
+    // ── v0.7.2: Clickable links ───────────────────────────────────────────────
+
+    // Open a URI with the system default application (non-blocking, GTK4-safe).
+    // Returns 1 on success, 0 on failure.
+    func:nitty_gtk4_open_url = int64(string:url);
+
+    // Set drawing area cursor: 1 = pointer/hand (hover over link), 0 = default.
+    func:nitty_gtk4_set_cursor_pointer = NIL(int64:is_pointer);
+
+    // ── v0.7.3: Window Features ───────────────────────────────────────────────
+
+    // Pre-run: set opacity (0=transparent, 1000=opaque). Can be called at any time.
+    func:nitty_gtk4_configure_opacity = NIL(int64:opacity_fp1000);
+
+    // Pre-run: set default window size (applied in on_activate, or immediately if open).
+    func:nitty_gtk4_configure_default_size = NIL(int64:width, int64:height);
+
+    // Fullscreen toggle primitives.
+    func:nitty_gtk4_window_fullscreen   = NIL(int64:win_ptr);
+    func:nitty_gtk4_window_unfullscreen = NIL(int64:win_ptr);
+    func:nitty_gtk4_window_is_fullscreen = int64(int64:win_ptr);
+
+    // Maximize toggle primitives.
+    func:nitty_gtk4_window_maximize   = NIL(int64:win_ptr);
+    func:nitty_gtk4_window_unmaximize = NIL(int64:win_ptr);
+    func:nitty_gtk4_window_is_maximized = int64(int64:win_ptr);
+
+    // Window decoration (title bar/borders): 1=on (default), 0=borderless.
+    func:nitty_gtk4_window_set_decorated = NIL(int64:win_ptr, int64:decorated);
+
+    // Window icon by XDG icon name (e.g. "utilities-terminal").
+    func:nitty_gtk4_window_set_icon_name = NIL(int64:win_ptr, string:name);
+
+    // Always-on-top via _NET_WM_STATE_ABOVE (X11 only, no-op on Wayland).
+    // keep_above=1 to raise, 0 to restore normal stacking.
+    func:nitty_gtk4_window_set_keep_above = NIL(int64:win_ptr, int64:keep_above);
 }
 

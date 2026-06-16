@@ -68,6 +68,12 @@ use "quake.npk".*;                  // v0.6.3: quake mode animation
 use "input.npk".*;
 use "../config/watcher.npk".*;      // v0.6.5: config hot-reload
 use "../config/config.npk".*;       // v0.7.1: clipboard config getters
+use "../terminal/links.npk".*;      // v0.7.2: auto-URL detection
+use "link_opener.npk".*;            // v0.7.2: link_open(link_id)
+use "renderer.npk".*;               // v0.7.2: renderer_set_hover_link_id
+use "window_features.npk".*;         // v0.7.3: opacity, fullscreen, always-on-top, title
+use "../config/config.npk".*;        // v0.7.3: cfg_win_* getters
+use "../config/window_state.npk".*;  // v0.7.3: WinState type for saved state
 
 // ═══════════════════════════════════════════════════════════════════════
 // Module state
@@ -86,6 +92,8 @@ int64:g_tw_last_focused = 1i64;  // assume focused at startup
 int64:g_tw_last_save_time = 0i64;
 // v0.6.3: 1 after quake window setup has been applied (one-shot)
 int64:g_tw_quake_setup_done = 0i64;
+// v0.7.3: 1 after window features (opacity/decoration/icon/always-on-top/state) applied
+int64:g_tw_winfeatures_done = 0i64;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Initialization
@@ -117,6 +125,15 @@ pub func:tw_get_cols = int64() { pass(g_tw_cols); };
 // ═══════════════════════════════════════════════════════════════════════
 // Draw Callback (called each GTK frame from render callback)
 // ═══════════════════════════════════════════════════════════════════════
+
+// Internal: sync GTK window title to active tab title (v0.7.3)
+func:_tw_update_win_title = NIL() {
+    int64:wt_win = raw nitty_gtk4_get_main_window();
+    if (wt_win == 0i64) { pass(NIL); }
+    string:t = raw tm_get_title_at(raw tm_get_active_index());
+    drop(wf_update_title(wt_win, t));
+    pass(NIL);
+};
 
 /// Process pending PTY bytes through the Nitpick pipeline, then sync
 /// the terminal state to the C render grid.
@@ -177,17 +194,17 @@ func:dispatch_action = NIL(string:action, int64:rows, int64:cols) {
                 drop(tw_queue_redraw());
             }
         },
-        ("tab.next")  { drop(tm_next()); drop(tw_queue_redraw()); },
-        ("tab.prev")  { drop(tm_prev()); drop(tw_queue_redraw()); },
-        ("tab.1")     { drop(tm_activate_index(0i64)); drop(tw_queue_redraw()); },
-        ("tab.2")     { drop(tm_activate_index(1i64)); drop(tw_queue_redraw()); },
-        ("tab.3")     { drop(tm_activate_index(2i64)); drop(tw_queue_redraw()); },
-        ("tab.4")     { drop(tm_activate_index(3i64)); drop(tw_queue_redraw()); },
-        ("tab.5")     { drop(tm_activate_index(4i64)); drop(tw_queue_redraw()); },
-        ("tab.6")     { drop(tm_activate_index(5i64)); drop(tw_queue_redraw()); },
-        ("tab.7")     { drop(tm_activate_index(6i64)); drop(tw_queue_redraw()); },
-        ("tab.8")     { drop(tm_activate_index(7i64)); drop(tw_queue_redraw()); },
-        ("tab.9")     { drop(tm_activate_index(8i64)); drop(tw_queue_redraw()); },
+        ("tab.next")  { drop(tm_next()); drop(_tw_update_win_title()); drop(tw_queue_redraw()); },
+        ("tab.prev")  { drop(tm_prev()); drop(_tw_update_win_title()); drop(tw_queue_redraw()); },
+        ("tab.1")     { drop(tm_activate_index(0i64)); drop(_tw_update_win_title()); drop(tw_queue_redraw()); },
+        ("tab.2")     { drop(tm_activate_index(1i64)); drop(_tw_update_win_title()); drop(tw_queue_redraw()); },
+        ("tab.3")     { drop(tm_activate_index(2i64)); drop(_tw_update_win_title()); drop(tw_queue_redraw()); },
+        ("tab.4")     { drop(tm_activate_index(3i64)); drop(_tw_update_win_title()); drop(tw_queue_redraw()); },
+        ("tab.5")     { drop(tm_activate_index(4i64)); drop(_tw_update_win_title()); drop(tw_queue_redraw()); },
+        ("tab.6")     { drop(tm_activate_index(5i64)); drop(_tw_update_win_title()); drop(tw_queue_redraw()); },
+        ("tab.7")     { drop(tm_activate_index(6i64)); drop(_tw_update_win_title()); drop(tw_queue_redraw()); },
+        ("tab.8")     { drop(tm_activate_index(7i64)); drop(_tw_update_win_title()); drop(tw_queue_redraw()); },
+        ("tab.9")     { drop(tm_activate_index(8i64)); drop(_tw_update_win_title()); drop(tw_queue_redraw()); },
         // Clipboard (stubs in v0.6.2 — full in v0.7.x)
         ("edit.copy")   {
             // v0.7.1: real clipboard copy — extract selection text
@@ -201,7 +218,20 @@ func:dispatch_action = NIL(string:action, int64:rows, int64:cols) {
         ("edit.search") { drop(sb_toggle()); },  // v0.7.0
         ("edit.clear")  { drop(nitty_gtk4_show_notification("Clear: coming in v0.7.x")); },
         // View
-        ("view.fullscreen") { drop(nitty_gtk4_show_notification("Fullscreen: coming in v0.7.x")); },
+        ("view.fullscreen") {
+            int64:wf_win = nitty_gtk4_get_main_window();
+            drop(wf_toggle_fullscreen(wf_win));
+        },
+        ("view.always_on_top") {
+            int64:wf_win = nitty_gtk4_get_main_window();
+            int64:cur_aot = raw wf_is_keep_above();
+            int64:new_aot = is (cur_aot != 0i64) : 0i64 : 1i64;
+            drop(wf_set_keep_above(wf_win, new_aot));
+        },
+        ("view.maximize") {
+            int64:wf_win = nitty_gtk4_get_main_window();
+            drop(wf_toggle_maximize(wf_win));
+        },
         ("view.zoom_in")    { drop(nitty_gtk4_show_notification("Zoom in: coming in v0.7.x")); },
         ("view.zoom_out")   { drop(nitty_gtk4_show_notification("Zoom out: coming in v0.7.x")); },
         ("view.zoom_reset") { drop(nitty_gtk4_show_notification("Zoom reset: coming in v0.7.x")); },
@@ -216,6 +246,25 @@ func:dispatch_action = NIL(string:action, int64:rows, int64:cols) {
 };
 
 pub func:tw_on_draw = NIL() {
+    // v0.7.3 Step 0aa: One-shot window feature setup (needs realized GdkSurface)
+    if (g_tw_winfeatures_done == 0i64) {
+        int64:wf_win = nitty_gtk4_get_main_window();
+        if (wf_win != 0i64) {
+            // Apply opacity from config
+            drop(wf_apply_opacity(wf_win, raw cfg_opacity()));
+            // Apply decoration from config
+            drop(wf_apply_decorated(wf_win, raw cfg_win_decorated()));
+            // Apply icon from config
+            drop(wf_apply_icon(wf_win, raw cfg_win_icon_name()));
+            // Apply always-on-top from config
+            int64:aot = raw cfg_win_always_on_top();
+            if (aot != 0i64) {
+                drop(wf_set_keep_above(wf_win, 1i64));
+            }
+            g_tw_winfeatures_done = 1i64;
+        }
+    }
+
     // v0.6.3 Step 0a: Quake mode — one-shot window setup + per-frame tasks
     if (raw quake_is_enabled() == 1i64) {
         // One-shot: apply window hints after GdkSurface is realized (first draw).
@@ -309,12 +358,14 @@ pub func:tw_on_draw = NIL() {
         // Prev tab
         drop(tm_prev());
         drop(_tw_sync_broadcast());
+        drop(_tw_update_win_title());
         drop(tw_queue_redraw());
     }
     if (tev == 4i64) {
         // Next tab
         drop(tm_next());
         drop(_tw_sync_broadcast());
+        drop(_tw_update_win_title());
         drop(tw_queue_redraw());
     }
     if (tev >= 5i64) {
@@ -323,6 +374,7 @@ pub func:tw_on_draw = NIL() {
             int64:target_idx = tev - 5i64;
             drop(tm_activate_index(target_idx));
             drop(_tw_sync_broadcast());
+            drop(_tw_update_win_title());
             drop(tw_queue_redraw());
         }
     }
@@ -772,14 +824,23 @@ pub func:tw_on_draw = NIL() {
                         drop(tw_queue_redraw());
                     }
                     if (n_press == 1i64) {
-                        // Single-click: start drag selection
-                        // Alt held = block mode (2), otherwise line mode (1)
-                        int64:alt  = nitty_gtk4_key_modifiers_alt();
-                        int64:mode = 1i64;  // SEL_LINE
-                        if (alt != 0i64) { mode = 2i64; }  // SEL_BLOCK
-                        int64:offset = raw viewport_get_offset();
-                        drop(sel_start(row, col, mode, offset));
-                        drop(tw_queue_redraw());
+                        // v0.7.2: Check if click lands on a hyperlink (OSC 8 or auto-detected)
+                        int64:click_flags   = raw grid_get_flags(row, col);
+                        int64:click_link_id = (click_flags / 65536i64) & 255i64;
+                        if (click_link_id != 0i64) {
+                            // Click on a link: open it, skip selection
+                            drop(link_open(click_link_id));
+                        }
+                        if (click_link_id == 0i64) {
+                            // Single-click: start drag selection
+                            // Alt held = block mode (2), otherwise line mode (1)
+                            int64:alt  = nitty_gtk4_key_modifiers_alt();
+                            int64:mode = 1i64;  // SEL_LINE
+                            if (alt != 0i64) { mode = 2i64; }  // SEL_BLOCK
+                            int64:offset = raw viewport_get_offset();
+                            drop(sel_start(row, col, mode, offset));
+                            drop(tw_queue_redraw());
+                        }
                     }
                 }
             }
@@ -808,7 +869,7 @@ pub func:tw_on_draw = NIL() {
                 }
             }
         }
-        // Motion event (type=4): extend selection if drag is active
+        // Motion event (type=4): extend selection if drag is active; update link hover
         if (mtype == 4i64) {
             if (raw sel_is_dragging() != 0i64) {
                 int64:mx4     = nitty_gtk4_mouse_get_x();
@@ -828,6 +889,31 @@ pub func:tw_on_draw = NIL() {
                 drop(sel_update(row4, col4));
                 drop(tw_queue_redraw());
             }
+            // v0.7.2: Hover hit-test — detect which link cell the cursor is over
+            int64:mx4h    = nitty_gtk4_mouse_get_x();
+            int64:my4h    = nitty_gtk4_mouse_get_y();
+            int64:tab_hh  = nitty_render_get_tab_bar_height();
+            int64:cw4h    = g_tw_cell_w;
+            int64:ch4h    = g_tw_cell_h;
+            if (cw4h <= 0i64) { cw4h = 8i64; }
+            if (ch4h <= 0i64) { ch4h = 16i64; }
+            int64:adj_yh  = my4h - tab_hh * 1000i64;
+            int64:hcol    = mx4h / (cw4h * 1000i64);
+            int64:hrow    = adj_yh / (ch4h * 1000i64);
+            int64:hover_id = 0i64;
+            if (hcol >= 0i64) {
+                if (hrow >= 0i64) {
+                    if (hcol < g_tw_cols) {
+                        if (hrow < g_tw_rows) {
+                            int64:hflags   = raw grid_get_flags(hrow, hcol);
+                            hover_id = (hflags / 65536i64) & 255i64;
+                        }
+                    }
+                }
+            }
+            drop(renderer_set_hover_link_id(hover_id));
+            nitty_gtk4_set_cursor_pointer(hover_id);
+            drop(tw_queue_redraw());
         }
         // Release event (type=2): finalize selection
         if (mtype == 2i64) {
@@ -900,6 +986,18 @@ pub func:tw_on_draw = NIL() {
     }
 
     // Step 2: Sync terminal state to C render grid
+    // v0.7.2: Scan active screen rows for auto-detected URLs before rendering
+    // Only scan when on active screen (offset == 0 — scrollback carries OSC 8 links natively)
+    int64:scan_offset = raw viewport_get_offset();
+    if (scan_offset == 0i64) {
+        int64:sr = 0i64;
+        while (sr < g_tw_rows) {
+            drop(links_scan_active_row(sr, g_tw_cols));
+            drop(links_clear_row_link_flags(sr, g_tw_cols));
+            drop(links_apply_to_active_row(sr, g_tw_cols));
+            sr = sr + 1i64;
+        }
+    }
     drop(renderer_sync_frame());
 
     // v0.7.1: Poll pending clipboard paste result (async GdkClipboard read)

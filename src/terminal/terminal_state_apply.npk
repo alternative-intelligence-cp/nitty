@@ -95,6 +95,12 @@ pub func:ts_print = NIL(int64:cp) {
     int64:attrs = raw ts_current_cell_attrs();
     int64:flags = raw ts_current_cell_flags();
 
+    // v0.7.2: Encode active hyperlink ID in flags bits 16-23
+    int64:link_id = raw ts_get_active_link_id();
+    if (link_id > 0i64) {
+        flags = flags + link_id * 65536i64;
+    }
+
     if (w == 1i64) {
         // ── Normal width ──
         // If we are overwriting the first cell of a wide char, clear its continuation

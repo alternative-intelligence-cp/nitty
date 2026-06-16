@@ -41,6 +41,7 @@ use "color_resolve.npk".*;
 use "tab_bar.npk".*;
 use "../terminal/search.npk".*;  // v0.7.0: search highlight
 use "selection.npk".*;           // v0.7.1: selection highlight
+use "../terminal/hyperlink_store.npk".*; // v0.7.2: link hover
 
 // ═══════════════════════════════════════════════════════════════════════
 // Module state
@@ -52,6 +53,12 @@ int64:g_rend_cols = 80i64;
 // ═══════════════════════════════════════════════════════════════════════
 // Initialization
 // ═══════════════════════════════════════════════════════════════════════
+// v0.7.2: Currently hovered link ID (0 = none). Set by terminal_widget on mouse motion.
+int64:g_hover_link_id = 0i64;
+
+pub func:renderer_set_hover_link_id = NIL(int64:id) { g_hover_link_id = id; pass(NIL); };
+pub func:renderer_get_hover_link_id = int64()        { pass(g_hover_link_id); };
+
 
 /// Set the terminal font and configure default colors.
 /// font_desc: Pango font description e.g. "Monospace 12"
@@ -254,6 +261,24 @@ pub func:renderer_sync_frame = NIL() {
                 if (raw sel_cell_selected(r, c) == 1i64) {
                     nitty_render_set_cell_bg(c, r, 300i64, 500i64, 800i64);
                     nitty_render_set_cell_fg(c, r, 1000i64, 1000i64, 1000i64);
+                }
+            }
+
+            // v0.7.2: Hyperlink hover highlight (amber underline tint)
+            // Selection takes priority over link hover; only apply if cell not selected.
+            if (g_hover_link_id != 0i64) {
+                int64:cell_link_id = (flags / 65536i64) & 255i64;
+                if (cell_link_id == g_hover_link_id) {
+                    // Only highlight if cell is NOT in a selection
+                    int64:in_sel = 0i64;
+                    if (sel_is_active()   == 1i64) { if (raw sel_cell_selected(r, c) == 1i64) { in_sel = 1i64; } }
+                    if (raw sel_is_dragging() == 1i64) { if (raw sel_cell_selected(r, c) == 1i64) { in_sel = 1i64; } }
+                    if (in_sel == 0i64) {
+                        // Light amber-blue tint for hovered link; add underline bit (bit 3)
+                        nitty_render_set_cell_bg(c, r, 200i64, 380i64, 700i64);
+                        int64:link_flags = flags + 8i64;  // ensure underline bit (bit 3) is set
+                        nitty_render_set_cell_flags(c, r, link_flags);
+                    }
                 }
             }
 

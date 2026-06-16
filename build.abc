@@ -508,3 +508,21 @@ flags = []
 link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
 link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
 
+# v0.7.3: Window features no-op guard tests (GTK shim linked; win_ptr=0 throughout)
+[target.test_window_features]
+type = "binary"
+sources = ["tests/test_window_features.npk"]
+deps = ["gtk4_shim", "pty_shim"]
+flags = []
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11"]
+link_paths = [".nitpick_make/build"]
+
+# v0.7.3: Window state YAML persistence tests
+[target.test_window_state]
+type = "binary"
+sources = ["tests/config/test_window_state.npk"]
+deps = []
+flags = []
+link_libraries = ["nitpick_yaml_shim", "nitpick_fs_shim", "nitpick_env_shim"]
+link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+

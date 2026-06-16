@@ -135,6 +135,10 @@ int64:ts_title_len = 0i64;
 
 int64:ts_bell_pending = 0i64;    // 1 = BEL was received since last check
 
+// v0.7.2: Active hyperlink ID for OSC 8 pen (0 = no link, 1-255 = link_id in hyperlink_store)
+int64:ts_active_link_id  = 0i64;
+int64:ts_saved_link_id   = 0i64;  // saved in DECSC
+
 // Response buffer for DSR/DA answers (up to 64 bytes)
 int64[64]:ts_response_buf;
 int64:ts_response_len = 0i64;
@@ -428,6 +432,7 @@ pub func:ts_save_cursor = NIL() {
     ts_saved_g2          = ts_g2;
     ts_saved_g3          = ts_g3;
     ts_saved_origin      = ts_mode_origin;
+    ts_saved_link_id     = ts_active_link_id;  // v0.7.2
     pass(NIL);
 };
 
@@ -455,6 +460,7 @@ pub func:ts_restore_cursor = NIL() {
     drop(attrs_set_hidden(ts_saved_hidden));
     drop(attrs_set_strikethrough(ts_saved_strike));
     drop(attrs_set_overline(ts_saved_overline));
+    ts_active_link_id = ts_saved_link_id;  // v0.7.2
     drop(ts_cursor_clamp());
     pass(NIL);
 };
@@ -590,3 +596,7 @@ pub func:ts_set_mode_focus_events    = NIL(int64:v) { ts_mode_focus_events    = 
 // v0.3.3: cursor style setters
 pub func:ts_set_cursor_shape         = NIL(int64:v) { ts_cursor_shape          = v; pass(NIL); };
 pub func:ts_set_cursor_blink_enabled = NIL(int64:v) { ts_cursor_blink_enabled  = v; pass(NIL); };
+
+// v0.7.2: Hyperlink pen state
+pub func:ts_get_active_link_id = int64()        { pass(ts_active_link_id); };
+pub func:ts_set_active_link_id = NIL(int64:v)  { ts_active_link_id = v; pass(NIL); };

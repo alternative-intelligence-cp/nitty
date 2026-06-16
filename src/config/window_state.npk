@@ -1,0 +1,133 @@
+// src/config/window_state.npk — Window size and state persistence (v0.7.3)
+//
+// Saves and loads the window size (width × height) and state (maximized,
+// fullscreen) between sessions.  Uses nitpick-yaml for parsing and manual
+// YAML text building for writing (nitpick-yaml has no serialize API).
+//
+// State file: {XDG_DATA_HOME}/nitty/window_state.yaml
+//
+// YAML schema:
+//   width:      int (pixels)
+//   height:     int (pixels)
+//   maximized:  bool (0 or 1)
+//   fullscreen: bool (0 or 1)
+//
+// Public API:
+//   window_state_load()    → loads from disk, returns WinState (defaults if missing)
+//   window_state_save(ws)  → writes to disk atomically
+//   window_state_default() → returns safe default WinState
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/src/nitpick_yaml.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+use "paths.npk".*;
+
+// ── Data type ─────────────────────────────────────────────────────────────────
+
+pub struct:WinState = {
+    int64:width;
+    int64:height;
+    int64:maximized;
+    int64:fullscreen;
+};
+
+// ── Module state ──────────────────────────────────────────────────────────────
+
+int64:g_ws_loaded = 0i64;   // 1 after first load
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+/// Absolute path to the window state YAML file.
+func:_state_path = string() {
+    string:d = raw data_dir();
+    pass(string_concat(d, "window_state.yaml"));
+};
+
+/// Build the YAML text for a WinState.
+func:_build_yaml = string(WinState:ws) {
+    string:s = "# Nitty window state — do not edit manually\n";
+    s = string_concat(s, string_concat("width: ", string_concat(string_from_int(ws.width), "\n")));
+    s = string_concat(s, string_concat("height: ", string_concat(string_from_int(ws.height), "\n")));
+    s = string_concat(s, string_concat("maximized: ", string_concat(string_from_int(ws.maximized), "\n")));
+    s = string_concat(s, string_concat("fullscreen: ", string_concat(string_from_int(ws.fullscreen), "\n")));
+    pass(s);
+};
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/// Returns a WinState with safe startup defaults.
+pub func:window_state_default = WinState() {
+    WinState:ws;
+    ws.width      = 1024i64;
+    ws.height     = 768i64;
+    ws.maximized  = 0i64;
+    ws.fullscreen = 0i64;
+    pass(ws);
+};
+
+/// Load window state from disk.
+/// Returns saved values if the file exists and parses cleanly,
+/// otherwise returns window_state_default().
+pub func:window_state_load = WinState() {
+    WinState:ws = raw window_state_default();
+
+    // Ensure paths are resolved
+    drop(paths_init());
+
+    string:path = raw _state_path();
+    int32:exists = raw fs_exists(path);
+    if (exists == 0i32) { pass(ws); }
+
+    // Parse YAML
+    drop(YAML.clear());
+    int32:parsed = raw YAML.parse_file(path);
+    if (parsed < 0i32) { pass(ws); }  // parse failed — use defaults
+
+    // width
+    int32:has_w = raw YAML.has_key("width");
+    if (has_w == 1i32) {
+        int64:v = raw YAML.get_int("width");
+        if (v >= 200i64) { if (v <= 7680i64) { ws.width = v; } }
+    }
+
+    // height
+    int32:has_h = raw YAML.has_key("height");
+    if (has_h == 1i32) {
+        int64:v = raw YAML.get_int("height");
+        if (v >= 100i64) { if (v <= 4320i64) { ws.height = v; } }
+    }
+
+    // maximized
+    int32:has_m = raw YAML.has_key("maximized");
+    if (has_m == 1i32) {
+        int32:v = raw YAML.get_bool("maximized");
+        if (v == 1i32) { ws.maximized = 1i64; }
+        if (v == 0i32) { ws.maximized = 0i64; }
+    }
+
+    // fullscreen
+    int32:has_f = raw YAML.has_key("fullscreen");
+    if (has_f == 1i32) {
+        int32:v = raw YAML.get_bool("fullscreen");
+        if (v == 1i32) { ws.fullscreen = 1i64; }
+        if (v == 0i32) { ws.fullscreen = 0i64; }
+    }
+
+    g_ws_loaded = 1i64;
+    pass(ws);
+};
+
+/// Save the given WinState to disk atomically (write .tmp → rename).
+/// Returns 1 on success, 0 on failure.
+pub func:window_state_save = int32(WinState:ws) {
+    drop(paths_init());
+
+    string:path     = raw _state_path();
+    string:tmp_path = string_concat(path, ".tmp");
+    string:text     = raw _build_yaml(ws);
+
+    int32:wrote = raw fs_write_file(tmp_path, text);
+    if (wrote == 0i32) { pass(0i32); }
+
+    int32:renamed = raw fs_rename(tmp_path, path);
+    pass(renamed);
+};

@@ -38,6 +38,8 @@ use "global_hotkey.npk".*;          // v0.6.3: global hotkey registration
 use "../gui/quake.npk".*;           // v0.6.3: quake mode window management
 use "../config/theme.npk".*;        // v0.6.4: theme engine
 use "../config/watcher.npk".*;      // v0.6.5: config hot-reload
+use "../gui/window_features.npk".*;  // v0.7.3: opacity, fullscreen, always-on-top, title
+use "../config/window_state.npk".*;  // v0.7.3: window size/state persistence
 
 // fd 1 = stdout
 int64:STDOUT = 1i64;
@@ -71,7 +73,7 @@ pub func:app_init = NIL() {
     // v0.6.4: Apply theme from config before renderer_init() in app_run()
     drop(theme_apply(raw cfg_theme()));
     drop(tb_apply_theme());                           // v0.6.4: sync tab bar colors to theme
-    drop(write_stdout("Nitty v0.6.5 initializing...\n"));
+    drop(write_stdout("Nitty v0.7.3 initializing...\n"));
     pass(NIL);
 };
 
@@ -151,14 +153,22 @@ pub func:app_run = NIL() {
     // ── Configure and run the GTK window ────────────────────────────────────
     drop(write_stdout("Nitty: starting GTK4 main loop with shell\n"));
 
-    // Apply saved window size if available (fallback to defaults)
-    int64:init_w = 1024i64;
-    int64:init_h = 768i64;
-    int64:saved_w = raw session_get_saved_width();
-    int64:saved_h = raw session_get_saved_height();
-    if (saved_w > 400i64) { init_w = saved_w; }
-    if (saved_h > 200i64) { init_h = saved_h; }
-    drop(window_configure("Nitty Terminal", init_w, init_h));
+    // v0.7.3: Load saved window state (size + maximized/fullscreen)
+    WinState:ws = raw window_state_load();
+    int64:init_w = ws.width;
+    int64:init_h = ws.height;
+    // Sanity-check the stored size (fallback to 1024×768 if invalid)
+    if (init_w < 400i64) { init_w = 1024i64; }
+    if (init_h < 200i64) { init_h = 768i64;  }
+
+    // Pre-configure opacity from config (applied in on_activate or immediately)
+    int64:cfg_opacity = raw cfg_opacity();
+    drop(nitty_gtk4_configure_opacity(cfg_opacity));
+
+    // Pre-configure default window size (overrides hard-coded 1024×768)
+    drop(nitty_gtk4_configure_default_size(init_w, init_h));
+
+    drop(window_configure("Nitty", init_w, init_h));
 
     Result<int64>:app_r = window_app_create("com.altintel.nitty");
     int64:app = app_r ? 0i64;
@@ -207,6 +217,30 @@ pub func:app_run = NIL() {
         drop(write_stdout("Nitty: ERROR — failed to create GtkApplication\n"));
     }
 
+    // v0.7.3: Save window state (size, maximized, fullscreen) before exit
+    int64:win_ptr = nitty_gtk4_get_main_window();
+    if (win_ptr != 0i64) {
+        // Only persist size if not maximized/fullscreen (those restore to same size)
+        int64:is_max = raw wf_is_maximized(win_ptr);
+        int64:is_fs  = raw wf_is_fullscreen(win_ptr);
+        WinState:final_ws;
+        final_ws.maximized  = is_max;
+        final_ws.fullscreen = is_fs;
+        // Restore pre-maximize size from init values if currently maximized/fullscreen
+        final_ws.width  = init_w;
+        final_ws.height = init_h;
+        if (is_max == 0i64) {
+            if (is_fs == 0i64) {
+                // Normal window — read actual size
+                int64:cur_w = nitty_gtk4_window_get_width(win_ptr);
+                int64:cur_h = nitty_gtk4_window_get_height(win_ptr);
+                if (cur_w >= 400i64) { final_ws.width  = cur_w; }
+                if (cur_h >= 200i64) { final_ws.height = cur_h; }
+            }
+        }
+        drop(window_state_save(final_ws));
+    }
+
     // v0.6.3: Unregister global hotkey on exit
     if (qm_en == 1i64) {
         drop(global_hotkey_unregister());
@@ -228,5 +262,5 @@ pub func:app_shutdown = NIL() {
 };
 
 pub func:app_version = string() {
-    pass("0.6.5");
+    pass("0.7.3");
 };
