@@ -26,6 +26,7 @@ int64:g_cm_widget     = 0i64;   // GTK4 sidebar GtkBox ptr
 int64:g_cm_visible    = 0i64;   // 1 if sidebar is shown
 int64:g_cm_sel_prof   = -1i64;  // currently selected profile slot (-1 = none)
 int64:g_cm_init_done  = 0i64;   // 1 after cm_init_ui() ran
+int64:g_cm_filter     = -1i64;  // v0.9.4: -1=All, 0=Local, 1=SSH, 2=Serial, 3=Telnet
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -77,8 +78,20 @@ pub func:cm_toggle = NIL() {
 /// Returns 1 if the sidebar is currently visible.
 pub func:cm_is_visible = int64() { pass(g_cm_visible); };
 
+/// v0.9.4: Set the active type filter. -1=All, 0=Local, 1=SSH, 2=Serial, 3=Telnet.
+/// Triggers a list rebuild.
+pub func:cm_set_filter = NIL(int64:filter_type) {
+    g_cm_filter = filter_type;
+    drop(cm_rebuild_list());
+    pass(NIL);
+};
+
+/// v0.9.4: Get the current filter type (-1=All, or PROF_TYPE_*).
+pub func:cm_get_filter = int64() { pass(g_cm_filter); };
+
 /// Repopulate the GtkListBox from the current profile store.
 /// Groups profiles by g_prof_group, emitting group headers.
+/// v0.9.4: Respects g_cm_filter — skips profiles that don't match.
 pub func:cm_rebuild_list = NIL() {
     if (g_cm_init_done == 0i64) { pass(NIL); }
     int64:lb = nitty_gtk4_cm_list_box(g_cm_widget);
@@ -93,11 +106,14 @@ pub func:cm_rebuild_list = NIL() {
         while (ri < recent_count && ri < 5i64) {
             int64:slot = raw prof_get_recent(ri);
             if (slot >= 0i64 && slot < raw profile_count()) {
-                string:host = raw profile_get_ssh_host(slot);
-                string:user = raw profile_get_ssh_user(slot);
-                string:name = raw profile_get_name(slot);
-                string:entry_label = string_concat(name, string_concat(" (", string_concat(user, string_concat("@", string_concat(host, ")")))));
-                drop(nitty_gtk4_list_box_append(lb, entry_label));
+                int64:rtype = raw profile_get_type(slot);
+                if (g_cm_filter == -1i64 || g_cm_filter == rtype) {
+                    string:host = raw profile_get_ssh_host(slot);
+                    string:user = raw profile_get_ssh_user(slot);
+                    string:name = raw profile_get_name(slot);
+                    string:entry_label = string_concat(name, string_concat(" (", string_concat(user, string_concat("@", string_concat(host, ")")))));
+                    drop(nitty_gtk4_list_box_append(lb, entry_label));
+                }
             }
             ri = ri + 1i64;
         }
@@ -113,6 +129,13 @@ pub func:cm_rebuild_list = NIL() {
     while (i < count) {
         string:grp = raw profile_get_group(i);
         if (string_length(grp) == 0i64) { grp = "General"; }
+
+        // v0.9.4: Apply filter — skip profiles that don't match
+        int64:ptype_filter = raw profile_get_type(i);
+        if (g_cm_filter != -1i64 && g_cm_filter != ptype_filter) {
+            i = i + 1i64;
+            pass_loop;
+        }
 
         // Check if we've emitted this group header already
         int64:found = 0i64;
@@ -131,46 +154,49 @@ pub func:cm_rebuild_list = NIL() {
             int64:hdr_row = nitty_gtk4_list_box_append(lb, grp);
             nitty_gtk4_list_box_set_group_header(lb, hdr_row, grp);
 
-            // Now add all profiles in this group
+            // Now add all profiles in this group that match the filter
             int64:j = 0i64;
             while (j < count) {
                 string:jgrp = raw profile_get_group(j);
                 if (string_length(jgrp) == 0i64) { jgrp = "General"; }
                 if (jgrp == grp) {
-                    string:pname = raw profile_get_name(j);
-                    int64:ptype  = raw profile_get_type(j);
-                    string:row_label = pname;
-                    if (ptype == PROF_TYPE_SSH) {
-                        string:h = raw profile_get_ssh_host(j);
-                        string:u = raw profile_get_ssh_user(j);
-                        if (string_length(h) > 0i64) {
-                            row_label = string_concat(pname, string_concat(
-                                " — ", string_concat(u, string_concat("@", h))));
+                    int64:jptype = raw profile_get_type(j);
+                    // v0.9.4: filter check inside group loop
+                    if (g_cm_filter == -1i64 || g_cm_filter == jptype) {
+                        string:pname = raw profile_get_name(j);
+                        string:row_label = pname;
+                        if (jptype == PROF_TYPE_SSH) {
+                            string:h = raw profile_get_ssh_host(j);
+                            string:u = raw profile_get_ssh_user(j);
+                            if (string_length(h) > 0i64) {
+                                row_label = string_concat(pname, string_concat(
+                                    " — ", string_concat(u, string_concat("@", h))));
+                            }
                         }
-                    }
-                    // v0.9.2: Telnet label
-                    if (ptype == PROF_TYPE_TELNET) {
-                        string:th = raw profile_get_telnet_host(j);
-                        int64:tp  = raw profile_get_telnet_port(j);
-                        if (string_length(th) > 0i64) {
-                            string:tp_str = int_to_string(tp);
-                            row_label = string_concat(pname, string_concat(
-                                " — telnet://", string_concat(th, string_concat(":", tp_str))));
+                        // v0.9.2: Telnet label
+                        if (jptype == PROF_TYPE_TELNET) {
+                            string:th = raw profile_get_telnet_host(j);
+                            int64:tp  = raw profile_get_telnet_port(j);
+                            if (string_length(th) > 0i64) {
+                                string:tp_str = int_to_string(tp);
+                                row_label = string_concat(pname, string_concat(
+                                    " — telnet://", string_concat(th, string_concat(":", tp_str))));
+                            }
                         }
-                    }
-                    // v0.9.3: Serial label
-                    if (ptype == PROF_TYPE_SERIAL) {
-                        string:sd = raw profile_get_serial_dev(j);
-                        int64:sb  = raw profile_get_serial_baud(j);
-                        if (string_length(sd) > 0i64) {
-                            string:sb_str = int_to_string(sb);
-                            row_label = string_concat(pname, string_concat(
-                                " — serial://", string_concat(sd, string_concat(" @", sb_str))));
-                        } else {
-                            row_label = string_concat(pname, " — serial");
+                        // v0.9.3: Serial label
+                        if (jptype == PROF_TYPE_SERIAL) {
+                            string:sd = raw profile_get_serial_dev(j);
+                            int64:sb  = raw profile_get_serial_baud(j);
+                            if (string_length(sd) > 0i64) {
+                                string:sb_str = int_to_string(sb);
+                                row_label = string_concat(pname, string_concat(
+                                    " — serial://", string_concat(sd, string_concat(" @", sb_str))));
+                            } else {
+                                row_label = string_concat(pname, " — serial");
+                            }
                         }
+                        drop(nitty_gtk4_list_box_append(lb, row_label));
                     }
-                    drop(nitty_gtk4_list_box_append(lb, row_label));
                 }
                 j = j + 1i64;
             }
@@ -238,6 +264,14 @@ pub func:cm_tick = NIL() {
         if (string_length(text) > 0i64) {
             drop(_cm_quick_connect(text));
         }
+    }
+
+    // CM_EVENT_FILTER = 7 (v0.9.4: type filter button clicked)
+    // Event data: profile_id field carries the filter type (-1/0/1/2/3)
+    if (ev == 7i64) {
+        int64:new_filter = nitty_gtk4_cm_event_profile_id();
+        g_cm_filter = new_filter;
+        drop(cm_rebuild_list());
     }
 
     pass(NIL);

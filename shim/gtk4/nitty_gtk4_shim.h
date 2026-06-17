@@ -1065,6 +1065,61 @@ const char *nitpick_zlib_decompress(const char *data, int32_t len, int32_t max_o
  */
 int64_t nitpick_zlib_last_len(void);
 
+
+/* ── v0.9.4: Serial toolbar (GtkActionBar) ─────────────────────────────── */
+
+/**
+ * Create the serial toolbar GtkActionBar and integrate it into the window layout.
+ * Must be called once after the main DrawingArea has been set as the window child
+ * (i.e. after nitty_gtk4_sidebar_attach / nitty_gtk4_sftp_panel_attach). Wraps
+ * the current content widget in a vertical GtkBox with the ActionBar at the bottom.
+ * The toolbar is initially hidden.
+ */
+void    nitty_serial_toolbar_create(void);
+
+/** Show the serial toolbar. Call when a serial pane becomes active. */
+void    nitty_serial_toolbar_show(void);
+
+/** Hide the serial toolbar. Call when a non-serial pane becomes active. */
+void    nitty_serial_toolbar_hide(void);
+
+/**
+ * Sync toolbar widget states to the current session.
+ * baud: current baud (matched against standard values; unrecognized shown as-is)
+ * dtr_state: 1=asserted, 0=cleared  (reflected by DTR toggle button appearance)
+ * rts_state: 1=asserted, 0=cleared
+ * input_mode: 0=Raw, 1=Text, 2=Readline  (dropdown selection)
+ * output_mode: 0=Text, 1=Hexdump         (dropdown selection)
+ */
+void    nitty_serial_toolbar_update(int64_t baud, int64_t dtr_state,
+                                    int64_t rts_state, int64_t input_mode,
+                                    int64_t output_mode);
+
+/** Poll and clear DTR toggle flag. Returns 1 if DTR button was clicked. */
+int64_t nitty_serial_toolbar_poll_dtr(void);
+
+/** Poll and clear RTS toggle flag. Returns 1 if RTS button was clicked. */
+int64_t nitty_serial_toolbar_poll_rts(void);
+
+/** Poll and clear Break flag. Returns 1 if Break button was clicked. */
+int64_t nitty_serial_toolbar_poll_break(void);
+
+/**
+ * Poll baud rate change. Returns new baud if changed, -1 if unchanged.
+ * Clears the flag on read.
+ */
+int64_t nitty_serial_toolbar_poll_baud(void);
+
+/**
+ * Poll input mode change. Returns new mode (0/1/2) if changed, -1 if unchanged.
+ */
+int64_t nitty_serial_toolbar_poll_input_mode(void);
+
+/**
+ * Poll output mode change. Returns new mode (0/1) if changed, -1 if unchanged.
+ */
+int64_t nitty_serial_toolbar_poll_output_mode(void);
+
 #ifdef __cplusplus
 }
 #endif

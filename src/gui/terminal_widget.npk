@@ -85,10 +85,11 @@ use "../ssh/ssh_jump.npk".{jump_relay_tick, jump_is_active};      // v0.8.4: jum
 use "../core/pane.npk".{pane_get_type, PANE_TYPE_SSH, PANE_TYPE_TELNET, PANE_TYPE_SERIAL};  // v0.8.4/v0.9.2/v0.9.3
 use "sftp_browser.npk".*;                                         // v0.8.5: SFTP browser panel
 use "../ssh/ssh_x11.npk".{x11_tick};                              // v0.8.6: X11 forwarding relay
-use "../ssh/ssh_zmodem.npk".{zmodem_feed};                        // v0.8.6: Zmodem intercept
+use "../core/zmodem.npk".{zmodem_feed, zmodem_get_pending_send, zmodem_state, ZMODEM_STATE_IDLE}; // v0.9.4: Zmodem (now connection-agnostic)
 use "../ssh/ssh_vault.npk".{vault_tick};                          // v0.8.6: vault auto-lock
-use "../telnet/telnet_session.npk".{telnet_poll_read, telnet_poll_key_input}; // v0.9.2: telnet support
-use "../serial/serial_session.npk".{serial_poll_read, serial_poll_key_input, serial_session_is_open}; // v0.9.3: serial support
+use "../telnet/telnet_session.npk".{telnet_poll_read, telnet_poll_key_input, telnet_write}; // v0.9.2: telnet support; telnet_write added v0.9.4 for Zmodem
+use "../serial/serial_session.npk".{serial_poll_read, serial_poll_key_input, serial_session_is_open, serial_session_push_key}; // v0.9.3: serial support; push_key added v0.9.4 for Zmodem
+use "serial_toolbar.npk".{serial_toolbar_create, serial_toolbar_poll};    // v0.9.4: serial toolbar
 
 // v0.8.4: Built-in string byte accessor (Nitpick runtime)
 extern func:npk_string_byte_at = int64(string:s, int64:i);
@@ -114,6 +115,8 @@ int64:g_tw_quake_setup_done = 0i64;
 int64:g_tw_winfeatures_done = 0i64;
 // v0.7.4: monotonic timestamp (seconds) of last process-completion poll
 int64:g_tw_last_pm_time = 0i64;
+// v0.9.4: 1 after serial toolbar has been created (one-shot, on first draw)
+int64:g_tw_toolbar_created = 0i64;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Initialization
@@ -303,6 +306,11 @@ pub func:tw_on_draw = NIL() {
             int64:aot = raw cfg_win_always_on_top();
             if (aot != 0i64) {
                 drop(wf_set_keep_above(wf_win, 1i64));
+            }
+            // v0.9.4: Create serial toolbar (integrates into window layout)
+            if (g_tw_toolbar_created == 0i64) {
+                drop(serial_toolbar_create());
+                g_tw_toolbar_created = 1i64;
             }
             g_tw_winfeatures_done = 1i64;
         }
@@ -1111,10 +1119,18 @@ pub func:tw_on_draw = NIL() {
     }
 
     // v0.9.2: Telnet poll tick — drain active Telnet pane data each frame
-    // Mirrors the SSH tick: reads VT bytes, feeds the pipeline, drains key input.
+    // v0.9.4: Added Zmodem detection (mirrors SSH tick pattern).
     int64:tel_pane_slot = raw tm_get_active_pane_slot(raw tm_get_active_index());
     int64:tel_ptype = raw pane_get_type(tel_pane_slot);
     if (tel_ptype == PANE_TYPE_TELNET()) {
+        // v0.9.4: Flush any pending Zmodem SEND bytes via telnet_write (handles IAC escaping)
+        int64:tel_zm_state = raw zmodem_state(tel_pane_slot);
+        if (tel_zm_state != ZMODEM_STATE_IDLE) {
+            string:tel_zm_pending = raw zmodem_get_pending_send(tel_pane_slot);
+            if (!string_is_empty(tel_zm_pending)) {
+                drop(telnet_write(tel_pane_slot, tel_zm_pending));
+            }
+        }
         // Send any pending keyboard input to the TCP socket
         drop(telnet_poll_key_input(tel_pane_slot));
         // Non-blocking read + IAC strip
@@ -1122,15 +1138,19 @@ pub func:tw_on_draw = NIL() {
         int64:tel_di    = 0i64;
         int64:tel_dlen  = string_length(tel_data);
         if (tel_dlen > 0i64) {
+            // v0.9.4: Offer IAC-stripped data to Zmodem state machine first
+            int64:tel_zm_consumed = raw zmodem_feed(tel_pane_slot, tel_data);
             if (raw viewport_is_at_bottom() == 0i64) {
                 drop(viewport_scroll_to_bottom());
             }
-            while (tel_di < tel_dlen) {
-                int64:tel_byte = raw npk_string_byte_at(tel_data, tel_di);
-                if (tel_byte >= 0i64) {
-                    drop(pipeline_feed(tel_byte));
+            if (tel_zm_consumed == 0i64) {
+                while (tel_di < tel_dlen) {
+                    int64:tel_byte = raw npk_string_byte_at(tel_data, tel_di);
+                    if (tel_byte >= 0i64) {
+                        drop(pipeline_feed(tel_byte));
+                    }
+                    tel_di = tel_di + 1i64;
                 }
-                tel_di = tel_di + 1i64;
             }
             drop(activity_on_output(a_slot, 1i64, a_now));
             drop(tw_queue_redraw());
@@ -1138,10 +1158,18 @@ pub func:tw_on_draw = NIL() {
     }
 
     // v0.9.3: Serial poll tick — drain active Serial pane data each frame
-    // Mirrors the Telnet tick: reads raw bytes, feeds the pipeline, drains key input.
+    // v0.9.4: Added Zmodem detection and pending-send flush.
     int64:ser_pane_slot = raw tm_get_active_pane_slot(raw tm_get_active_index());
     int64:ser_ptype = raw pane_get_type(ser_pane_slot);
     if (ser_ptype == PANE_TYPE_SERIAL()) {
+        // v0.9.4: Flush any pending Zmodem SEND bytes through the serial write path
+        int64:ser_zm_state = raw zmodem_state(ser_pane_slot);
+        if (ser_zm_state != ZMODEM_STATE_IDLE) {
+            string:ser_zm_pending = raw zmodem_get_pending_send(ser_pane_slot);
+            if (!string_is_empty(ser_zm_pending)) {
+                drop(serial_session_push_key(ser_pane_slot, ser_zm_pending));
+            }
+        }
         // Forward any pending keyboard input to the serial port
         drop(serial_poll_key_input(ser_pane_slot));
         // Non-blocking read of available bytes from serial fd
@@ -1149,20 +1177,26 @@ pub func:tw_on_draw = NIL() {
         int64:ser_di   = 0i64;
         int64:ser_dlen = string_length(ser_data);
         if (ser_dlen > 0i64) {
+            // v0.9.4: Offer data to Zmodem state machine before VT pipeline
+            int64:ser_zm_consumed = raw zmodem_feed(ser_pane_slot, ser_data);
             if (raw viewport_is_at_bottom() == 0i64) {
                 drop(viewport_scroll_to_bottom());
             }
-            while (ser_di < ser_dlen) {
-                int64:ser_byte = raw npk_string_byte_at(ser_data, ser_di);
-                if (ser_byte >= 0i64) {
-                    drop(pipeline_feed(ser_byte));
+            if (ser_zm_consumed == 0i64) {
+                while (ser_di < ser_dlen) {
+                    int64:ser_byte = raw npk_string_byte_at(ser_data, ser_di);
+                    if (ser_byte >= 0i64) {
+                        drop(pipeline_feed(ser_byte));
+                    }
+                    ser_di = ser_di + 1i64;
                 }
-                ser_di = ser_di + 1i64;
             }
             drop(activity_on_output(a_slot, 1i64, a_now));
             drop(tw_queue_redraw());
         }
     }
+    // v0.9.4: Poll serial toolbar each frame — handles show/hide + applies hardware changes
+    drop(serial_toolbar_poll(ser_pane_slot));
 
     // Step 2: Sync terminal state to C render grid
     // v0.7.2: Scan active screen rows for auto-detected URLs before rendering

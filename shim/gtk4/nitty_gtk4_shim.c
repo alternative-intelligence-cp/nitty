@@ -4643,3 +4643,289 @@ int64_t nitpick_zlib_last_len(void)
 {
     return g_zlib_last_out_len;
 }
+
+/* ── v0.9.4: Serial toolbar (GtkActionBar) ─────────────────────────────── */
+
+/* Standard baud rates for the baud dropdown */
+static const int64_t STB_BAUD_VALUES[] = {
+    300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200,
+    230400, 460800, 921600, 0  /* sentinel */
+};
+static const char *STB_BAUD_LABELS[] = {
+    "300", "600", "1200", "2400", "4800", "9600", "19200", "38400",
+    "57600", "115200", "230400", "460800", "921600", NULL
+};
+static const char *STB_INPUT_LABELS[]  = { "Raw", "Text", "Readline", NULL };
+static const char *STB_OUTPUT_LABELS[] = { "Text", "Hexdump", NULL };
+
+/* Toolbar widget state */
+static GtkWidget *g_stb_bar          = NULL;  /* GtkActionBar */
+static GtkWidget *g_stb_baud_dd      = NULL;  /* GtkDropDown for baud */
+static GtkWidget *g_stb_input_dd     = NULL;  /* GtkDropDown for input mode */
+static GtkWidget *g_stb_output_dd    = NULL;  /* GtkDropDown for output mode */
+static GtkWidget *g_stb_dtr_btn      = NULL;  /* GtkToggleButton for DTR */
+static GtkWidget *g_stb_rts_btn      = NULL;  /* GtkToggleButton for RTS */
+static GtkWidget *g_stb_break_btn    = NULL;  /* GtkButton for Break */
+
+/* Dirty flags — set by callbacks, polled by Nitpick each frame */
+static volatile int     g_stb_dtr_toggled    = 0;
+static volatile int     g_stb_rts_toggled    = 0;
+static volatile int     g_stb_break_clicked  = 0;
+static volatile int64_t g_stb_baud_changed   = -1;   /* -1 = no change */
+static volatile int     g_stb_input_changed  = -1;
+static volatile int     g_stb_output_changed = -1;
+
+/* Suppress re-entrancy when updating widgets programmatically */
+static int g_stb_updating = 0;
+
+/* Signal callbacks */
+static void on_stb_dtr_toggled(GtkToggleButton *btn, gpointer data)
+{
+    (void)data;
+    (void)btn;
+    if (g_stb_updating) return;
+    g_stb_dtr_toggled = 1;
+}
+
+static void on_stb_rts_toggled(GtkToggleButton *btn, gpointer data)
+{
+    (void)data;
+    (void)btn;
+    if (g_stb_updating) return;
+    g_stb_rts_toggled = 1;
+}
+
+static void on_stb_break_clicked(GtkButton *btn, gpointer data)
+{
+    (void)data;
+    (void)btn;
+    g_stb_break_clicked = 1;
+}
+
+static void on_stb_baud_changed(GObject *dd, GParamSpec *pspec, gpointer data)
+{
+    (void)pspec;
+    (void)data;
+    if (g_stb_updating) return;
+    guint sel = gtk_drop_down_get_selected(GTK_DROP_DOWN(dd));
+    if (STB_BAUD_VALUES[sel] != 0) {
+        g_stb_baud_changed = (int64_t)STB_BAUD_VALUES[sel];
+    }
+}
+
+static void on_stb_input_changed(GObject *dd, GParamSpec *pspec, gpointer data)
+{
+    (void)pspec;
+    (void)data;
+    if (g_stb_updating) return;
+    g_stb_input_changed = (int)gtk_drop_down_get_selected(GTK_DROP_DOWN(dd));
+}
+
+static void on_stb_output_changed(GObject *dd, GParamSpec *pspec, gpointer data)
+{
+    (void)pspec;
+    (void)data;
+    if (g_stb_updating) return;
+    g_stb_output_changed = (int)gtk_drop_down_get_selected(GTK_DROP_DOWN(dd));
+}
+
+/* Helper: create a GtkDropDown from a NULL-terminated label array */
+static GtkWidget *stb_dropdown_new(const char **labels)
+{
+    GtkStringList *sl = gtk_string_list_new(NULL);
+    for (int i = 0; labels[i] != NULL; i++) {
+        gtk_string_list_append(sl, labels[i]);
+    }
+    GtkWidget *dd = gtk_drop_down_new(G_LIST_MODEL(sl), NULL);
+    g_object_unref(sl);
+    return dd;
+}
+
+/* Apply CSS to mark DTR/RTS buttons as active/inactive */
+static void stb_set_toggle_css(GtkWidget *btn, int asserted)
+{
+    if (asserted) {
+        gtk_widget_add_css_class(btn, "suggested-action");
+    } else {
+        gtk_widget_remove_css_class(btn, "suggested-action");
+    }
+}
+
+void nitty_serial_toolbar_create(void)
+{
+    if (g_stb_bar != NULL) return;  /* Already created */
+    if (g_main_window == NULL) return;
+
+    /* -- Build ActionBar --------------------------------------------------- */
+    GtkWidget *bar = gtk_action_bar_new();
+    if (bar == NULL) return;
+    g_stb_bar = bar;
+
+    /* Baud dropdown */
+    GtkWidget *baud_label = gtk_label_new("Baud:");
+    g_stb_baud_dd = stb_dropdown_new(STB_BAUD_LABELS);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(g_stb_baud_dd), 9);  /* default: 115200 */
+    g_signal_connect(g_stb_baud_dd, "notify::selected", G_CALLBACK(on_stb_baud_changed), NULL);
+
+    /* Input mode dropdown */
+    GtkWidget *in_label = gtk_label_new("  In:");
+    g_stb_input_dd = stb_dropdown_new(STB_INPUT_LABELS);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(g_stb_input_dd), 0);
+    g_signal_connect(g_stb_input_dd, "notify::selected", G_CALLBACK(on_stb_input_changed), NULL);
+
+    /* Output mode dropdown */
+    GtkWidget *out_label = gtk_label_new("  Out:");
+    g_stb_output_dd = stb_dropdown_new(STB_OUTPUT_LABELS);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(g_stb_output_dd), 0);
+    g_signal_connect(g_stb_output_dd, "notify::selected", G_CALLBACK(on_stb_output_changed), NULL);
+
+    /* DTR toggle button */
+    g_stb_dtr_btn = gtk_toggle_button_new_with_label("DTR");
+    gtk_widget_set_tooltip_text(g_stb_dtr_btn, "Data Terminal Ready — click to toggle");
+    g_signal_connect(g_stb_dtr_btn, "toggled", G_CALLBACK(on_stb_dtr_toggled), NULL);
+
+    /* RTS toggle button */
+    g_stb_rts_btn = gtk_toggle_button_new_with_label("RTS");
+    gtk_widget_set_tooltip_text(g_stb_rts_btn, "Request To Send — click to toggle");
+    g_signal_connect(g_stb_rts_btn, "toggled", G_CALLBACK(on_stb_rts_toggled), NULL);
+
+    /* Break button (momentary) */
+    g_stb_break_btn = gtk_button_new_with_label("⚡ Break");
+    gtk_widget_set_tooltip_text(g_stb_break_btn, "Send serial break signal (~250ms)");
+    gtk_widget_add_css_class(g_stb_break_btn, "destructive-action");
+    g_signal_connect(g_stb_break_btn, "clicked", G_CALLBACK(on_stb_break_clicked), NULL);
+
+    /* Pack start: Baud | In | Out */
+    gtk_action_bar_pack_start(GTK_ACTION_BAR(bar), baud_label);
+    gtk_action_bar_pack_start(GTK_ACTION_BAR(bar), g_stb_baud_dd);
+    gtk_action_bar_pack_start(GTK_ACTION_BAR(bar), in_label);
+    gtk_action_bar_pack_start(GTK_ACTION_BAR(bar), g_stb_input_dd);
+    gtk_action_bar_pack_start(GTK_ACTION_BAR(bar), out_label);
+    gtk_action_bar_pack_start(GTK_ACTION_BAR(bar), g_stb_output_dd);
+
+    /* Pack end: DTR | RTS | Break */
+    gtk_action_bar_pack_end(GTK_ACTION_BAR(bar), g_stb_break_btn);
+    gtk_action_bar_pack_end(GTK_ACTION_BAR(bar), g_stb_rts_btn);
+    gtk_action_bar_pack_end(GTK_ACTION_BAR(bar), g_stb_dtr_btn);
+
+    /* -- Integrate into window layout -------------------------------------- */
+    /* Get the current window child (the paned/box from sidebar_attach) */
+    GtkWidget *old_child = gtk_window_get_child(GTK_WINDOW(g_main_window));
+    if (old_child == NULL) return;
+
+    /* Wrap in a vertical box: [old_child, ActionBar] */
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_hexpand(old_child, TRUE);
+    gtk_widget_set_vexpand(old_child, TRUE);
+
+    /* Re-parent old child into the vbox */
+    g_object_ref(old_child);
+    gtk_window_set_child(GTK_WINDOW(g_main_window), NULL);
+    gtk_box_append(GTK_BOX(vbox), old_child);
+    g_object_unref(old_child);
+
+    gtk_box_append(GTK_BOX(vbox), bar);
+    gtk_window_set_child(GTK_WINDOW(g_main_window), vbox);
+
+    /* Start hidden */
+    gtk_widget_set_visible(bar, FALSE);
+}
+
+void nitty_serial_toolbar_show(void)
+{
+    if (g_stb_bar != NULL) {
+        gtk_widget_set_visible(g_stb_bar, TRUE);
+    }
+}
+
+void nitty_serial_toolbar_hide(void)
+{
+    if (g_stb_bar != NULL) {
+        gtk_widget_set_visible(g_stb_bar, FALSE);
+    }
+}
+
+void nitty_serial_toolbar_update(int64_t baud, int64_t dtr_state,
+                                  int64_t rts_state, int64_t input_mode,
+                                  int64_t output_mode)
+{
+    if (g_stb_bar == NULL) return;
+
+    g_stb_updating = 1;
+
+    /* Set baud dropdown selection */
+    if (g_stb_baud_dd != NULL) {
+        for (int i = 0; STB_BAUD_VALUES[i] != 0; i++) {
+            if (STB_BAUD_VALUES[i] == baud) {
+                gtk_drop_down_set_selected(GTK_DROP_DOWN(g_stb_baud_dd), (guint)i);
+                break;
+            }
+        }
+    }
+
+    /* DTR button */
+    if (g_stb_dtr_btn != NULL) {
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g_stb_dtr_btn), dtr_state ? TRUE : FALSE);
+        stb_set_toggle_css(g_stb_dtr_btn, (int)dtr_state);
+    }
+
+    /* RTS button */
+    if (g_stb_rts_btn != NULL) {
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g_stb_rts_btn), rts_state ? TRUE : FALSE);
+        stb_set_toggle_css(g_stb_rts_btn, (int)rts_state);
+    }
+
+    /* Input mode dropdown */
+    if (g_stb_input_dd != NULL && input_mode >= 0 && input_mode <= 2) {
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(g_stb_input_dd), (guint)input_mode);
+    }
+
+    /* Output mode dropdown */
+    if (g_stb_output_dd != NULL && output_mode >= 0 && output_mode <= 1) {
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(g_stb_output_dd), (guint)output_mode);
+    }
+
+    g_stb_updating = 0;
+}
+
+int64_t nitty_serial_toolbar_poll_dtr(void)
+{
+    int val = g_stb_dtr_toggled;
+    g_stb_dtr_toggled = 0;
+    return (int64_t)val;
+}
+
+int64_t nitty_serial_toolbar_poll_rts(void)
+{
+    int val = g_stb_rts_toggled;
+    g_stb_rts_toggled = 0;
+    return (int64_t)val;
+}
+
+int64_t nitty_serial_toolbar_poll_break(void)
+{
+    int val = g_stb_break_clicked;
+    g_stb_break_clicked = 0;
+    return (int64_t)val;
+}
+
+int64_t nitty_serial_toolbar_poll_baud(void)
+{
+    int64_t val = g_stb_baud_changed;
+    g_stb_baud_changed = -1;
+    return val;
+}
+
+int64_t nitty_serial_toolbar_poll_input_mode(void)
+{
+    int val = g_stb_input_changed;
+    g_stb_input_changed = -1;
+    return (int64_t)val;
+}
+
+int64_t nitty_serial_toolbar_poll_output_mode(void)
+{
+    int val = g_stb_output_changed;
+    g_stb_output_changed = -1;
+    return (int64_t)val;
+}

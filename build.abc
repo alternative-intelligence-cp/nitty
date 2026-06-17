@@ -694,3 +694,21 @@ deps = ["serial_shim"]
 flags = []
 link_libraries = ["nitty_serial_shim"]
 link_paths = [".nitpick_make/build"]
+
+# v0.9.4: Zmodem state machine unit tests (needs nitpick-fs + nitpick-env for file I/O)
+[target.test_zmodem]
+type = "binary"
+sources = ["tests/core/test_zmodem.npk"]
+deps = []
+flags = []
+link_libraries = ["nitpick_fs_shim", "nitpick_env_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+
+# v0.9.4: Serial + Zmodem end-to-end tests (serial_shim + nitpick-fs/env for zmodem file I/O)
+[target.test_serial_e2e]
+type = "binary"
+sources = ["tests/serial/test_serial_e2e.npk"]
+deps = ["serial_shim"]
+flags = []
+link_libraries = ["nitty_serial_shim", "nitpick_fs_shim", "nitpick_env_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]

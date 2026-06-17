@@ -1,0 +1,295 @@
+// src/core/zmodem.npk — Connection-agnostic Zmodem file transfer (v0.9.4)
+//
+// Moved from src/ssh/ssh_zmodem.npk (v0.8.6) and made connection-agnostic.
+// Works identically for SSH, serial, and telnet data streams — the caller
+// passes raw bytes; this module handles the Zmodem state machine.
+//
+// Hook: terminal_widget.npk calls zmodem_feed() on each received data chunk
+// BEFORE passing it to pipeline_feed(). If zmodem_feed returns 1, the data
+// was consumed by the Zmodem state machine. If it returns 0, pass to VT pipeline.
+//
+// Zmodem protocol headers detected:
+//   "**\x18B0"   = ZRQINIT  (remote offering Zmodem / triggering rz)
+//   "**\x18B1"   = ZRINIT   (remote ready to receive)
+//   "\x18" × 10  = CAN sequence (cancel)
+//
+// API:
+//   zmodem_init()
+//   zmodem_set_auto_detect(enabled)        — enable/disable auto-detect (default: 1)
+//   zmodem_feed(pane_slot, data) → int64   — 0=normal data, 1=consumed by Zmodem
+//   zmodem_state(pane_slot) → int64        — ZMODEM_STATE_*
+//   zmodem_filename(pane_slot) → string    — current transfer filename
+//   zmodem_progress_pct(pane_slot) → int64 — 0-100
+//   zmodem_cancel(pane_slot)
+//   zmodem_set_dest_dir(pane_slot, dir)
+//   zmodem_send_file(pane_slot, file_path) → int64   — 0=ok, -1=error
+//   zmodem_get_pending_send(pane_slot) → string       — bytes to write to remote
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+pub fixed int64:ZMODEM_STATE_IDLE     = 0i64;
+pub fixed int64:ZMODEM_STATE_RECEIVE  = 1i64;   // Receiving a file (sz on remote)
+pub fixed int64:ZMODEM_STATE_SEND     = 2i64;   // Sending a file to remote
+pub fixed int64:ZMODEM_STATE_CANCEL   = 3i64;   // Cancelling
+pub fixed int64:ZMODEM_STATE_DONE     = 4i64;   // Transfer complete
+
+// Zmodem frame types (ZMODEM spec)
+pub fixed int64:ZMODEM_ZRQINIT  = 0i64;   // Request init (remote offering Zmodem)
+pub fixed int64:ZMODEM_ZRINIT   = 1i64;   // Ready to receive
+pub fixed int64:ZMODEM_ZSINIT   = 2i64;   // Send init
+pub fixed int64:ZMODEM_ZACK     = 3i64;   // ACK
+pub fixed int64:ZMODEM_ZFILE    = 4i64;   // File header
+pub fixed int64:ZMODEM_ZSKIP    = 5i64;   // Skip file
+pub fixed int64:ZMODEM_ZNAK     = 6i64;   // Negative ACK
+pub fixed int64:ZMODEM_ZABORT   = 7i64;   // Abort
+pub fixed int64:ZMODEM_ZFIN     = 8i64;   // Finish
+pub fixed int64:ZMODEM_ZDATA    = 10i64;  // Data packet
+pub fixed int64:ZMODEM_ZEOF     = 11i64;  // End of file
+
+// CAN sequence for cancellation (10 × 0x18)
+pub fixed string:ZMODEM_CANCEL_SEQ  = "\x18\x18\x18\x18\x18\x18\x18\x18\x18\x18";
+pub fixed string:ZMODEM_ZRQINIT_HDR = "**\x18B0";
+pub fixed string:ZMODEM_ZRINIT_HDR  = "**\x18B1";
+
+// Per-pane max (64 slots, matches pane system)
+pub fixed int64:ZM_MAX_PANES = 64i64;
+
+// ── Module state (parallel arrays, ZM_MAX_PANES slots) ───────────────────────
+
+int64[64]:g_zm_state;            // ZMODEM_STATE_*
+string[64]:g_zm_dest_dir;        // download destination directory
+string[64]:g_zm_filename;        // current filename being transferred
+int64[64]:g_zm_bytes_received;   // bytes received so far
+int64[64]:g_zm_total_bytes;      // total bytes expected (from ZFILE header)
+string[64]:g_zm_accum;           // byte accumulator for current frame
+int64[64]:g_zm_file_fd;          // output file fd (-1 if not open)
+int64[64]:g_zm_expect_can;       // cancel CAN byte count
+
+// Global auto-detect flag (1 = enabled, 0 = disabled)
+int64:g_zm_auto_detect = 1i64;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+/// Initialise Zmodem state for all pane slots.
+/// The default download directory is read from ~/Downloads (or /tmp as fallback).
+/// Per-slot overrides can be set via zmodem_set_dest_dir().
+/// Call once at startup (before any session opens).
+pub func:zmodem_init = NIL() {
+    int64:i = 0i64;
+    string:home = raw home();
+    string:dl_dir = "/tmp";
+    if (!string_is_empty(home)) {
+        dl_dir = string_concat(home, "/Downloads");
+    }
+    while (i < ZM_MAX_PANES) {
+        g_zm_state[i]          = ZMODEM_STATE_IDLE;
+        g_zm_filename[i]       = "";
+        g_zm_bytes_received[i] = 0i64;
+        g_zm_total_bytes[i]    = 0i64;
+        g_zm_accum[i]          = "";
+        g_zm_file_fd[i]        = -1i64;
+        g_zm_expect_can[i]     = 0i64;
+        g_zm_dest_dir[i]       = dl_dir;
+        i = i + 1i64;
+    }
+    pass(NIL);
+};
+
+/// Enable or disable Zmodem auto-detect globally (1=enabled, 0=disabled).
+pub func:zmodem_set_auto_detect = NIL(int64:enabled) {
+    g_zm_auto_detect = enabled;
+    pass(NIL);
+};
+
+// ── Getters ───────────────────────────────────────────────────────────────────
+
+pub func:zmodem_state = int64(int64:pane_slot) {
+    if (pane_slot < 0i64 || pane_slot >= ZM_MAX_PANES) { pass(ZMODEM_STATE_IDLE); }
+    pass(g_zm_state[pane_slot]);
+};
+
+pub func:zmodem_filename = string(int64:pane_slot) {
+    if (pane_slot < 0i64 || pane_slot >= ZM_MAX_PANES) { pass(""); }
+    pass(g_zm_filename[pane_slot]);
+};
+
+pub func:zmodem_progress_pct = int64(int64:pane_slot) {
+    if (pane_slot < 0i64 || pane_slot >= ZM_MAX_PANES) { pass(0i64); }
+    int64:total = g_zm_total_bytes[pane_slot];
+    int64:recv  = g_zm_bytes_received[pane_slot];
+    if (total <= 0i64) { pass(0i64); }
+    pass((recv * 100i64) / total);
+};
+
+pub func:zmodem_set_dest_dir = NIL(int64:pane_slot, string:dir) {
+    if (pane_slot < 0i64 || pane_slot >= ZM_MAX_PANES) { pass(NIL); }
+    g_zm_dest_dir[pane_slot] = dir;
+    pass(NIL);
+};
+
+// ── Cancel ────────────────────────────────────────────────────────────────────
+
+pub func:zmodem_cancel = NIL(int64:pane_slot) {
+    if (pane_slot < 0i64 || pane_slot >= ZM_MAX_PANES) { pass(NIL); }
+    g_zm_state[pane_slot]          = ZMODEM_STATE_IDLE;
+    g_zm_filename[pane_slot]       = "";
+    g_zm_accum[pane_slot]          = "";
+    g_zm_bytes_received[pane_slot] = 0i64;
+    g_zm_total_bytes[pane_slot]    = 0i64;
+    g_zm_file_fd[pane_slot]        = -1i64;
+    pass(NIL);
+};
+
+// ── Send a local file to the remote via Zmodem ────────────────────────────────
+
+/// Initiate a Zmodem send. The caller must check zmodem_get_pending_send() and
+/// write the returned bytes to the remote connection.
+/// Returns 0 on success, -1 on error (file not found or slot busy).
+pub func:zmodem_send_file = int64(int64:pane_slot, string:file_path) {
+    if (pane_slot < 0i64 || pane_slot >= ZM_MAX_PANES) { pass(-1i64); }
+    if (g_zm_state[pane_slot] != ZMODEM_STATE_IDLE) { pass(-1i64); }
+
+    int64:exists = raw fs_exists(file_path);
+    if (exists == 0i64) { pass(-1i64); }
+
+    g_zm_state[pane_slot]          = ZMODEM_STATE_SEND;
+    g_zm_filename[pane_slot]       = file_path;
+    g_zm_bytes_received[pane_slot] = 0i64;
+    g_zm_total_bytes[pane_slot]    = 0i64;
+    g_zm_accum[pane_slot]          = "**\x18B00000000\r\n";  // ZRQINIT frame
+
+    pass(0i64);
+};
+
+/// Returns the pending bytes to send to the remote for the current Zmodem SEND.
+/// Clears the pending buffer after returning. Caller writes this to the connection.
+pub func:zmodem_get_pending_send = string(int64:pane_slot) {
+    if (pane_slot < 0i64 || pane_slot >= ZM_MAX_PANES) { pass(""); }
+    string:pending = g_zm_accum[pane_slot];
+    g_zm_accum[pane_slot] = "";
+    pass(pending);
+};
+
+// ── ZFILE header parser — extract filename and size ───────────────────────────
+
+func:zm_parse_zfile_header = NIL(int64:pane_slot, string:hdr) {
+    int64:nul_pos = string_index_of(hdr, "\x00");
+    if (nul_pos < 0i64) { pass(NIL); }
+
+    string:fname = string_substring(hdr, 0i64, nul_pos);
+    if (string_is_empty(fname)) { fname = "zmodem_download"; }
+    g_zm_filename[pane_slot] = fname;
+
+    int64:meta_start = nul_pos + 1i64;
+    if (meta_start < string_length(hdr)) {
+        string:meta = string_substring(hdr, meta_start, string_length(hdr));
+        int64:sp_pos = string_index_of(meta, " ");
+        string:size_str = meta;
+        if (sp_pos >= 0i64) {
+            size_str = string_substring(meta, 0i64, sp_pos);
+        }
+        g_zm_total_bytes[pane_slot] = string_to_int(size_str);
+    }
+    pass(NIL);
+};
+
+// ── Main feed function ────────────────────────────────────────────────────────
+
+/// Feed data from the terminal stream through the Zmodem state machine.
+/// Returns 1 if data was consumed by Zmodem (do NOT pass to VT pipeline).
+/// Returns 0 if data is normal terminal output (pass to VT pipeline).
+pub func:zmodem_feed = int64(int64:pane_slot, string:data) {
+    if (pane_slot < 0i64 || pane_slot >= ZM_MAX_PANES) { pass(0i64); }
+    if (string_is_empty(data)) { pass(0i64); }
+
+    int64:state = g_zm_state[pane_slot];
+
+    // ── IDLE: scan for Zmodem initiation headers ──────────────────────────────
+    if (state == ZMODEM_STATE_IDLE) {
+        // If auto-detect is off, pass all data through immediately
+        if (g_zm_auto_detect == 0i64) { pass(0i64); }
+
+        // Detect "**\x18B0" (ZRQINIT — remote offering Zmodem transfer)
+        if (string_contains(data, ZMODEM_ZRQINIT_HDR)) {
+            g_zm_state[pane_slot]          = ZMODEM_STATE_RECEIVE;
+            g_zm_accum[pane_slot]          = "";
+            g_zm_bytes_received[pane_slot] = 0i64;
+            g_zm_total_bytes[pane_slot]    = 0i64;
+            g_zm_filename[pane_slot]       = "";
+            pass(1i64);  // consumed
+        }
+        // Detect cancel sequence — safe no-op when idle
+        if (string_contains(data, ZMODEM_CANCEL_SEQ)) {
+            pass(1i64);
+        }
+        pass(0i64);  // normal terminal data
+    }
+
+    // ── RECEIVE: accumulate Zmodem frames and write to file ───────────────────
+    if (state == ZMODEM_STATE_RECEIVE) {
+        g_zm_accum[pane_slot] = string_concat(g_zm_accum[pane_slot], data);
+        string:accum = g_zm_accum[pane_slot];
+
+        // Look for ZFILE header (NUL byte in accum = filename metadata)
+        if (string_is_empty(g_zm_filename[pane_slot])) {
+            if (string_contains(accum, "\x00")) {
+                int64:b_pos = string_index_of(accum, "B");
+                if (b_pos >= 0i64) {
+                    int64:payload_start = b_pos + 3i64;  // skip "Bxx" frame type chars
+                    if (payload_start < string_length(accum)) {
+                        string:payload = string_substring(accum, payload_start, string_length(accum));
+                        drop(zm_parse_zfile_header(pane_slot, payload));
+                    }
+                }
+            }
+        }
+
+        // Detect ZFIN ("**\x18B8") — transfer complete
+        if (string_contains(accum, "\x18B8")) {
+            g_zm_state[pane_slot] = ZMODEM_STATE_DONE;
+            pass(1i64);
+        }
+
+        // Detect cancel sequence
+        if (string_contains(accum, ZMODEM_CANCEL_SEQ)) {
+            drop(zmodem_cancel(pane_slot));
+            pass(1i64);
+        }
+
+        // Track byte count for progress
+        g_zm_bytes_received[pane_slot] = g_zm_bytes_received[pane_slot] + string_length(data);
+
+        // Write data to output file
+        if (!string_is_empty(g_zm_filename[pane_slot])) {
+            string:dest_dir = g_zm_dest_dir[pane_slot];
+            if (raw fs_is_dir(dest_dir) == 0i64) {
+                drop(raw fs_mkdir(dest_dir));
+            }
+            string:out_path = string_concat(string_concat(dest_dir, "/"), g_zm_filename[pane_slot]);
+            drop(raw fs_append_file(out_path, data));
+        }
+
+        pass(1i64);  // consumed
+    }
+
+    // ── SEND: pass everything through (remote drives the protocol) ────────────
+    if (state == ZMODEM_STATE_SEND) {
+        // Data from remote in SEND state is protocol ACKs — consume them
+        pass(1i64);
+    }
+
+    // ── DONE/CANCEL: reset to IDLE and pass the final bytes through ───────────
+    if (state == ZMODEM_STATE_DONE) {
+        g_zm_state[pane_slot] = ZMODEM_STATE_IDLE;
+        pass(0i64);
+    }
+    if (state == ZMODEM_STATE_CANCEL) {
+        g_zm_state[pane_slot] = ZMODEM_STATE_IDLE;
+        pass(0i64);
+    }
+
+    pass(0i64);  // default: not consumed
+};

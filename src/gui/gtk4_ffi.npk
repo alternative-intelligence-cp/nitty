@@ -752,4 +752,16 @@ extern "nitty_gtk4_shim" {
     func:nitpick_zlib_compress      = string(string:data, int32:len);
     func:nitpick_zlib_decompress    = string(string:data, int32:len, int32:max_out);
     func:nitpick_zlib_last_len      = int64();
+
+    // ── v0.9.4: Serial toolbar (GtkActionBar) ───────────────────────────────
+    func:nitty_serial_toolbar_create           = NIL();
+    func:nitty_serial_toolbar_show             = NIL();
+    func:nitty_serial_toolbar_hide             = NIL();
+    func:nitty_serial_toolbar_update           = NIL(int64:baud, int64:dtr, int64:rts, int64:input_mode, int64:output_mode);
+    func:nitty_serial_toolbar_poll_dtr         = int64();
+    func:nitty_serial_toolbar_poll_rts         = int64();
+    func:nitty_serial_toolbar_poll_break       = int64();
+    func:nitty_serial_toolbar_poll_baud        = int64();
+    func:nitty_serial_toolbar_poll_input_mode  = int64();
+    func:nitty_serial_toolbar_poll_output_mode = int64();
 }

@@ -1,0 +1,139 @@
+// src/gui/serial_toolbar.npk — Serial-specific toolbar wrapper (v0.9.4)
+//
+// Wraps the GTK4 GtkActionBar serial toolbar (nitty_serial_toolbar_* shim calls)
+// into a clean Nitpick API. Called from terminal_widget.npk's draw loop:
+//
+//   - On startup: serial_toolbar_create()
+//   - Each frame: serial_toolbar_poll(active_slot) — show/hide + apply changes
+//
+// The toolbar is only visible when a serial pane is the active pane.
+// Polls dirty flags from the C shim each frame (non-blocking).
+
+use "gtk4_ffi.npk".{
+    nitty_serial_toolbar_create,
+    nitty_serial_toolbar_show,
+    nitty_serial_toolbar_hide,
+    nitty_serial_toolbar_update,
+    nitty_serial_toolbar_poll_dtr,
+    nitty_serial_toolbar_poll_rts,
+    nitty_serial_toolbar_poll_break,
+    nitty_serial_toolbar_poll_baud,
+    nitty_serial_toolbar_poll_input_mode,
+    nitty_serial_toolbar_poll_output_mode
+};
+use "../core/pane.npk".{pane_is_serial, pane_get_serial_baud};
+use "../serial/serial_port.npk".{
+    serial_set_baud, serial_set_dtr, serial_set_rts, serial_send_break,
+    serial_get_modem_status, SERIAL_INPUT_RAW, SERIAL_INPUT_TEXT, SERIAL_INPUT_READLINE,
+    SERIAL_OUTPUT_TEXT, SERIAL_OUTPUT_HEXDUMP
+};
+use "../serial/serial_session.npk".{serial_session_get_fd, serial_session_is_open};
+use "../serial/serial_modes.npk".{serial_output_format};
+
+// ── Module state ──────────────────────────────────────────────────────────────
+
+// Track toolbar visibility to avoid redundant show/hide calls
+int64:g_stb_visible = 0i64;
+
+// Per-slot state tracked by the toolbar (DTR/RTS/modes per active slot)
+int64[64]:g_stb_dtr;           // 1=asserted, 0=cleared
+int64[64]:g_stb_rts;           // 1=asserted, 0=cleared
+int64[64]:g_stb_input_mode;    // SERIAL_INPUT_*
+int64[64]:g_stb_output_mode;   // SERIAL_OUTPUT_*
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+/// Create the serial toolbar. Call once after app_run is started and the
+/// window is realized (i.e., from the first tw_on_draw tick).
+pub func:serial_toolbar_create = NIL() {
+    drop(nitty_serial_toolbar_create());
+    pass(NIL);
+};
+
+// ── Per-frame poll ────────────────────────────────────────────────────────────
+
+/// Poll the serial toolbar each frame for the given active pane slot.
+/// Handles show/hide transitions, syncs widget state, and applies any
+/// control changes (baud/DTR/RTS/Break/mode) to the live serial session.
+/// Call from tw_on_draw() once per frame, after pane type is known.
+pub func:serial_toolbar_poll = NIL(int64:slot) {
+    int64:is_ser = raw pane_is_serial(slot);
+
+    // Show/hide transition
+    if (is_ser != 0i64 && g_stb_visible == 0i64) {
+        drop(nitty_serial_toolbar_show());
+        g_stb_visible = 1i64;
+        // Sync widget state to current session
+        int64:cur_baud = raw pane_get_serial_baud(slot);
+        drop(nitty_serial_toolbar_update(
+            cur_baud,
+            g_stb_dtr[slot],
+            g_stb_rts[slot],
+            g_stb_input_mode[slot],
+            g_stb_output_mode[slot]
+        ));
+    }
+    if (is_ser == 0i64 && g_stb_visible != 0i64) {
+        drop(nitty_serial_toolbar_hide());
+        g_stb_visible = 0i64;
+        pass(NIL);
+    }
+    if (is_ser == 0i64) { pass(NIL); }
+
+    // Only poll if session is open
+    if (raw serial_session_is_open(slot) == 0i64) { pass(NIL); }
+    int64:fd = raw serial_session_get_fd(slot);
+    if (fd < 0i64) { pass(NIL); }
+
+    // ── Poll baud change ───────────────────────────────────────────────────
+    int64:new_baud = raw nitty_serial_toolbar_poll_baud();
+    if (new_baud > 0i64) {
+        drop(raw serial_set_baud(fd, new_baud));
+    }
+
+    // ── Poll DTR toggle ────────────────────────────────────────────────────
+    int64:dtr_toggled = raw nitty_serial_toolbar_poll_dtr();
+    if (dtr_toggled != 0i64) {
+        g_stb_dtr[slot] = is (g_stb_dtr[slot] != 0i64) : 0i64 : 1i64;
+        drop(raw serial_set_dtr(fd, g_stb_dtr[slot]));
+    }
+
+    // ── Poll RTS toggle ────────────────────────────────────────────────────
+    int64:rts_toggled = raw nitty_serial_toolbar_poll_rts();
+    if (rts_toggled != 0i64) {
+        g_stb_rts[slot] = is (g_stb_rts[slot] != 0i64) : 0i64 : 1i64;
+        drop(raw serial_set_rts(fd, g_stb_rts[slot]));
+    }
+
+    // ── Poll Break click ───────────────────────────────────────────────────
+    int64:break_clicked = raw nitty_serial_toolbar_poll_break();
+    if (break_clicked != 0i64) {
+        drop(raw serial_send_break(fd, 0i64));  // 0 = default ~250ms
+    }
+
+    // ── Poll input mode change ─────────────────────────────────────────────
+    int64:new_input_mode = raw nitty_serial_toolbar_poll_input_mode();
+    if (new_input_mode >= 0i64) {
+        g_stb_input_mode[slot] = new_input_mode;
+    }
+
+    // ── Poll output mode change ────────────────────────────────────────────
+    int64:new_output_mode = raw nitty_serial_toolbar_poll_output_mode();
+    if (new_output_mode >= 0i64) {
+        g_stb_output_mode[slot] = new_output_mode;
+    }
+
+    pass(NIL);
+};
+
+/// Get the current input mode for a serial slot (used by terminal_widget.npk).
+pub func:stb_get_input_mode = int64(int64:slot) {
+    if (slot < 0i64 || slot >= 64i64) { pass(SERIAL_INPUT_RAW); }
+    pass(g_stb_input_mode[slot]);
+};
+
+/// Get the current output mode for a serial slot.
+pub func:stb_get_output_mode = int64(int64:slot) {
+    if (slot < 0i64 || slot >= 64i64) { pass(SERIAL_OUTPUT_TEXT); }
+    pass(g_stb_output_mode[slot]);
+};
