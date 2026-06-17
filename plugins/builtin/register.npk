@@ -1,0 +1,32 @@
+// plugins/builtin/register.npk — Built-in plugin registration
+//
+// v0.10.3: Refactor SSH/Serial/Telnet as ConnectionProvider plugins
+//
+// Single entry point: register_builtin_plugins(api) calls all three
+// built-in plugin init functions in order.
+//
+// Called from plugin_manager_init() before external plugin discovery,
+// so built-in types are always available regardless of what external
+// plugins are installed.
+//
+// Built-in plugins use slot = -1 (not in the plugin registry — they
+// are always-on and cannot be uninstalled, only disabled).
+//
+// Initialization order matters for the ext_connection type list:
+//   1. SSH   (index 0)
+//   2. Serial (index 1)
+//   3. Telnet (index 2)
+//
+// Public API:
+//   register_builtin_plugins(api)   → NIL
+
+use "./ssh/plugin.npk".*;
+use "./serial/plugin.npk".*;
+use "./telnet/plugin.npk".*;
+
+pub func:register_builtin_plugins = NIL(PluginAPI:api) {
+    drop(ssh_builtin_plugin_init(api));
+    drop(serial_builtin_plugin_init(api));
+    drop(telnet_builtin_plugin_init(api));
+    pass(NIL);
+};

@@ -748,3 +748,12 @@ deps = []
 flags = []
 link_libraries = ["nitpick_yaml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_semver"]
 link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib"]
+
+# v0.10.3: Built-in plugin (SSH/serial/telnet as ConnectionProvider) tests
+[target.test_builtin_plugins]
+type = "binary"
+sources = ["tests/plugin/test_builtin_plugins.npk"]
+deps = []
+flags = []
+link_libraries = ["nitpick_yaml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_semver"]
+link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib"]

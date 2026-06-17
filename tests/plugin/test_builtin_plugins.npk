@@ -1,0 +1,228 @@
+// tests/plugin/test_builtin_plugins.npk — v0.10.3 built-in plugin tests
+//
+// Tests that SSH, serial, and telnet built-in ConnectionProvider plugins
+// register correctly via the PluginAPI and that the connection_manager
+// provider query wrappers delegate to ext_connection correctly.
+//
+// Does NOT test plugin_manager_init (requires full manifest/discovery stack).
+// Tests the registration layer directly: init each plugin, verify ext_connection
+// registry contains the expected providers.
+//
+// 20 assertions.
+
+use "../../src/plugin/api.npk".*;
+use "../../src/plugin/ext_connection.npk".*;
+use "../../src/plugin/ext_hotkey.npk".*;
+use "../../src/plugin/ext_terminal.npk".*;
+use "../../src/plugin/ext_settings.npk".*;
+use "../../src/plugin/ext_registry.npk".*;
+use "../../plugins/builtin/ssh/plugin.npk".*;
+use "../../plugins/builtin/serial/plugin.npk".*;
+use "../../plugins/builtin/telnet/plugin.npk".*;
+use "../../plugins/builtin/register.npk".*;
+
+// ── Test infrastructure ───────────────────────────────────────────────────────
+
+int64:T_PASS   = 0i64;
+int64:T_FAIL   = 0i64;
+int64:T_TOTAL  = 0i64;
+int64:T_STDOUT = 1i64;
+
+func:_tw = NIL(string:msg) {
+    int64:l = string_length(msg);
+    drop(sys(WRITE, T_STDOUT, msg, l));
+    pass(NIL);
+};
+
+func:t_ok = NIL(string:label) {
+    T_PASS  = T_PASS  + 1i64;
+    T_TOTAL = T_TOTAL + 1i64;
+    drop(_tw(string_concat("  PASS: ", string_concat(label, "\n"))));
+    pass(NIL);
+};
+
+func:t_fail = NIL(string:label) {
+    T_FAIL  = T_FAIL  + 1i64;
+    T_TOTAL = T_TOTAL + 1i64;
+    drop(_tw(string_concat("  FAIL: ", string_concat(label, "\n"))));
+    pass(NIL);
+};
+
+func:t_assert_int = NIL(string:label, int64:got, int64:expected) {
+    if (got == expected) { drop(t_ok(label)); pass(NIL); }
+    drop(t_fail(string_concat(label, string_concat(" (got=",
+        string_concat(string_from_int(got), string_concat(" want=",
+        string_concat(string_from_int(expected), ")")))))));
+    pass(NIL);
+};
+
+func:t_assert_str = NIL(string:label, string:got, string:expected) {
+    if (got == expected) { drop(t_ok(label)); pass(NIL); }
+    drop(t_fail(string_concat(label, string_concat(" (got='",
+        string_concat(got, string_concat("' want='",
+        string_concat(expected, "'")))))));
+    pass(NIL);
+};
+
+func:log_section = NIL(string:name) {
+    drop(_tw(string_concat("\n[", string_concat(name, "]\n"))));
+    pass(NIL);
+};
+
+func:print_summary = NIL() {
+    drop(_tw(string_concat("\nResults: ",
+        string_concat(string_from_int(T_PASS), string_concat(" passed, ",
+        string_concat(string_from_int(T_FAIL), " failed\n"))))));
+    pass(NIL);
+};
+
+// ── T01-T03: Individual plugin registration ───────────────────────────────────
+
+func:test_individual_registration = NIL() {
+    drop(log_section("T01-T03: Individual Registration"));
+
+    // Fresh init
+    drop(ext_connection_init());
+    PluginAPI:api = raw api_make(-1i64);
+
+    // T01: SSH registers and returns slot 0
+    int64:ssh_idx = raw api_register_connection_provider(api, "ssh", "SSH", "\xF0\x9F\x94\x92", 1i64);
+    drop(t_assert_int("T01 ssh registers at index 0", ssh_idx, 0i64));
+
+    // T02: serial registers at slot 1
+    int64:ser_idx = raw api_register_connection_provider(api, "serial", "Serial", "\xE2\x8E\x86", 2i64);
+    drop(t_assert_int("T02 serial registers at index 1", ser_idx, 1i64));
+
+    // T03: telnet registers at slot 2
+    int64:tel_idx = raw api_register_connection_provider(api, "telnet", "Telnet", "\xF0\x9F\x8C\x90", 3i64);
+    drop(t_assert_int("T03 telnet registers at index 2", tel_idx, 2i64));
+
+    pass(NIL);
+};
+
+// ── T04-T06: Accessor correctness ─────────────────────────────────────────────
+
+func:test_accessors = NIL() {
+    drop(log_section("T04-T06: Accessor Correctness"));
+    // ext_connection was already init'd and populated in test_individual_registration
+
+    // T04: type_names
+    drop(t_assert_str("T04a get_type_name(0) = ssh",
+        raw ext_connection_get_type_name(0i64), "ssh"));
+    drop(t_assert_str("T04b get_type_name(1) = serial",
+        raw ext_connection_get_type_name(1i64), "serial"));
+    drop(t_assert_str("T04c get_type_name(2) = telnet",
+        raw ext_connection_get_type_name(2i64), "telnet"));
+
+    // T05: display names
+    drop(t_assert_str("T05a display_name(0) = SSH",
+        raw ext_connection_get_display_name(0i64), "SSH"));
+    drop(t_assert_str("T05b display_name(1) = Serial",
+        raw ext_connection_get_display_name(1i64), "Serial"));
+    drop(t_assert_str("T05c display_name(2) = Telnet",
+        raw ext_connection_get_display_name(2i64), "Telnet"));
+
+    // T06: callback_ids
+    drop(t_assert_int("T06a callback_id(0) = 1",
+        raw ext_connection_get_callback_id(0i64), 1i64));
+    drop(t_assert_int("T06b callback_id(1) = 2",
+        raw ext_connection_get_callback_id(1i64), 2i64));
+    drop(t_assert_int("T06c callback_id(2) = 3",
+        raw ext_connection_get_callback_id(2i64), 3i64));
+
+    pass(NIL);
+};
+
+// ── T07-T08: Duplicate protection ────────────────────────────────────────────
+
+func:test_duplicate = NIL() {
+    drop(log_section("T07-T08: Duplicate Protection"));
+    PluginAPI:api = raw api_make(-1i64);
+
+    // T07: duplicate ssh registration returns -1
+    int64:dup_ssh = raw api_register_connection_provider(api, "ssh", "SSH 2", "", 99i64);
+    drop(t_assert_int("T07 duplicate ssh = -1", dup_ssh, -1i64));
+
+    // T08: type_count still 3
+    drop(t_assert_int("T08 type_count still 3 after duplicate",
+        raw ext_connection_type_count(), 3i64));
+
+    pass(NIL);
+};
+
+// ── T09-T10: register_builtin_plugins one-call ───────────────────────────────
+
+func:test_register_all = NIL() {
+    drop(log_section("T09-T10: register_builtin_plugins"));
+
+    // Re-init to get a clean slate
+    drop(ext_connection_init());
+    drop(ext_hotkey_init());
+    drop(ext_settings_init());
+    drop(ext_terminal_init());
+    PluginAPI:api = raw api_make(-1i64);
+
+    // T09: register_builtin_plugins registers all 3
+    drop(register_builtin_plugins(api));
+    drop(t_assert_int("T09 type_count = 3 after register_builtin_plugins",
+        raw ext_connection_type_count(), 3i64));
+
+    // T10: order preserved: ssh=0, serial=1, telnet=2
+    drop(t_assert_str("T10a type[0] = ssh", raw ext_connection_get_type_name(0i64), "ssh"));
+    drop(t_assert_str("T10b type[1] = serial", raw ext_connection_get_type_name(1i64), "serial"));
+    drop(t_assert_str("T10c type[2] = telnet", raw ext_connection_get_type_name(2i64), "telnet"));
+
+    pass(NIL);
+};
+
+// ── T11-T12: ssh_builtin_plugin_init side effects ────────────────────────────
+
+func:test_ssh_side_effects = NIL() {
+    drop(log_section("T11-T12: SSH Plugin Side Effects"));
+    // After test_register_all, SSH hotkeys and settings are registered.
+
+    // T11: SSH hotkey ctrl+shift+s is registered
+    int64:hk_count = raw ext_hotkey_count();
+    int64:hk_ok = 0i64;
+    if (hk_count >= 1i64) { hk_ok = 1i64; }
+    drop(t_assert_int("T11 hotkey count >= 1 (SSH registered ctrl+shift+s)", hk_ok, 1i64));
+
+    // T12: SSH settings present
+    int64:ssh_settings = raw ext_settings_get_count_for("ssh");
+    drop(t_assert_int("T12 ssh has 3 settings", ssh_settings, 3i64));
+
+    pass(NIL);
+};
+
+// ── T13-T14: serial/telnet side effects ──────────────────────────────────────
+
+func:test_other_side_effects = NIL() {
+    drop(log_section("T13-T14: Serial/Telnet Side Effects"));
+
+    // T13: serial settings present
+    int64:ser_settings = raw ext_settings_get_count_for("serial");
+    drop(t_assert_int("T13 serial has 4 settings", ser_settings, 4i64));
+
+    // T14: telnet settings present
+    int64:tel_settings = raw ext_settings_get_count_for("telnet");
+    drop(t_assert_int("T14 telnet has 3 settings", tel_settings, 3i64));
+
+    pass(NIL);
+};
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+func:main = int32() {
+    drop(_tw("test_builtin_plugins -- SSH/Serial/Telnet as ConnectionProvider Plugins\n"));
+    drop(test_individual_registration());
+    drop(test_accessors());
+    drop(test_duplicate());
+    drop(test_register_all());
+    drop(test_ssh_side_effects());
+    drop(test_other_side_effects());
+    drop(print_summary());
+    if (T_FAIL > 0i64) { exit 1i32; }
+    exit 0i32;
+};

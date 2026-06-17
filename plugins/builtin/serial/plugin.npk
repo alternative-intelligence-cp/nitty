@@ -1,0 +1,56 @@
+// plugins/builtin/serial/plugin.npk — Serial built-in ConnectionProvider plugin
+//
+// v0.10.3: Refactor SSH/Serial/Telnet as ConnectionProvider plugins
+//
+// Registers serial port connections as a ConnectionProvider through the
+// PluginAPI so the connection manager UI can discover it dynamically.
+//
+// Also registers a TerminalDecorator for serial output mode handling
+// (hex dump mode, text mode filtering). The decorator callback_id is
+// matched in serial_session.npk's on_data_received dispatch (v0.10.4).
+//
+// Public API:
+//   serial_builtin_plugin_init(api)   → NIL
+
+use "../../../src/plugin/api.npk".*;
+use "../../../src/plugin/ext_connection.npk".*;
+use "../../../src/plugin/ext_terminal.npk".*;
+use "../../../src/plugin/ext_settings.npk".*;
+use "../../../src/plugin/ext_hotkey.npk".*;
+
+// ── Callback IDs ──────────────────────────────────────────────────────────────
+
+pub fixed int64:SERIAL_CB_CREATE_CONNECTION  = 2i64;
+pub fixed int64:SERIAL_CB_DECORATOR          = 20i64;
+pub fixed int64:SERIAL_CB_HOTKEY_BREAK       = 21i64;
+pub fixed int64:SERIAL_CB_HOTKEY_HEX_TOGGLE  = 22i64;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+pub func:serial_builtin_plugin_init = NIL(PluginAPI:api) {
+    // Register Serial as a ConnectionProvider
+    // type_name="serial", display_name="Serial", icon="⎆" (U+2386)
+    drop(api_register_connection_provider(api, "serial", "Serial", "\xE2\x8E\x86",
+        SERIAL_CB_CREATE_CONNECTION));
+
+    // Register TerminalDecorator for serial output mode (hex/text filtering)
+    drop(api_register_terminal_decorator(api, SERIAL_CB_DECORATOR));
+
+    // Register serial hotkeys
+    drop(api_register_hotkey(api, "serial.send_break",
+        "ctrl+shift+b", "Send Serial BREAK Signal", SERIAL_CB_HOTKEY_BREAK));
+    drop(api_register_hotkey(api, "serial.toggle_hex",
+        "ctrl+shift+h", "Toggle Serial Hex Display", SERIAL_CB_HOTKEY_HEX_TOGGLE));
+
+    // Register serial settings
+    drop(api_register_setting(api, "serial", "serial.default_baud",
+        "Default Baud Rate", "int", "115200"));
+    drop(api_register_setting(api, "serial", "serial.default_data_bits",
+        "Default Data Bits", "int", "8"));
+    drop(api_register_setting(api, "serial", "serial.default_parity",
+        "Default Parity", "string", "none"));
+    drop(api_register_setting(api, "serial", "serial.default_stop_bits",
+        "Default Stop Bits", "int", "1"));
+
+    pass(NIL);
+};

@@ -3,6 +3,11 @@
 // Owns the GTK4 sidebar widget lifecycle. Polls for button/list events each
 // frame and dispatches them to the appropriate action (connect, edit, import, etc.)
 //
+// v0.10.3: Imports ext_connection to expose provider query API.
+//          connection_manager_get_provider_count/type/display_name/icon let
+//          the UI populate connection-type lists dynamically from registered
+//          ConnectionProvider plugins instead of a hard-coded enum.
+//
 // Usage (called from app.npk):
 //   drop(cm_init());         // load profile store, create sidebar
 //   drop(cm_init_ui());      // attach sidebar to window (call after window created)
@@ -18,6 +23,7 @@ use "/home/randy/Workspace/REPOS/nitty/src/telnet/telnet_session.npk".*;        
 use "/home/randy/Workspace/REPOS/nitty/src/serial/serial_port.npk".*;              // v0.9.3
 use "/home/randy/Workspace/REPOS/nitty/src/serial/serial_session.npk".*;           // v0.9.3
 use "/home/randy/Workspace/REPOS/nitty/src/gui/profile_editor.npk".*;              // v0.9.3 (moved import here)
+use "/home/randy/Workspace/REPOS/nitty/src/plugin/ext_connection.npk".*;           // v0.10.3
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
 
 // ── Module state ──────────────────────────────────────────────────────────────
@@ -593,4 +599,34 @@ func:_cm_delete_profile = NIL(int64:slot) {
     }
     g_prof_count = g_prof_count - 1i64;
     pass(NIL);
+};
+
+// ── Provider query API (v0.10.3) ──────────────────────────────────────────────
+// Delegate to ext_connection registry so UI can list types dynamically.
+
+/// Number of registered ConnectionProvider plugins.
+/// Returns 0 if ext_connection has not been initialized yet.
+pub func:connection_manager_get_provider_count = int64() {
+    pass(raw ext_connection_type_count());
+};
+
+/// Get the type_name of the i-th registered ConnectionProvider.
+/// Returns "" if i is out of range.
+pub func:connection_manager_get_provider_type = string(int64:i) {
+    if (i < 0i64 || i >= raw ext_connection_type_count()) { pass(""); }
+    pass(raw ext_connection_get_type_name(i));
+};
+
+/// Get the display name of the i-th registered ConnectionProvider.
+/// Returns "" if i is out of range.
+pub func:connection_manager_get_provider_display_name = string(int64:i) {
+    if (i < 0i64 || i >= raw ext_connection_type_count()) { pass(""); }
+    pass(raw ext_connection_get_display_name(i));
+};
+
+/// Get the icon of the i-th registered ConnectionProvider.
+/// Returns "" if i is out of range.
+pub func:connection_manager_get_provider_icon = string(int64:i) {
+    if (i < 0i64 || i >= raw ext_connection_type_count()) { pass(""); }
+    pass(raw ext_connection_get_icon(i));
 };

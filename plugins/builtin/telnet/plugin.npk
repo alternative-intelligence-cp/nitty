@@ -1,0 +1,43 @@
+// plugins/builtin/telnet/plugin.npk — Telnet built-in ConnectionProvider plugin
+//
+// v0.10.3: Refactor SSH/Serial/Telnet as ConnectionProvider plugins
+//
+// Registers telnet connections as a ConnectionProvider through the PluginAPI.
+//
+// Also registers a TerminalDecorator for Telnet IAC sequence stripping.
+// The decorator callback is matched in telnet_session.npk (v0.10.4).
+//
+// Public API:
+//   telnet_builtin_plugin_init(api)   → NIL
+
+use "../../../src/plugin/api.npk".*;
+use "../../../src/plugin/ext_connection.npk".*;
+use "../../../src/plugin/ext_terminal.npk".*;
+use "../../../src/plugin/ext_settings.npk".*;
+
+// ── Callback IDs ──────────────────────────────────────────────────────────────
+
+pub fixed int64:TELNET_CB_CREATE_CONNECTION = 3i64;
+pub fixed int64:TELNET_CB_DECORATOR         = 30i64;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+pub func:telnet_builtin_plugin_init = NIL(PluginAPI:api) {
+    // Register Telnet as a ConnectionProvider
+    // type_name="telnet", display_name="Telnet", icon="🌐" (U+1F310)
+    drop(api_register_connection_provider(api, "telnet", "Telnet", "\xF0\x9F\x8C\x90",
+        TELNET_CB_CREATE_CONNECTION));
+
+    // Register TerminalDecorator for Telnet IAC sequence stripping
+    drop(api_register_terminal_decorator(api, TELNET_CB_DECORATOR));
+
+    // Register telnet settings
+    drop(api_register_setting(api, "telnet", "telnet.default_port",
+        "Default Port", "int", "23"));
+    drop(api_register_setting(api, "telnet", "telnet.auto_login",
+        "Enable Auto-Login", "bool", "0"));
+    drop(api_register_setting(api, "telnet", "telnet.negotiate_echo",
+        "Negotiate Echo", "bool", "1"));
+
+    pass(NIL);
+};

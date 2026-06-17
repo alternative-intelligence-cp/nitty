@@ -9,7 +9,12 @@
 // Call plugin_manager_init() from app_init() after config_load().
 // Call plugin_manager_shutdown() from app_shutdown() before session teardown.
 //
+// v0.10.3: Built-in plugin registration — SSH, serial, and telnet register
+// themselves as ConnectionProvider plugins before external plugin discovery.
+//
 // Startup sequence:
+//   0. ext_connection_init()       — init ConnectionProvider registry
+//   0b. register_builtin_plugins() — SSH/serial/telnet register as providers
 //   1. plugin_registry_init()  — prepare registry arrays
 //   2. manifest_init()         — prepare manifest arrays
 //   3. discovery_scan_all()    — find plugin.yaml files on disk
@@ -34,6 +39,7 @@ use "./ext_terminal.npk".*;
 use "./ext_connection.npk".*;
 use "./event_bus.npk".*;
 use "./api.npk".*;
+use "../../plugins/builtin/register.npk".*;
 
 // fd 1 = stdout
 int64:PM_STDOUT = 1i64;
@@ -47,6 +53,13 @@ func:_pm_log = NIL(string:msg) {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 pub func:plugin_manager_init = NIL() {
+    // 0. Init ConnectionProvider registry and register built-in plugins
+    //    (SSH, serial, telnet) so they are available before external plugins.
+    drop(ext_connection_init());
+    PluginAPI:builtin_api = raw api_make(-1i64);   // slot -1 = built-in (not in registry)
+    drop(register_builtin_plugins(builtin_api));
+    drop(_pm_log("[plugin] built-in providers registered (ssh, serial, telnet)\n"));
+
     // 1. Init subsystems
     drop(plugin_registry_init());
     drop(manifest_init());

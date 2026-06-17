@@ -1,0 +1,57 @@
+// plugins/builtin/ssh/plugin.npk — SSH built-in ConnectionProvider plugin
+//
+// v0.10.3: Refactor SSH/Serial/Telnet as ConnectionProvider plugins
+//
+// Registers SSH as a ConnectionProvider through the PluginAPI so the
+// connection manager UI can discover it dynamically via ext_connection.
+//
+// This is a built-in plugin: always present, compiled into the Nitty binary,
+// registered before any external plugins are loaded.
+//
+// What this does at init time:
+//   - Register ConnectionProvider("ssh", "SSH", "🔒", callback_id=1)
+//   - Register hotkey Ctrl+Shift+S → "ssh.connection_manager" (callback_id=10)
+//   - Register setting "ssh.known_hosts_path"
+//
+// The underlying SSH session code (ssh_session.npk, ssh_auth.npk, etc.)
+// is unchanged — this registration layer makes SSH visible through the
+// plugin API without moving the implementation.
+//
+// Public API:
+//   ssh_builtin_plugin_init(api)   → NIL
+
+use "../../../src/plugin/api.npk".*;
+use "../../../src/plugin/ext_connection.npk".*;
+use "../../../src/plugin/ext_hotkey.npk".*;
+use "../../../src/plugin/ext_settings.npk".*;
+
+// ── Callback IDs ──────────────────────────────────────────────────────────────
+
+// Opaque callback IDs for SSH plugin dispatch.
+// These are matched by the connection manager when it needs to create/destroy
+// SSH connections (v0.10.4 dynamic dispatch).
+pub fixed int64:SSH_CB_CREATE_CONNECTION = 1i64;
+pub fixed int64:SSH_CB_CONNECTION_MANAGER = 10i64;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+pub func:ssh_builtin_plugin_init = NIL(PluginAPI:api) {
+    // Register SSH as a ConnectionProvider
+    // type_name="ssh", display_name="SSH", icon="🔒", callback_id=SSH_CB_CREATE_CONNECTION
+    drop(api_register_connection_provider(api, "ssh", "SSH", "\xF0\x9F\x94\x92",
+        SSH_CB_CREATE_CONNECTION));
+
+    // Register Ctrl+Shift+S hotkey → open SSH connection manager
+    drop(api_register_hotkey(api, "ssh.connection_manager",
+        "ctrl+shift+s", "Open SSH Connection Manager", SSH_CB_CONNECTION_MANAGER));
+
+    // Register SSH settings
+    drop(api_register_setting(api, "ssh", "ssh.known_hosts_path",
+        "Known Hosts File", "string", "~/.ssh/known_hosts"));
+    drop(api_register_setting(api, "ssh", "ssh.connect_timeout",
+        "Connection Timeout (s)", "int", "10"));
+    drop(api_register_setting(api, "ssh", "ssh.keepalive_interval",
+        "Keepalive Interval (s)", "int", "30"));
+
+    pass(NIL);
+};
