@@ -36,7 +36,6 @@ int64:g_reg_initialized = 0i64;
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 pub func:plugin_registry_init = NIL() {
-    if (g_reg_initialized == 1i64) { pass(NIL); }
     int64:i = 0i64;
     while (i < PLUGIN_MAX_SLOTS) {
         g_reg_name[i]        = "";

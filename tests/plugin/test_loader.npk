@@ -19,6 +19,8 @@ int64:STDOUT = 1i64;
 int64:g_pass = 0i64;
 int64:g_fail = 0i64;
 
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
 func:t_ok = NIL(string:name) {
     g_pass = g_pass + 1i64;
     string:msg = string_concat("  PASS: ", string_concat(name, "\n"));
@@ -47,7 +49,7 @@ func:t_assert_int = NIL(string:name, int64:got, int64:expected) {
 
 func:t_assert_str = NIL(string:name, string:got, string:expected) {
     if (got == expected) { drop(t_ok(name)); }
-    if (string_equals(got, expected) == 0) {
+    if (got != expected) {
         drop(t_fail(name, string_concat("got '", string_concat(got,
             string_concat("' expected '", string_concat(expected, "'"))))));
     }
@@ -87,18 +89,9 @@ func:test_load = NIL() {
     drop(plugin_registry_init());
     drop(manifest_init());
 
-    // Register "test-plugin-a" in the registry
-    int64:reg = raw plugin_register("test-plugin-a");
-
-    // Parse a fixture manifest into slot 0 and override name via manifest_find
-    // Since we can't set manifest name directly, we need a manifest.
-    // We'll parse the hello-plugin fixture and then re-register with its name.
-    drop(plugin_registry_init());
-    drop(manifest_init());
-
     // Parse hello-plugin
-    int64:rc = raw manifest_parse(0i64, "tests/plugin/fixtures/hello-plugin/plugin.yaml");
-    int64:v  = raw manifest_validate(0i64);
+    drop(manifest_parse(0i64, "tests/plugin/fixtures/hello-plugin/plugin.yaml"));
+    drop(manifest_validate(0i64));
 
     // Register "hello-plugin" in registry (simulates plugin being compiled in)
     int64:reg2 = raw plugin_register("hello-plugin");
@@ -113,7 +106,7 @@ func:test_load = NIL() {
     // T06: plugin_load for unknown plugin (not in registry) returns -1
     drop(plugin_registry_init());
     drop(manifest_init());
-    int64:rc2 = raw manifest_parse(0i64, "tests/plugin/fixtures/hello-plugin/plugin.yaml");
+    drop(manifest_parse(0i64, "tests/plugin/fixtures/hello-plugin/plugin.yaml"));
     // Don't register — simulate not compiled in
     int64:load_fail = raw plugin_load(0i64);
     drop(t_assert_int("T06 plugin_load for unregistered plugin returns -1", load_fail, -1i64));
@@ -127,12 +120,12 @@ func:test_init_one = NIL() {
     drop(plugin_registry_init());
     drop(manifest_init());
 
-    int64:rc = raw manifest_parse(0i64, "tests/plugin/fixtures/hello-plugin/plugin.yaml");
-    int64:v  = raw manifest_validate(0i64);
+    drop(manifest_parse(0i64, "tests/plugin/fixtures/hello-plugin/plugin.yaml"));
+    drop(manifest_validate(0i64));
 
     // Register and load
     int64:reg = raw plugin_register("hello-plugin");
-    int64:ld  = raw plugin_load(0i64);
+    drop(plugin_load(0i64));
 
     // T07: plugin_init_one transitions to ACTIVE
     int64:init_ok = raw plugin_init_one(0i64);
@@ -155,8 +148,8 @@ func:test_errors = NIL() {
     drop(plugin_registry_init());
     drop(manifest_init());
 
-    int64:rc = raw manifest_parse(0i64, "tests/plugin/fixtures/hello-plugin/plugin.yaml");
-    int64:v  = raw manifest_validate(0i64);
+    drop(manifest_parse(0i64, "tests/plugin/fixtures/hello-plugin/plugin.yaml"));
+    drop(manifest_validate(0i64));
     int64:reg = raw plugin_register("hello-plugin");
 
     // T10: plugin_mark_error sets ERROR state and sets error message
@@ -229,6 +222,6 @@ pub func:main = int32() {
     drop(test_manager_api());
     drop(print_summary());
 
-    if (g_fail == 0i64) { pass(0i32); }
-    pass(1i32);
+    if (g_fail == 0i64) { exit 0i32; }
+    exit 1i32;
 };
