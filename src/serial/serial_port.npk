@@ -24,8 +24,8 @@
 //   serial_get_modem_status(fd) → int64        — bitmask (CTS/DSR/DCD/RI)
 //   serial_modem_cts/dsr/dcd/ri(fd) → int64   — individual line states
 
-use "../../src/serial/baud_rate.npk".*;
-use "../../src/serial/serial_ffi.npk".*;
+use "baud_rate.npk".*;
+use "serial_ffi.npk".*;
 
 // ── Parity constants ─────────────────────────────────────────────────────────
 
@@ -84,6 +84,20 @@ pub func:serial_open = int64(SerialConfig:scfg) {
         scfg.parity,
         scfg.stop_bits,
         scfg.flow_control
+    );
+    pass(fd);
+};
+
+/// Convenience: open a serial port with 8N1 defaults, given only device and baud rate.
+/// Returns fd (≥0) on success, -1 on failure.
+pub func:serial_open_simple = int64(string:dev, int64:baud) {
+    int64:fd = nitty_serial_open(
+        dev,
+        baud,
+        8i64,                  // data_bits = 8
+        SERIAL_PARITY_NONE,    // parity = none
+        1i64,                  // stop_bits = 1
+        SERIAL_FLOW_NONE       // flow_control = none
     );
     pass(fd);
 };

@@ -15,6 +15,9 @@ use "/home/randy/Workspace/REPOS/nitty/src/ssh/ssh_config_parser.npk".*;
 use "/home/randy/Workspace/REPOS/nitty/src/ssh/ssh_session.npk".*;
 use "/home/randy/Workspace/REPOS/nitty/src/ssh/ssh_vault.npk".{vault_is_unlocked, vault_get_password}; // v0.8.6
 use "/home/randy/Workspace/REPOS/nitty/src/telnet/telnet_session.npk".*;           // v0.9.2
+use "/home/randy/Workspace/REPOS/nitty/src/serial/serial_port.npk".*;              // v0.9.3
+use "/home/randy/Workspace/REPOS/nitty/src/serial/serial_session.npk".*;           // v0.9.3
+use "/home/randy/Workspace/REPOS/nitty/src/gui/profile_editor.npk".*;              // v0.9.3 (moved import here)
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
 
 // ── Module state ──────────────────────────────────────────────────────────────
@@ -153,6 +156,18 @@ pub func:cm_rebuild_list = NIL() {
                             string:tp_str = int_to_string(tp);
                             row_label = string_concat(pname, string_concat(
                                 " — telnet://", string_concat(th, string_concat(":", tp_str))));
+                        }
+                    }
+                    // v0.9.3: Serial label
+                    if (ptype == PROF_TYPE_SERIAL) {
+                        string:sd = raw profile_get_serial_dev(j);
+                        int64:sb  = raw profile_get_serial_baud(j);
+                        if (string_length(sd) > 0i64) {
+                            string:sb_str = int_to_string(sb);
+                            row_label = string_concat(pname, string_concat(
+                                " — serial://", string_concat(sd, string_concat(" @", sb_str))));
+                        } else {
+                            row_label = string_concat(pname, " — serial");
                         }
                     }
                     drop(nitty_gtk4_list_box_append(lb, row_label));
@@ -300,9 +315,63 @@ func:_parse_quick_connect = NIL(string:text) {
 ///   Telnet: "telnet:host:port" | "telnet:host"                   (v0.9.2)
 func:_cm_quick_connect = NIL(string:text) {
     if (string_length(text) == 0i64) { pass(NIL); }
+    int64:tlen = string_length(text);
+
+    // v0.9.3: Check for "serial:" prefix  e.g. "serial:/dev/ttyUSB0:115200"
+    int64:ser_prefix = 0i64;
+    if (tlen >= 7i64) {
+        if (string_substring(text, 0i64, 7i64) == "serial:") {
+            ser_prefix = 1i64;
+        }
+    }
+    if (ser_prefix != 0i64) {
+        // Parse "serial:/dev/ttyUSB0" or "serial:/dev/ttyUSB0:115200"
+        string:ser_rest = string_substring(text, 7i64, tlen);
+        string:ser_dev  = ser_rest;
+        int64:ser_baud  = 115200i64;
+        // Find last ':' for optional baud suffix
+        int64:sr_len = string_length(ser_rest);
+        int64:sc_pos = -1i64;
+        int64:sci = 0i64;
+        while (sci < sr_len) {
+            if (string_substring(ser_rest, sci, sci + 1i64) == ":") { sc_pos = sci; }
+            sci = sci + 1i64;
+        }
+        if (sc_pos > 0i64) {   // > 0 so we don't split an empty device
+            ser_dev = string_substring(ser_rest, 0i64, sc_pos);
+            string:baud_str = string_substring(ser_rest, sc_pos + 1i64, sr_len);
+            int64:bv = 0i64;
+            int64:bi = 0i64;
+            int64:blen = string_length(baud_str);
+            while (bi < blen) {
+                string:bc = string_substring(baud_str, bi, bi + 1i64);
+                if (bc == "0") { bv = bv * 10i64; }
+                if (bc == "1") { bv = bv * 10i64 + 1i64; }
+                if (bc == "2") { bv = bv * 10i64 + 2i64; }
+                if (bc == "3") { bv = bv * 10i64 + 3i64; }
+                if (bc == "4") { bv = bv * 10i64 + 4i64; }
+                if (bc == "5") { bv = bv * 10i64 + 5i64; }
+                if (bc == "6") { bv = bv * 10i64 + 6i64; }
+                if (bc == "7") { bv = bv * 10i64 + 7i64; }
+                if (bc == "8") { bv = bv * 10i64 + 8i64; }
+                if (bc == "9") { bv = bv * 10i64 + 9i64; }
+                bi = bi + 1i64;
+            }
+            if (bv > 0i64) { ser_baud = bv; }
+        }
+        if (string_length(ser_dev) > 0i64) {
+            int64:ser_fd = raw serial_open_simple(ser_dev, ser_baud);
+            if (ser_fd < 0i64) {
+                drop(nitty_gtk4_show_notification(
+                    string_concat("Serial: could not open ", ser_dev)));
+            } else {
+                drop(serial_session_open(0i64, ser_fd, ser_dev, ser_baud));
+            }
+        }
+        pass(NIL);
+    }
 
     // v0.9.2: Check for "telnet:" prefix
-    int64:tlen = string_length(text);
     int64:tel_prefix = 0i64;
     if (tlen >= 7i64) {
         if (string_substring(text, 0i64, 7i64) == "telnet:") {
@@ -406,10 +475,31 @@ func:_cm_do_connect = NIL(int64:slot) {
         pass(NIL);
     }
 
+    // v0.9.3: Serial profile
+    if (ptype == PROF_TYPE_SERIAL) {
+        string:ser_dev  = raw profile_get_serial_dev(slot);
+        int64:ser_baud  = raw profile_get_serial_baud(slot);
+        if (string_length(ser_dev) == 0i64) {
+            drop(nitty_gtk4_show_notification("Serial: no device configured"));
+            pass(NIL);
+        }
+        if (ser_baud <= 0i64) { ser_baud = 115200i64; }
+
+        int64:ser_fd = raw serial_open_simple(ser_dev, ser_baud);
+        if (ser_fd < 0i64) {
+            drop(nitty_gtk4_show_notification(
+                string_concat("Serial: could not open ", ser_dev)));
+            pass(NIL);
+        }
+        drop(serial_session_open(0i64, ser_fd, ser_dev, ser_baud));
+        drop(prof_add_recent(slot));
+        pass(NIL);
+    }
+
     pass(NIL);
 };
 
-/// Remove a profile slot (shift remaining profiles down).
+/// Remove a profile slot (shift remaining profiles down). (v0.9.3: fixed)
 func:_cm_delete_profile = NIL(int64:slot) {
     int64:count = raw profile_count();
     if (slot < 0i64 || slot >= count) { pass(NIL); }
@@ -418,30 +508,53 @@ func:_cm_delete_profile = NIL(int64:slot) {
     int64:i = slot;
     while (i < count - 1i64) {
         int64:next = i + 1i64;
-        g_prof_name[i]           = g_prof_name[next];
-        g_prof_type[i]           = g_prof_type[next];
-        g_prof_is_default[i]     = g_prof_is_default[next];
-        g_prof_inherits[i]       = g_prof_inherits[next];
-        g_prof_group[i]          = g_prof_group[next];
-        g_prof_shell_path[i]     = g_prof_shell_path[next];
-        g_prof_working_dir[i]    = g_prof_working_dir[next];
-        g_prof_startup_cmd[i]    = g_prof_startup_cmd[next];
-        g_prof_login_shell[i]    = g_prof_login_shell[next];
-        g_prof_ssh_host[i]       = g_prof_ssh_host[next];
-        g_prof_ssh_port[i]       = g_prof_ssh_port[next];
-        g_prof_ssh_user[i]       = g_prof_ssh_user[next];
-        g_prof_ssh_auth[i]       = g_prof_ssh_auth[next];
-        g_prof_ssh_key_path[i]   = g_prof_ssh_key_path[next];
-        g_prof_keepalive[i]      = g_prof_keepalive[next];
-        g_prof_font_family[i]    = g_prof_font_family[next];
-        g_prof_font_size[i]      = g_prof_font_size[next];
-        g_prof_color_scheme[i]   = g_prof_color_scheme[next];
-        g_prof_cursor_style[i]   = g_prof_cursor_style[next];
-        g_prof_tab_title[i]      = g_prof_tab_title[next];
-        g_prof_env_count[i]      = g_prof_env_count[next];
-        // v0.8.6: shift new feature-flag arrays
-        g_prof_x11_forwarding[i] = g_prof_x11_forwarding[next];
-        g_prof_ssh_compress[i]   = g_prof_ssh_compress[next];
+        g_prof_name[i]             = g_prof_name[next];
+        g_prof_type[i]             = g_prof_type[next];
+        g_prof_is_default[i]       = g_prof_is_default[next];
+        g_prof_inherits[i]         = g_prof_inherits[next];
+        g_prof_group[i]            = g_prof_group[next];
+        g_prof_shell_path[i]       = g_prof_shell_path[next];
+        g_prof_working_dir[i]      = g_prof_working_dir[next];
+        g_prof_startup_cmd[i]      = g_prof_startup_cmd[next];
+        g_prof_login_shell[i]      = g_prof_login_shell[next];
+        // SSH
+        g_prof_ssh_host[i]         = g_prof_ssh_host[next];
+        g_prof_ssh_port[i]         = g_prof_ssh_port[next];
+        g_prof_ssh_user[i]         = g_prof_ssh_user[next];
+        g_prof_ssh_auth[i]         = g_prof_ssh_auth[next];
+        g_prof_ssh_key_path[i]     = g_prof_ssh_key_path[next];
+        g_prof_ssh_pass[i]         = g_prof_ssh_pass[next];
+        g_prof_keepalive[i]        = g_prof_keepalive[next];
+        // SSH port forwarding + jump (v0.8.4)
+        g_prof_ssh_local_fwd[i]    = g_prof_ssh_local_fwd[next];
+        g_prof_ssh_remote_fwd[i]   = g_prof_ssh_remote_fwd[next];
+        g_prof_ssh_dynamic_port[i] = g_prof_ssh_dynamic_port[next];
+        g_prof_ssh_jump_host[i]    = g_prof_ssh_jump_host[next];
+        g_prof_ssh_jump_port[i]    = g_prof_ssh_jump_port[next];
+        g_prof_ssh_jump_user[i]    = g_prof_ssh_jump_user[next];
+        // SSH feature flags (v0.8.6)
+        g_prof_x11_forwarding[i]   = g_prof_x11_forwarding[next];
+        g_prof_ssh_compress[i]     = g_prof_ssh_compress[next];
+        // Serial (v0.9.3)
+        g_prof_serial_dev[i]       = g_prof_serial_dev[next];
+        g_prof_serial_baud[i]      = g_prof_serial_baud[next];
+        // Telnet (v0.9.3)
+        g_prof_telnet_host[i]      = g_prof_telnet_host[next];
+        g_prof_telnet_port[i]      = g_prof_telnet_port[next];
+        // Appearance
+        g_prof_font_family[i]      = g_prof_font_family[next];
+        g_prof_font_size[i]        = g_prof_font_size[next];
+        g_prof_color_scheme[i]     = g_prof_color_scheme[next];
+        g_prof_cursor_style[i]     = g_prof_cursor_style[next];
+        g_prof_tab_title[i]        = g_prof_tab_title[next];
+        // Per-profile env vars — shift the 8-slot sub-array
+        g_prof_env_count[i]        = g_prof_env_count[next];
+        int64:bi = 0i64;
+        while (bi < PROF_ENV_PER_SLOT) {
+            g_prof_env_key[i * PROF_ENV_PER_SLOT + bi] = g_prof_env_key[next * PROF_ENV_PER_SLOT + bi];
+            g_prof_env_val[i * PROF_ENV_PER_SLOT + bi] = g_prof_env_val[next * PROF_ENV_PER_SLOT + bi];
+            bi = bi + 1i64;
+        }
         i = i + 1i64;
     }
     g_prof_count = g_prof_count - 1i64;

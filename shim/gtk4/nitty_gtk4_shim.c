@@ -3695,7 +3695,273 @@ const char *nitty_gtk4_profile_editor_get_user(void)     { return g_pe_user; }
 const char *nitty_gtk4_profile_editor_get_auth(void)     { return g_pe_auth; }
 const char *nitty_gtk4_profile_editor_get_key_path(void) { return g_pe_key_path; }
 
-/* ═══════════════════════════════════════════════════════════════════════════ */
+/* ── Profile Editor v2 — multi-type (v0.9.3) ───────────────────────────── */
+
+/* Result storage for v2 — new fields */
+static int64_t g_pe2_type         = 1;      /* 0=local 1=ssh 2=serial 3=telnet */
+static char    g_pe2_serial_dev[512]  = "";
+static int64_t g_pe2_serial_baud  = 115200;
+static char    g_pe2_telnet_host[512] = "";
+static int64_t g_pe2_telnet_port  = 23;
+
+/* Baud-rate options for the Serial section dropdown */
+static const char *const PE2_BAUD_LABELS[] = {
+    "1200", "2400", "4800", "9600", "19200",
+    "38400", "57600", "115200", "230400", "460800", "921600", NULL
+};
+static const int64_t PE2_BAUD_VALUES[] = {
+    1200, 2400, 4800, 9600, 19200,
+    38400, 57600, 115200, 230400, 460800, 921600
+};
+#define PE2_BAUD_COUNT 11
+
+/* Auth-method options */
+static const char *const PE2_AUTH_LABELS[] = {
+    "auto (try all)", "SSH agent", "Public key", "Keyboard-interactive", "Password", NULL
+};
+static const char *const PE2_AUTH_VALUES[] = {
+    "", "agent", "pubkey", "kbdint", "password"
+};
+#define PE2_AUTH_COUNT 5
+
+typedef struct {
+    GMainLoop  *loop;
+    int         accepted;
+    /* common */
+    GtkWidget  *w_name;
+    GtkWidget  *w_group;
+    GtkWidget  *w_type;          /* GtkDropDown (type selector) */
+    /* SSH section */
+    GtkWidget  *ssh_box;
+    GtkWidget  *w_ssh_host;
+    GtkWidget  *w_ssh_port;
+    GtkWidget  *w_ssh_user;
+    GtkWidget  *w_ssh_auth;      /* GtkDropDown */
+    GtkWidget  *w_ssh_key;
+    /* Serial section */
+    GtkWidget  *ser_box;
+    GtkWidget  *w_ser_dev;
+    GtkWidget  *w_ser_baud;      /* GtkDropDown */
+    /* Telnet section */
+    GtkWidget  *tel_box;
+    GtkWidget  *w_tel_host;
+    GtkWidget  *w_tel_port;
+} PE2State;
+
+static void pe2_update_section_visibility(PE2State *s) {
+    int sel = (int)gtk_drop_down_get_selected(GTK_DROP_DOWN(s->w_type));
+    /* 0=local 1=ssh 2=serial 3=telnet */
+    gtk_widget_set_visible(s->ssh_box, sel == 1 ? TRUE : FALSE);
+    gtk_widget_set_visible(s->ser_box, sel == 2 ? TRUE : FALSE);
+    gtk_widget_set_visible(s->tel_box, sel == 3 ? TRUE : FALSE);
+}
+
+static void on_pe2_type_changed(GtkDropDown *dd, GParamSpec *pspec, gpointer data) {
+    (void)dd; (void)pspec;
+    pe2_update_section_visibility((PE2State *)data);
+}
+
+static void on_pe2_save(GtkButton *btn, gpointer data) {
+    (void)btn;
+    PE2State *s = (PE2State *)data;
+    s->accepted = 1;
+    g_main_loop_quit(s->loop);
+}
+static void on_pe2_cancel(GtkButton *btn, gpointer data) {
+    (void)btn;
+    PE2State *s = (PE2State *)data;
+    s->accepted = 0;
+    g_main_loop_quit(s->loop);
+}
+
+/* Helper: create a labelled GtkEntry row in a parent box */
+static GtkWidget *pe2_entry_row(GtkWidget *parent, const char *label_txt, const char *init) {
+    gtk_box_append(GTK_BOX(parent), gtk_label_new(label_txt));
+    GtkWidget *e = gtk_entry_new();
+    if (init && init[0])
+        gtk_entry_buffer_set_text(gtk_entry_get_buffer(GTK_ENTRY(e)), init, -1);
+    gtk_box_append(GTK_BOX(parent), e);
+    return e;
+}
+
+/* Helper: create a GtkDropDown from a NULL-terminated string array */
+static GtkWidget *pe2_dropdown(const char *const *items) {
+    int n = 0;
+    while (items[n]) n++;
+    const char **copy = (const char **)g_malloc0((n + 1) * sizeof(char *));
+    for (int i = 0; i < n; i++) copy[i] = items[i];
+    GtkStringList *sl = gtk_string_list_new(copy);
+    g_free(copy);
+    return gtk_drop_down_new(G_LIST_MODEL(sl), NULL);
+}
+
+int32_t nitty_gtk4_profile_editor_open_v2(
+        const char *name,       const char *group,
+        int64_t     conn_type,
+        const char *ssh_host,   int64_t ssh_port,
+        const char *ssh_user,   const char *ssh_auth,  const char *ssh_key,
+        const char *serial_dev, int64_t serial_baud,
+        const char *telnet_host, int64_t telnet_port)
+{
+    PE2State state;
+    memset(&state, 0, sizeof(state));
+    state.loop     = g_main_loop_new(NULL, FALSE);
+    state.accepted = 0;
+
+    /* Clamp conn_type */
+    if (conn_type < 0 || conn_type > 3) conn_type = 1;
+
+    GtkWidget *dialog = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(dialog),
+        (name && name[0]) ? "Edit Profile" : "New Profile");
+    gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 460, 420);
+
+    /* Main vbox with scrolled window for long forms */
+    GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(outer, 16);
+    gtk_widget_set_margin_end(outer, 16);
+    gtk_widget_set_margin_top(outer, 16);
+    gtk_widget_set_margin_bottom(outer, 16);
+    gtk_window_set_child(GTK_WINDOW(dialog), outer);
+
+    /* ── Common fields ─────────────────────────────────── */
+    state.w_name  = pe2_entry_row(outer, "Profile Name", name);
+    state.w_group = pe2_entry_row(outer, "Group",        group);
+
+    /* Type selector */
+    gtk_box_append(GTK_BOX(outer), gtk_label_new("Connection Type"));
+    const char *type_labels[] = { "Local Shell", "SSH", "Serial", "Telnet", NULL };
+    state.w_type = pe2_dropdown(type_labels);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(state.w_type), (guint)conn_type);
+    gtk_box_append(GTK_BOX(outer), state.w_type);
+    g_signal_connect(state.w_type, "notify::selected",
+                     G_CALLBACK(on_pe2_type_changed), &state);
+
+    gtk_box_append(GTK_BOX(outer), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+
+    /* ── SSH section ────────────────────────────────────── */
+    state.ssh_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    {
+        char port_str[24];
+        snprintf(port_str, sizeof(port_str), "%lld", (long long)(ssh_port > 0 ? ssh_port : 22));
+
+        state.w_ssh_host = pe2_entry_row(state.ssh_box, "Hostname / IP", ssh_host);
+        state.w_ssh_port = pe2_entry_row(state.ssh_box, "Port",           port_str);
+        state.w_ssh_user = pe2_entry_row(state.ssh_box, "Username",       ssh_user);
+
+        /* Auth method dropdown */
+        gtk_box_append(GTK_BOX(state.ssh_box), gtk_label_new("Auth Method"));
+        state.w_ssh_auth = pe2_dropdown(PE2_AUTH_LABELS);
+        int auth_sel = 0;
+        for (int i = 0; i < PE2_AUTH_COUNT; i++) {
+            if (ssh_auth && strcmp(ssh_auth, PE2_AUTH_VALUES[i]) == 0) {
+                auth_sel = i; break;
+            }
+        }
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(state.w_ssh_auth), (guint)auth_sel);
+        gtk_box_append(GTK_BOX(state.ssh_box), state.w_ssh_auth);
+
+        state.w_ssh_key = pe2_entry_row(state.ssh_box, "Key File Path (optional)", ssh_key);
+    }
+    gtk_box_append(GTK_BOX(outer), state.ssh_box);
+
+    /* ── Serial section ─────────────────────────────────── */
+    state.ser_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    {
+        state.w_ser_dev = pe2_entry_row(state.ser_box, "Device Path (e.g. /dev/ttyUSB0)", serial_dev);
+
+        /* Baud rate dropdown */
+        gtk_box_append(GTK_BOX(state.ser_box), gtk_label_new("Baud Rate"));
+        state.w_ser_baud = pe2_dropdown(PE2_BAUD_LABELS);
+        int baud_sel = 7; /* default: 115200 */
+        for (int i = 0; i < PE2_BAUD_COUNT; i++) {
+            if (serial_baud == PE2_BAUD_VALUES[i]) { baud_sel = i; break; }
+        }
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(state.w_ser_baud), (guint)baud_sel);
+        gtk_box_append(GTK_BOX(state.ser_box), state.w_ser_baud);
+    }
+    gtk_box_append(GTK_BOX(outer), state.ser_box);
+
+    /* ── Telnet section ─────────────────────────────────── */
+    state.tel_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    {
+        char tel_port_str[24];
+        snprintf(tel_port_str, sizeof(tel_port_str), "%lld",
+                 (long long)(telnet_port > 0 ? telnet_port : 23));
+        state.w_tel_host = pe2_entry_row(state.tel_box, "Hostname / IP", telnet_host);
+        state.w_tel_port = pe2_entry_row(state.tel_box, "Port",          tel_port_str);
+    }
+    gtk_box_append(GTK_BOX(outer), state.tel_box);
+
+    /* Initial visibility */
+    pe2_update_section_visibility(&state);
+
+    /* ── Button row ─────────────────────────────────────── */
+    gtk_box_append(GTK_BOX(outer), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+    GtkWidget *btn_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_halign(btn_row, GTK_ALIGN_END);
+    GtkWidget *btn_cancel = gtk_button_new_with_label("Cancel");
+    GtkWidget *btn_save   = gtk_button_new_with_label("Save");
+    g_signal_connect(btn_cancel, "clicked", G_CALLBACK(on_pe2_cancel), &state);
+    g_signal_connect(btn_save,   "clicked", G_CALLBACK(on_pe2_save),   &state);
+    gtk_box_append(GTK_BOX(btn_row), btn_cancel);
+    gtk_box_append(GTK_BOX(btn_row), btn_save);
+    gtk_box_append(GTK_BOX(outer), btn_row);
+
+    gtk_widget_set_visible(dialog, TRUE);
+    g_main_loop_run(state.loop);
+
+    if (state.accepted) {
+        /* Write common fields into v0.8.3 buffers (name, group) */
+        snprintf(g_pe_name,  sizeof(g_pe_name),  "%s",
+                 gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_name))));
+        snprintf(g_pe_group, sizeof(g_pe_group), "%s",
+                 gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_group))));
+
+        g_pe2_type = (int64_t)gtk_drop_down_get_selected(GTK_DROP_DOWN(state.w_type));
+
+        /* SSH results (written into v0.8.3 buffers too, for backward compat) */
+        snprintf(g_pe_host,     sizeof(g_pe_host),
+                 "%s", gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_ssh_host))));
+        const char *pstr = gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_ssh_port)));
+        g_pe_port = (int64_t)atoll(pstr);
+        if (g_pe_port <= 0) g_pe_port = 22;
+        snprintf(g_pe_user,     sizeof(g_pe_user),
+                 "%s", gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_ssh_user))));
+        int auth_idx = (int)gtk_drop_down_get_selected(GTK_DROP_DOWN(state.w_ssh_auth));
+        if (auth_idx < 0 || auth_idx >= PE2_AUTH_COUNT) auth_idx = 0;
+        snprintf(g_pe_auth,     sizeof(g_pe_auth), "%s", PE2_AUTH_VALUES[auth_idx]);
+        snprintf(g_pe_key_path, sizeof(g_pe_key_path),
+                 "%s", gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_ssh_key))));
+
+        /* Serial results */
+        snprintf(g_pe2_serial_dev, sizeof(g_pe2_serial_dev),
+                 "%s", gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_ser_dev))));
+        int baud_idx = (int)gtk_drop_down_get_selected(GTK_DROP_DOWN(state.w_ser_baud));
+        if (baud_idx < 0 || baud_idx >= PE2_BAUD_COUNT) baud_idx = 7;
+        g_pe2_serial_baud = PE2_BAUD_VALUES[baud_idx];
+
+        /* Telnet results */
+        snprintf(g_pe2_telnet_host, sizeof(g_pe2_telnet_host),
+                 "%s", gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_tel_host))));
+        const char *tpstr = gtk_entry_buffer_get_text(gtk_entry_get_buffer(GTK_ENTRY(state.w_tel_port)));
+        g_pe2_telnet_port = (int64_t)atoll(tpstr);
+        if (g_pe2_telnet_port <= 0) g_pe2_telnet_port = 23;
+    }
+
+    gtk_window_destroy(GTK_WINDOW(dialog));
+    g_main_loop_unref(state.loop);
+    return (int32_t)state.accepted;
+}
+
+int64_t     nitty_gtk4_profile_editor_get_type(void)        { return g_pe2_type; }
+const char *nitty_gtk4_profile_editor_get_serial_dev(void)  { return g_pe2_serial_dev; }
+int64_t     nitty_gtk4_profile_editor_get_serial_baud(void) { return g_pe2_serial_baud; }
+const char *nitty_gtk4_profile_editor_get_telnet_host(void) { return g_pe2_telnet_host; }
+int64_t     nitty_gtk4_profile_editor_get_telnet_port(void) { return g_pe2_telnet_port; }
+
+
 /* v0.8.5 — SFTP Browser Panel                                               */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 

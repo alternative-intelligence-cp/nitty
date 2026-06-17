@@ -916,7 +916,7 @@ int64_t nitty_gtk4_cm_event_profile_id(void);
 void    nitty_gtk4_sidebar_attach(int64_t win, int64_t drawing_area, int64_t sidebar);
 void    nitty_gtk4_sidebar_set_visible(int32_t visible);
 
-/* Profile editor dialog */
+/* Profile editor dialog (v0.8.3 — SSH-only, kept for backward compat) */
 int32_t     nitty_gtk4_profile_editor_open(const char *name, const char *group,
                 const char *host, int64_t port, const char *user,
                 const char *auth_method, const char *key_path);
@@ -927,6 +927,31 @@ int64_t     nitty_gtk4_profile_editor_get_port(void);
 const char *nitty_gtk4_profile_editor_get_user(void);
 const char *nitty_gtk4_profile_editor_get_auth(void);
 const char *nitty_gtk4_profile_editor_get_key_path(void);
+
+/* Profile editor v2 — multi-type (v0.9.3)
+ *
+ * conn_type: 0=local, 1=ssh, 2=serial, 3=telnet
+ *
+ * Shows the appropriate field section based on the type dropdown selection.
+ * The dialog is modal; returns 1 on OK, 0 on Cancel.
+ * After OK, read back values via the get_* accessors below.
+ * The v0.8.3 getters (get_name, get_group, get_host, get_port, get_user,
+ * get_auth, get_key_path) still work for SSH fields; the new getters below
+ * add type + serial/telnet fields.
+ */
+int32_t     nitty_gtk4_profile_editor_open_v2(
+                const char *name,     const char *group,
+                int64_t     conn_type,
+                const char *ssh_host, int64_t ssh_port,
+                const char *ssh_user, const char *ssh_auth, const char *ssh_key,
+                const char *serial_dev,  int64_t serial_baud,
+                const char *telnet_host, int64_t telnet_port);
+
+int64_t     nitty_gtk4_profile_editor_get_type(void);
+const char *nitty_gtk4_profile_editor_get_serial_dev(void);
+int64_t     nitty_gtk4_profile_editor_get_serial_baud(void);
+const char *nitty_gtk4_profile_editor_get_telnet_host(void);
+int64_t     nitty_gtk4_profile_editor_get_telnet_port(void);
 
 
 /* ── SFTP Browser panel (v0.8.5) ─────────────────────────────────────────── */

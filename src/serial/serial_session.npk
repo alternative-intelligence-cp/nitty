@@ -1,0 +1,149 @@
+// src/serial/serial_session.npk — Serial session tracker (v0.9.3)
+//
+// Thin session manager for serial connections, mirroring the telnet_session
+// pattern. Tracks per-pane-slot state: fd, device, baud, connected flag,
+// and a pending key-input buffer for the terminal_widget → serial write path.
+//
+// The actual serial I/O is delegated to serial_port.npk (serial_read /
+// serial_write). This module only manages session lifetime and the key buffer.
+
+use "serial_port.npk".*;
+
+// ── Module state (64 pane slots) ─────────────────────────────────────────────
+
+int64[64]:g_ss_fd;          // tty fd; -1 = not open
+int64[64]:g_ss_connected;   // 1 = session active, 0 = idle/closed
+string[64]:g_ss_dev;        // device path e.g. "/dev/ttyUSB0"
+int64[64]:g_ss_baud;        // baud rate e.g. 115200
+string[64]:g_ss_key_buf;    // pending key-input bytes queued from keypress handler
+
+// ── Initialise ────────────────────────────────────────────────────────────────
+
+int64:g_ss_init_done = 0i64;
+
+func:_ss_init = NIL() {
+    if (g_ss_init_done != 0i64) { pass(NIL); }
+    int64:i = 0i64;
+    while (i < 64i64) {
+        g_ss_fd[i]        = -1i64;
+        g_ss_connected[i] = 0i64;
+        g_ss_dev[i]       = "";
+        g_ss_baud[i]      = 0i64;
+        g_ss_key_buf[i]   = "";
+        i = i + 1i64;
+    }
+    g_ss_init_done = 1i64;
+    pass(NIL);
+};
+
+// ── Session lifecycle ─────────────────────────────────────────────────────────
+
+/// Open a serial session for the given pane slot.
+/// fd    = the file descriptor returned by serial_open_simple()
+/// dev   = device path string (for display / reconnect)
+/// baud  = baud rate (for display)
+pub func:serial_session_open = NIL(int64:slot, int64:fd, string:dev, int64:baud) {
+    drop(_ss_init());
+    if (slot < 0i64)   { pass(NIL); }
+    if (slot >= 64i64) { pass(NIL); }
+    g_ss_fd[slot]        = fd;
+    g_ss_connected[slot] = 1i64;
+    g_ss_dev[slot]       = dev;
+    g_ss_baud[slot]      = baud;
+    g_ss_key_buf[slot]   = "";
+    pass(NIL);
+};
+
+/// Close the serial session for slot, closing the underlying fd.
+pub func:serial_session_close = NIL(int64:slot) {
+    drop(_ss_init());
+    if (slot < 0i64)   { pass(NIL); }
+    if (slot >= 64i64) { pass(NIL); }
+    int64:fd = g_ss_fd[slot];
+    if (fd >= 0i64) { drop(serial_close(fd)); }
+    g_ss_fd[slot]        = -1i64;
+    g_ss_connected[slot] = 0i64;
+    g_ss_dev[slot]       = "";
+    g_ss_baud[slot]      = 0i64;
+    g_ss_key_buf[slot]   = "";
+    pass(NIL);
+};
+
+// ── Getters ───────────────────────────────────────────────────────────────────
+
+pub func:serial_session_is_open = int64(int64:slot) {
+    drop(_ss_init());
+    if (slot < 0i64)   { pass(0i64); }
+    if (slot >= 64i64) { pass(0i64); }
+    pass(g_ss_connected[slot]);
+};
+
+pub func:serial_session_get_fd = int64(int64:slot) {
+    drop(_ss_init());
+    if (slot < 0i64)   { pass(-1i64); }
+    if (slot >= 64i64) { pass(-1i64); }
+    pass(g_ss_fd[slot]);
+};
+
+pub func:serial_session_get_dev = string(int64:slot) {
+    drop(_ss_init());
+    if (slot < 0i64)   { pass(""); }
+    if (slot >= 64i64) { pass(""); }
+    pass(g_ss_dev[slot]);
+};
+
+pub func:serial_session_get_baud = int64(int64:slot) {
+    drop(_ss_init());
+    if (slot < 0i64)   { pass(0i64); }
+    if (slot >= 64i64) { pass(0i64); }
+    pass(g_ss_baud[slot]);
+};
+
+// ── Key input buffer ─────────────────────────────────────────────────────────
+
+/// Append key data to the slot's pending send buffer.
+/// Called by terminal_widget keypress handler for serial panes.
+pub func:serial_session_push_key = NIL(int64:slot, string:data) {
+    drop(_ss_init());
+    if (slot < 0i64)   { pass(NIL); }
+    if (slot >= 64i64) { pass(NIL); }
+    if (g_ss_connected[slot] == 0i64) { pass(NIL); }
+    g_ss_key_buf[slot] = string_concat(g_ss_key_buf[slot], data);
+    pass(NIL);
+};
+
+/// Drain the pending key buffer to the serial fd (non-blocking write).
+/// Name matches telnet_session pattern used by terminal_widget.
+pub func:serial_poll_key_input = NIL(int64:slot) {
+    drop(_ss_init());
+    if (slot < 0i64)   { pass(NIL); }
+    if (slot >= 64i64) { pass(NIL); }
+    if (g_ss_connected[slot] == 0i64) { pass(NIL); }
+    int64:fd = g_ss_fd[slot];
+    if (fd < 0i64) { pass(NIL); }
+    string:buf = g_ss_key_buf[slot];
+    if (string_length(buf) == 0i64) { pass(NIL); }
+    int64:rc = raw serial_write(fd, buf);
+    // On write error close the session
+    if (rc < 0i64) {
+        drop(serial_session_close(slot));
+        pass(NIL);
+    }
+    g_ss_key_buf[slot] = "";
+    pass(NIL);
+};
+
+/// Non-blocking read of available bytes from the serial fd.
+/// Returns a string of raw bytes (may be empty if no data ready).
+/// Name matches telnet_session pattern used by terminal_widget.
+pub func:serial_poll_read = string(int64:slot) {
+    drop(_ss_init());
+    if (slot < 0i64)   { pass(""); }
+    if (slot >= 64i64) { pass(""); }
+    if (g_ss_connected[slot] == 0i64) { pass(""); }
+    int64:fd = g_ss_fd[slot];
+    if (fd < 0i64) { pass(""); }
+    string:data = raw serial_read(fd);
+    // serial_read returns "" on EAGAIN/EWOULDBLOCK (no data yet) — normal
+    pass(data);
+};

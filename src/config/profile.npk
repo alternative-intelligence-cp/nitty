@@ -154,7 +154,7 @@ func:_prof_clear_slot = NIL(int64:i) {
     g_prof_x11_forwarding[i]   = 0i64;
     g_prof_ssh_compress[i]     = 0i64;
     g_prof_serial_dev[i]   = "";
-    g_prof_serial_baud[i]  = 9600i64;
+    g_prof_serial_baud[i]  = 115200i64;  // default 115200 (was 9600 pre v0.9.3)
     g_prof_telnet_host[i]  = "";
     g_prof_telnet_port[i]  = 23i64;
     g_prof_font_family[i]  = "";
@@ -600,6 +600,18 @@ pub func:profiles_load_toml = NIL() {
             // v0.8.6 feature flags
             g_prof_x11_forwarding[slot]  = raw Toml.get_int(string_concat(prefix, "x11_forwarding"));
             g_prof_ssh_compress[slot]    = raw Toml.get_int(string_concat(prefix, "ssh_compress"));
+            // Serial fields (v0.9.3)
+            string:p_ser_dev   = raw Toml.get_string(string_concat(prefix, "serial_dev"));
+            int64:p_ser_baud   = raw Toml.get_int(string_concat(prefix, "serial_baud"));
+            if (p_ser_baud <= 0i64) { p_ser_baud = 115200i64; }
+            g_prof_serial_dev[slot]  = p_ser_dev;
+            g_prof_serial_baud[slot] = p_ser_baud;
+            // Telnet fields (v0.9.3 TOML — getters existed since v0.9.2)
+            string:p_tel_host  = raw Toml.get_string(string_concat(prefix, "telnet_host"));
+            int64:p_tel_port   = raw Toml.get_int(string_concat(prefix, "telnet_port"));
+            if (p_tel_port <= 0i64) { p_tel_port = 23i64; }
+            g_prof_telnet_host[slot] = p_tel_host;
+            g_prof_telnet_port[slot] = p_tel_port;
             g_prof_count = g_prof_count + 1i64;
         }
         i = i + 1i64;
@@ -646,6 +658,11 @@ pub func:profiles_save_toml = NIL() {
         // v0.8.6 feature flags
         drop(raw Toml.set_int(string_concat(prefix, "x11_forwarding"),      g_prof_x11_forwarding[i]));
         drop(raw Toml.set_int(string_concat(prefix, "ssh_compress"),         g_prof_ssh_compress[i]));
+        // v0.9.3: Serial + Telnet fields
+        drop(raw Toml.set_string(string_concat(prefix, "serial_dev"),        g_prof_serial_dev[i]));
+        drop(raw Toml.set_int(string_concat(prefix, "serial_baud"),          g_prof_serial_baud[i]));
+        drop(raw Toml.set_string(string_concat(prefix, "telnet_host"),       g_prof_telnet_host[i]));
+        drop(raw Toml.set_int(string_concat(prefix, "telnet_port"),          g_prof_telnet_port[i]));
         i = i + 1i64;
     }
     pass(NIL);
@@ -763,5 +780,36 @@ pub func:profile_get_telnet_port = int64(int64:slot) {
 pub func:profile_set_telnet_port = NIL(int64:slot, int64:port) {
     if (slot < 0i64 || slot >= g_prof_count) { pass(NIL); }
     g_prof_telnet_port[slot] = port;
+    pass(NIL);
+};
+
+// ── Serial getters/setters (v0.9.3) ──────────────────────────────────────────
+
+/// Get serial device path for profile slot.
+pub func:profile_get_serial_dev = string(int64:slot) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(""); }
+    pass(g_prof_serial_dev[slot]);
+};
+
+/// Set serial device path for profile slot.
+pub func:profile_set_serial_dev = NIL(int64:slot, string:dev) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(NIL); }
+    g_prof_serial_dev[slot] = dev;
+    pass(NIL);
+};
+
+/// Get serial baud rate for profile slot.
+pub func:profile_get_serial_baud = int64(int64:slot) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(115200i64); }
+    int64:b = g_prof_serial_baud[slot];
+    if (b <= 0i64) { pass(115200i64); }
+    pass(b);
+};
+
+/// Set serial baud rate for profile slot.
+pub func:profile_set_serial_baud = NIL(int64:slot, int64:baud) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(NIL); }
+    if (baud <= 0i64) { baud = 115200i64; }
+    g_prof_serial_baud[slot] = baud;
     pass(NIL);
 };

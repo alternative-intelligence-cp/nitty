@@ -82,12 +82,13 @@ use "profile_editor.npk".*;              // v0.8.3: profile editor dialog
 use "../ssh/ssh_session.npk".{ssh_poll_read, ssh_get_state}; // v0.8.3: SSH data poll
 use "../ssh/ssh_forward.npk".{fwd_local_tick, fwd_dynamic_tick}; // v0.8.4: port forward relay
 use "../ssh/ssh_jump.npk".{jump_relay_tick, jump_is_active};      // v0.8.4: jump host relay
-use "../core/pane.npk".{pane_get_type, PANE_TYPE_SSH, PANE_TYPE_TELNET};  // v0.8.4 / v0.9.2
+use "../core/pane.npk".{pane_get_type, PANE_TYPE_SSH, PANE_TYPE_TELNET, PANE_TYPE_SERIAL};  // v0.8.4/v0.9.2/v0.9.3
 use "sftp_browser.npk".*;                                         // v0.8.5: SFTP browser panel
 use "../ssh/ssh_x11.npk".{x11_tick};                              // v0.8.6: X11 forwarding relay
 use "../ssh/ssh_zmodem.npk".{zmodem_feed};                        // v0.8.6: Zmodem intercept
 use "../ssh/ssh_vault.npk".{vault_tick};                          // v0.8.6: vault auto-lock
 use "../telnet/telnet_session.npk".{telnet_poll_read, telnet_poll_key_input}; // v0.9.2: telnet support
+use "../serial/serial_session.npk".{serial_poll_read, serial_poll_key_input, serial_session_is_open}; // v0.9.3: serial support
 
 // v0.8.4: Built-in string byte accessor (Nitpick runtime)
 extern func:npk_string_byte_at = int64(string:s, int64:i);
@@ -1130,6 +1131,33 @@ pub func:tw_on_draw = NIL() {
                     drop(pipeline_feed(tel_byte));
                 }
                 tel_di = tel_di + 1i64;
+            }
+            drop(activity_on_output(a_slot, 1i64, a_now));
+            drop(tw_queue_redraw());
+        }
+    }
+
+    // v0.9.3: Serial poll tick — drain active Serial pane data each frame
+    // Mirrors the Telnet tick: reads raw bytes, feeds the pipeline, drains key input.
+    int64:ser_pane_slot = raw tm_get_active_pane_slot(raw tm_get_active_index());
+    int64:ser_ptype = raw pane_get_type(ser_pane_slot);
+    if (ser_ptype == PANE_TYPE_SERIAL()) {
+        // Forward any pending keyboard input to the serial port
+        drop(serial_poll_key_input(ser_pane_slot));
+        // Non-blocking read of available bytes from serial fd
+        string:ser_data = raw serial_poll_read(ser_pane_slot);
+        int64:ser_di   = 0i64;
+        int64:ser_dlen = string_length(ser_data);
+        if (ser_dlen > 0i64) {
+            if (raw viewport_is_at_bottom() == 0i64) {
+                drop(viewport_scroll_to_bottom());
+            }
+            while (ser_di < ser_dlen) {
+                int64:ser_byte = raw npk_string_byte_at(ser_data, ser_di);
+                if (ser_byte >= 0i64) {
+                    drop(pipeline_feed(ser_byte));
+                }
+                ser_di = ser_di + 1i64;
             }
             drop(activity_on_output(a_slot, 1i64, a_now));
             drop(tw_queue_redraw());

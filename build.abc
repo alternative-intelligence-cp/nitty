@@ -685,3 +685,12 @@ deps = ["telnet_shim"]
 flags = []
 link_libraries = ["nitty_telnet_shim"]
 link_paths = [".nitpick_make/build"]
+
+# v0.9.3: Serial session tracker unit tests
+[target.test_serial_session]
+type = "binary"
+sources = ["tests/serial/test_serial_session.npk"]
+deps = ["serial_shim"]
+flags = []
+link_libraries = ["nitty_serial_shim"]
+link_paths = [".nitpick_make/build"]

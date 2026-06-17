@@ -701,6 +701,20 @@ extern "nitty_gtk4_shim" {
     func:nitty_gtk4_profile_editor_get_auth     = string();
     func:nitty_gtk4_profile_editor_get_key_path = string();
 
+    // Profile editor v2 — multi-type (v0.9.3)
+    // conn_type: 0=local, 1=ssh, 2=serial, 3=telnet
+    func:nitty_gtk4_profile_editor_open_v2 = int32(
+        string:name, string:group, int64:conn_type,
+        string:ssh_host, int64:ssh_port, string:ssh_user,
+        string:ssh_auth, string:ssh_key,
+        string:serial_dev, int64:serial_baud,
+        string:telnet_host, int64:telnet_port);
+    func:nitty_gtk4_profile_editor_get_type        = int64();
+    func:nitty_gtk4_profile_editor_get_serial_dev  = string();
+    func:nitty_gtk4_profile_editor_get_serial_baud = int64();
+    func:nitty_gtk4_profile_editor_get_telnet_host = string();
+    func:nitty_gtk4_profile_editor_get_telnet_port = int64();
+
     // ── v0.8.5: SFTP Browser Panel ──────────────────────────────────────────
     // Create SFTP browser composite widget (path label, list, status bar).
     func:nitty_gtk4_sftp_create = int64();

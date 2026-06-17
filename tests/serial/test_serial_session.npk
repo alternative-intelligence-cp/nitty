@@ -1,0 +1,220 @@
+// tests/serial/test_serial_session.npk — Serial session tracker unit tests (v0.9.3)
+//
+// Test scenarios:
+//   T01: serial_session_is_open(0) = 0 when slot is fresh (never opened)
+//   T02: serial_session_get_fd(0) = -1 when slot is fresh
+//   T03: serial_session_get_dev(0) = "" when slot is fresh
+//   T04: serial_session_get_baud(0) = 0 when slot is fresh
+//   T05: serial_session_open() sets connected=1, dev, baud, fd for slot 0
+//   T06: serial_session_is_open(0) = 1 after open with fake fd
+//   T07: serial_session_get_dev(0) = "/dev/ttyUSB0" after open
+//   T08: serial_session_get_baud(0) = 115200 after open
+//   T09: serial_session_close(0) resets all state (connected=0, fd=-1, dev="", baud=0)
+//   T10: serial_poll_read(0) = "" when not connected
+//   T11: serial_poll_key_input(0) is safe (no-op) when not connected
+//   T12: serial_session_push_key(0, "x") is safe when not connected
+//   T13: serial_session_is_open(-1) = 0 (bounds check)
+//   T14: serial_session_get_fd(-1) = -1 (bounds check)
+//   T15: serial_session_is_open(64) = 0 (bounds check, past max)
+//   T16: serial_session_get_dev(64) = "" (bounds check)
+//   T17: serial_session_open(slot=10, fd=99, dev="/dev/ttyS0", baud=9600) works
+//   T18: serial_session_is_open(10) = 1 after open
+//   T19: serial_session_close(10) resets slot 10
+//   T20: serial_session_is_open(10) = 0 after close
+//
+// Run: npkbld build test_serial_session && .nitpick_make/build/test_serial_session
+
+use "../../src/serial/serial_session.npk".*;
+
+// ── I/O helpers ───────────────────────────────────────────────────────────────
+
+int64:STDOUT = 1i64;
+
+func:print_line = NIL(string:s) {
+    string:msg = string_concat(s, "\n");
+    drop(sys(WRITE, STDOUT, msg, string_length(msg)));
+    pass(NIL);
+};
+
+// ── Minimal pass/fail harness ─────────────────────────────────────────────────
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:pass_test = NIL(string:name) {
+    drop(print_line(string_concat("[PASS] ", name)));
+    g_pass = g_pass + 1i64;
+    pass(NIL);
+};
+
+func:fail_test = NIL(string:name, string:detail) {
+    drop(print_line(string_concat("[FAIL] ", string_concat(name,
+        string_concat(": ", detail)))));
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+func:assert_eq_i64 = NIL(string:name, int64:got, int64:expected) {
+    if (got == expected) { drop(pass_test(name)); }
+    if (got != expected) {
+        string:d = string_concat("got=", string_concat(string_from_int(got),
+            string_concat(" want=", string_from_int(expected))));
+        drop(fail_test(name, d));
+    }
+    pass(NIL);
+};
+
+func:assert_eq_str = NIL(string:name, string:got, string:expected) {
+    if (got == expected) { drop(pass_test(name)); }
+    if (got != expected) {
+        string:d = string_concat("got=[", string_concat(got,
+            string_concat("] want=[", string_concat(expected, "]"))));
+        drop(fail_test(name, d));
+    }
+    pass(NIL);
+};
+
+// ── T01-T04: Fresh slot state ─────────────────────────────────────────────────
+
+func:test_fresh_slot = NIL() {
+    // T01: is_open returns 0 for uninitialized slot
+    int64:c01 = raw serial_session_is_open(0i64);
+    drop(assert_eq_i64("T01-fresh-is_open", c01, 0i64));
+
+    // T02: get_fd returns -1 for uninitialized slot
+    int64:f02 = raw serial_session_get_fd(0i64);
+    drop(assert_eq_i64("T02-fresh-get_fd", f02, -1i64));
+
+    // T03: get_dev returns "" for uninitialized slot
+    string:d03 = raw serial_session_get_dev(0i64);
+    drop(assert_eq_str("T03-fresh-get_dev", d03, ""));
+
+    // T04: get_baud returns 0 for uninitialized slot
+    int64:b04 = raw serial_session_get_baud(0i64);
+    drop(assert_eq_i64("T04-fresh-get_baud", b04, 0i64));
+
+    pass(NIL);
+};
+
+// ── T05-T09: Open / read-back / close lifecycle ───────────────────────────────
+// Note: we use a fake fd value (e.g. 99) to avoid real hardware.
+// The session module stores whatever fd we give it; serial_close(99)
+// will fail silently at the OS level which is acceptable in tests.
+
+func:test_lifecycle_slot0 = NIL() {
+    // T05: open populates slot 0
+    drop(serial_session_open(0i64, 99i64, "/dev/ttyUSB0", 115200i64));
+    drop(pass_test("T05-open-called"));
+
+    // T06: is_open = 1 after open
+    int64:c06 = raw serial_session_is_open(0i64);
+    drop(assert_eq_i64("T06-is_open-after-open", c06, 1i64));
+
+    // T07: get_dev = "/dev/ttyUSB0"
+    string:d07 = raw serial_session_get_dev(0i64);
+    drop(assert_eq_str("T07-get_dev-after-open", d07, "/dev/ttyUSB0"));
+
+    // T08: get_baud = 115200
+    int64:b08 = raw serial_session_get_baud(0i64);
+    drop(assert_eq_i64("T08-get_baud-after-open", b08, 115200i64));
+
+    // T09: close resets all state
+    drop(serial_session_close(0i64));
+    int64:c09 = raw serial_session_is_open(0i64);
+    drop(assert_eq_i64("T09-is_open-after-close", c09, 0i64));
+    int64:f09 = raw serial_session_get_fd(0i64);
+    drop(assert_eq_i64("T09-fd-after-close", f09, -1i64));
+    string:d09 = raw serial_session_get_dev(0i64);
+    drop(assert_eq_str("T09-dev-after-close", d09, ""));
+    int64:b09 = raw serial_session_get_baud(0i64);
+    drop(assert_eq_i64("T09-baud-after-close", b09, 0i64));
+
+    pass(NIL);
+};
+
+// ── T10-T12: Disconnected slot safety ────────────────────────────────────────
+
+func:test_disconnected_safety = NIL() {
+    // Ensure slot 0 is closed (was closed in T09)
+
+    // T10: poll_read on disconnected slot = ""
+    string:data10 = raw serial_poll_read(0i64);
+    drop(assert_eq_str("T10-poll-read-disconnected", data10, ""));
+
+    // T11: poll_key_input on disconnected slot is a no-op
+    drop(serial_poll_key_input(0i64));
+    drop(pass_test("T11-key-input-disconnected"));
+
+    // T12: push_key on disconnected slot is a no-op
+    drop(serial_session_push_key(0i64, "x"));
+    drop(pass_test("T12-push-key-disconnected"));
+
+    pass(NIL);
+};
+
+// ── T13-T16: Slot bounds checks ──────────────────────────────────────────────
+
+func:test_slot_bounds = NIL() {
+    // T13: slot = -1
+    int64:c13 = raw serial_session_is_open(-1i64);
+    drop(assert_eq_i64("T13-slot-neg-is_open", c13, 0i64));
+
+    // T14: slot = -1, get_fd
+    int64:f14 = raw serial_session_get_fd(-1i64);
+    drop(assert_eq_i64("T14-slot-neg-get_fd", f14, -1i64));
+
+    // T15: slot = 64 (one past max)
+    int64:c15 = raw serial_session_is_open(64i64);
+    drop(assert_eq_i64("T15-slot-oob-is_open", c15, 0i64));
+
+    // T16: slot = 64, get_dev
+    string:d16 = raw serial_session_get_dev(64i64);
+    drop(assert_eq_str("T16-slot-oob-get_dev", d16, ""));
+
+    pass(NIL);
+};
+
+// ── T17-T20: Different slot (slot 10) lifecycle ───────────────────────────────
+
+func:test_lifecycle_slot10 = NIL() {
+    // T17: open slot 10 with different device + baud
+    drop(serial_session_open(10i64, 88i64, "/dev/ttyS0", 9600i64));
+    drop(pass_test("T17-open-slot10"));
+
+    // T18: is_open = 1 for slot 10
+    int64:c18 = raw serial_session_is_open(10i64);
+    drop(assert_eq_i64("T18-is_open-slot10", c18, 1i64));
+
+    // T19: close slot 10
+    drop(serial_session_close(10i64));
+    drop(pass_test("T19-close-slot10"));
+
+    // T20: is_open = 0 after close
+    int64:c20 = raw serial_session_is_open(10i64);
+    drop(assert_eq_i64("T20-is_open-slot10-after-close", c20, 0i64));
+
+    pass(NIL);
+};
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+pub func:main = int32() {
+    string:banner = "=== Nitty v0.9.3 Serial Session Tests ===\n";
+    drop(sys(WRITE, STDOUT, banner, string_length(banner)));
+
+    drop(test_fresh_slot());
+    drop(test_lifecycle_slot0());
+    drop(test_disconnected_safety());
+    drop(test_slot_bounds());
+    drop(test_lifecycle_slot10());
+
+    string:summary = string_concat("\n=== Results: ",
+        string_concat(string_from_int(g_pass),
+        string_concat(" passed, ",
+        string_concat(string_from_int(g_fail),
+        " failed\n"))));
+    drop(sys(WRITE, STDOUT, summary, string_length(summary)));
+
+    if (g_fail > 0i64) { exit(1i32); }
+    exit(0i32);
+};

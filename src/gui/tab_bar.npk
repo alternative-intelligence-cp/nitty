@@ -19,6 +19,7 @@ use "../core/split_tree.npk".*;
 use "gtk4_ffi.npk".*;
 use "color_scheme.npk".*;   // v0.6.4: mutable scheme state for theme integration
 use "../ssh/ssh_session.npk".{g_ssh_state, g_ssh_host, SSH_SESS_OPEN}; // v0.8.6: SSH state
+use "../serial/serial_session.npk".{serial_session_is_open}; // v0.9.3: serial state
 
 // ═══════════════════════════════════════════════════════════════════
 // Color state (mutable — updated by tb_apply_theme())
@@ -69,6 +70,11 @@ int64:TB_DOT_COMP_B = 300i64;
 int64:TB_DOT_SSH_R = 0i64;
 int64:TB_DOT_SSH_G = 850i64;
 int64:TB_DOT_SSH_B = 900i64;
+
+// Serial status dot (v0.9.3) — amber = port open
+int64:TB_DOT_SER_R = 980i64;
+int64:TB_DOT_SER_G = 600i64;
+int64:TB_DOT_SER_B = 0i64;
 
 // Layout constants
 int64:TB_PAD_X = 16i64;         // horizontal padding inside each tab
@@ -375,6 +381,14 @@ pub func:tb_render = NIL(int64:window_width) {
                 nitty_render_draw_dot(ssh_dot_ax, dot_y,
                     TB_DOT_SSH_R, TB_DOT_SSH_G, TB_DOT_SSH_B);
             }
+        }
+
+        // v0.9.3: Serial dot — amber, 12px from left (next to SSH dot slot)
+        // Shown on both active and inactive tabs whenever port is open.
+        if (raw serial_session_is_open(i) != 0i64) {
+            int64:ser_dot_x = x + 18i64;   // +18 to avoid overlap with SSH dot at +6
+            nitty_render_draw_dot(ser_dot_x, dot_y,
+                TB_DOT_SER_R, TB_DOT_SER_G, TB_DOT_SER_B);
         }
 
         // v0.4.3: Custom underline color overrides accent for active tab
