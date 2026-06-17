@@ -819,3 +819,11 @@ pub func:tm_detach_tab = NIL(int64:idx) {
     }
     pass(NIL);
 };
+
+// v0.8.4: Get the pane slot for a given tab index.
+// In Nitty's current architecture, tab_index == pane_slot for SSH sessions
+// (one SSH session per tab, using the tab index as its pane identifier).
+// Returns the tab index as the pane slot.
+pub func:tm_get_active_pane_slot = int64(int64:tab_idx) {
+    pass(tab_idx);
+};

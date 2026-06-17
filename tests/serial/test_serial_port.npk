@@ -1,0 +1,227 @@
+// tests/serial/test_serial_port.npk — Serial port unit tests (v0.9.0)
+//
+// Test scenarios:
+//   T01: serial_default_config() returns 8N1 115200 no flow
+//   T02: baud_is_standard(115200) = 1, baud_is_standard(12345) = 0
+//   T03: baud_label(115200) = "115200 bps"
+//   T04: baud_is_standard for all 12 core standard rates
+//   T05: serial_enumerate() returns >= 0 (0 is OK on no-serial machines)
+//   T06: serial_port_count() matches return of serial_enumerate()
+//   T07: serial_port_get_device(0) starts with "/dev/tty" if count > 0
+//   T08: serial_open("/nonexistent/dev", ...) returns -1
+//   T09: pane_is_serial returns 0 for LOCAL pane, 1 after pane_set_type SERIAL
+//   T10: pane_get_serial_baud / pane_set_serial_baud round-trip
+//   T11: pane_get_serial_path / pane_set_serial_path round-trip
+//
+// Run: npkbld build test_serial_port && ./test_serial_port
+
+use "../../src/serial/baud_rate.npk".*;
+use "../../src/serial/serial_port.npk".*;
+use "../../src/serial/port_enumerate.npk".*;
+use "../../src/core/pane.npk".*;
+
+// ── Program endpoints ─────────────────────────────────────────────────────────
+
+func:failsafe = int32(tbb32:_code) { exit 1i32; };
+
+// ── Minimal pass/fail harness ─────────────────────────────────────────────────
+
+int64:STDOUT = 1i64;
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:pass_test = NIL(string:name) {
+    string:msg = string_concat("[PASS] ", string_concat(name, "\n"));
+    int64:l = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, l));
+    g_pass = g_pass + 1i64;
+    pass(NIL);
+};
+
+func:fail_test = NIL(string:name, string:detail) {
+    string:msg = string_concat("[FAIL] ", string_concat(name,
+        string_concat(": ", string_concat(detail, "\n"))));
+    int64:l = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, l));
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+func:assert_eq_i64 = NIL(string:name, int64:got, int64:expected) {
+    if (got == expected) { drop(pass_test(name)); }
+    if (got != expected) {
+        string:d = string_concat("got=", string_concat(string_from_int(got),
+            string_concat(" want=", string_from_int(expected))));
+        drop(fail_test(name, d));
+    }
+    pass(NIL);
+};
+
+func:assert_eq_str = NIL(string:name, string:got, string:expected) {
+    if (got == expected) { drop(pass_test(name)); }
+    if (got != expected) {
+        string:d = string_concat("got=[", string_concat(got,
+            string_concat("] want=[", string_concat(expected, "]"))));
+        drop(fail_test(name, d));
+    }
+    pass(NIL);
+};
+
+func:assert_ge_i64 = NIL(string:name, int64:got, int64:min_val) {
+    if (got >= min_val) { drop(pass_test(name)); }
+    if (got < min_val) {
+        string:d = string_concat("got=", string_concat(string_from_int(got),
+            string_concat(" want>=", string_from_int(min_val))));
+        drop(fail_test(name, d));
+    }
+    pass(NIL);
+};
+
+// ── T01-T04: baud_rate.npk tests ─────────────────────────────────────────────
+
+func:test_baud_rate = NIL() {
+    // T01: Default config is 8N1 115200 no flow
+    SerialConfig:scfg = raw serial_default_config();
+    drop(assert_eq_i64("T01-default-baud",       scfg.baud,         115200i64));
+    drop(assert_eq_i64("T01-default-data-bits",  scfg.data_bits,    8i64));
+    drop(assert_eq_i64("T01-default-stop-bits",  scfg.stop_bits,    1i64));
+    drop(assert_eq_i64("T01-default-parity",     scfg.parity,       SERIAL_PARITY_NONE));
+    drop(assert_eq_i64("T01-default-flow",       scfg.flow_control, SERIAL_FLOW_NONE));
+
+    // T02: baud_is_standard
+    int64:std_115200 = raw baud_is_standard(115200i64);
+    drop(assert_eq_i64("T02-baud-standard-115200", std_115200, 1i64));
+    int64:std_custom  = raw baud_is_standard(12345i64);
+    drop(assert_eq_i64("T02-baud-nonstandard-12345", std_custom, 0i64));
+    int64:std_0 = raw baud_is_standard(0i64);
+    drop(assert_eq_i64("T02-baud-nonstandard-0", std_0, 0i64));
+
+    // T03: baud_label
+    string:lbl = raw baud_label(115200i64);
+    drop(assert_eq_str("T03-baud-label-115200", lbl, "115200 bps"));
+    string:lbl_custom = raw baud_label(12345i64);
+    drop(assert_eq_str("T03-baud-label-custom", lbl_custom, "12345 bps (custom)"));
+
+    // T04: baud_is_standard for all core rates
+    drop(assert_eq_i64("T04-baud-std-300",    raw baud_is_standard(300i64),    1i64));
+    drop(assert_eq_i64("T04-baud-std-1200",   raw baud_is_standard(1200i64),   1i64));
+    drop(assert_eq_i64("T04-baud-std-2400",   raw baud_is_standard(2400i64),   1i64));
+    drop(assert_eq_i64("T04-baud-std-4800",   raw baud_is_standard(4800i64),   1i64));
+    drop(assert_eq_i64("T04-baud-std-9600",   raw baud_is_standard(9600i64),   1i64));
+    drop(assert_eq_i64("T04-baud-std-19200",  raw baud_is_standard(19200i64),  1i64));
+    drop(assert_eq_i64("T04-baud-std-38400",  raw baud_is_standard(38400i64),  1i64));
+    drop(assert_eq_i64("T04-baud-std-57600",  raw baud_is_standard(57600i64),  1i64));
+    drop(assert_eq_i64("T04-baud-std-230400", raw baud_is_standard(230400i64), 1i64));
+    drop(assert_eq_i64("T04-baud-std-460800", raw baud_is_standard(460800i64), 1i64));
+    drop(assert_eq_i64("T04-baud-std-921600", raw baud_is_standard(921600i64), 1i64));
+
+    pass(NIL);
+};
+
+// ── T05-T08: serial_port.npk + port_enumerate.npk tests ──────────────────────
+
+func:test_serial_port = NIL() {
+    // T05: enumerate returns >= 0
+    int64:count = raw serial_enumerate();
+    drop(assert_ge_i64("T05-serial-enumerate-nonneg", count, 0i64));
+
+    // T06: port_count matches
+    int64:n = raw serial_port_count();
+    drop(assert_eq_i64("T06-serial-port-count-matches", n, count));
+
+    // T07: first port path starts with "/dev/tty" if any found
+    if (count > 0i64) {
+        string:dev = raw serial_port_get_device(0i64);
+        if (string_starts_with(dev, "/dev/tty")) {
+            drop(pass_test("T07-serial-port-device-prefix"));
+        }
+        if (!string_starts_with(dev, "/dev/tty")) {
+            drop(fail_test("T07-serial-port-device-prefix", string_concat("got: ", dev)));
+        }
+    }
+    if (count == 0i64) {
+        // Advisory: no ports on this machine — skip T07
+        drop(pass_test("T07-serial-port-device-prefix (advisory: no ports found)"));
+    }
+
+    // T08: opening a nonexistent device returns -1
+    SerialConfig:scfg = raw serial_default_config();
+    SerialConfig:bad_cfg = SerialConfig{
+        device:       "/nonexistent/ttyXXX",
+        baud:         scfg.baud,
+        data_bits:    scfg.data_bits,
+        stop_bits:    scfg.stop_bits,
+        parity:       scfg.parity,
+        flow_control: scfg.flow_control
+    };
+    int64:bad_fd = raw serial_open(bad_cfg);
+    drop(assert_eq_i64("T08-serial-open-nonexistent", bad_fd, -1i64));
+
+    pass(NIL);
+};
+
+// ── T09-T11: pane.npk serial field tests ─────────────────────────────────────
+
+func:test_pane_serial = NIL() {
+    // T09: pane_is_serial / pane_set_type
+    int64:slot = raw pane_create(9000i64, -1i64, -1i64, 24i64, 80i64);
+    if (slot < 0i64) {
+        drop(fail_test("T09-pane-create", "no slot available"));
+        pass(NIL);
+    }
+
+    int64:is_ser0 = raw pane_is_serial(slot);
+    drop(assert_eq_i64("T09-pane-is-serial-initially-false", is_ser0, 0i64));
+
+    drop(pane_set_type(slot, raw PANE_TYPE_SERIAL()));
+    int64:is_ser1 = raw pane_is_serial(slot);
+    drop(assert_eq_i64("T09-pane-is-serial-after-set", is_ser1, 1i64));
+
+    // T10: baud round-trip
+    int64:baud0 = raw pane_get_serial_baud(slot);
+    drop(assert_eq_i64("T10-baud-default", baud0, 115200i64));
+
+    drop(pane_set_serial_baud(slot, 9600i64));
+    int64:baud1 = raw pane_get_serial_baud(slot);
+    drop(assert_eq_i64("T10-baud-set-9600", baud1, 9600i64));
+
+    drop(pane_set_serial_baud(slot, 115200i64));
+    int64:baud2 = raw pane_get_serial_baud(slot);
+    drop(assert_eq_i64("T10-baud-reset-115200", baud2, 115200i64));
+
+    // T11: path round-trip
+    string:path0 = raw pane_get_serial_path(slot);
+    drop(assert_eq_str("T11-path-default-empty", path0, ""));
+
+    drop(pane_set_serial_path(slot, "/dev/ttyUSB0"));
+    string:path1 = raw pane_get_serial_path(slot);
+    drop(assert_eq_str("T11-path-set-ttyUSB0", path1, "/dev/ttyUSB0"));
+
+    drop(pane_set_serial_path(slot, ""));
+    string:path2 = raw pane_get_serial_path(slot);
+    drop(assert_eq_str("T11-path-cleared", path2, ""));
+
+    drop(pane_destroy(slot));
+    pass(NIL);
+};
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+pub func:main = int32() {
+    string:banner = "=== Nitty v0.9.0 Serial Port Tests ===\n";
+    drop(sys(WRITE, STDOUT, banner, string_length(banner)));
+
+    drop(test_baud_rate());
+    drop(test_serial_port());
+    drop(test_pane_serial());
+
+    string:summary = string_concat("\n=== Results: ",
+        string_concat(string_from_int(g_pass),
+        string_concat(" passed, ",
+        string_concat(string_from_int(g_fail),
+        " failed\n"))));
+    drop(sys(WRITE, STDOUT, summary, string_length(summary)));
+
+    if (g_fail > 0i64) { exit(1i32); }
+    exit(0i32);
+};

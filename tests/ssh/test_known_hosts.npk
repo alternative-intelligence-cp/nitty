@@ -1,0 +1,116 @@
+// tests/ssh/test_known_hosts.npk — Known hosts unit tests (v0.8.1)
+//
+// Tests ssh_known_hosts.npk without requiring a network connection.
+// Uses the SSH_ module namespace (from nitpick_ssh.npk wildcard import).
+//
+// T01: ssh_known_hosts_path() is non-empty and contains "known_hosts"
+// T02: ssh_kh_load() with missing file returns 0 (graceful — no crash)
+// T03: ssh_kh_check() with kh_buf=0 returns KH_NEW_HOST (0) — null safe
+// T04: KH_TRUSTED/KH_NEW_HOST/KH_MISMATCH/KH_ERROR are distinct
+// T05: ssh_kh_mismatch_warning() returns a non-empty warning string
+// T06: ssh_kh_tofu_prompt() returns a non-empty prompt string containing host
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/src/nitpick_ssh.npk".*;
+use "../../src/ssh/ssh_known_hosts.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
+
+int64:STDOUT = 1i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check_int = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        drop(write_stdout(string_concat("[PASS] ", string_concat(name, "\n"))));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    drop(write_stdout(string_concat("[FAIL] ", string_concat(name,
+        string_concat(" expected=", string_concat(string_from_int(expected),
+        string_concat(" got=", string_concat(string_from_int(got), "\n"))))))));
+    pass(NIL);
+};
+
+func:check_nonempty = NIL(string:name, string:got) {
+    if (string_length(got) > 0i64) {
+        g_pass = g_pass + 1i64;
+        drop(write_stdout(string_concat("[PASS] ", string_concat(name, "\n"))));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    drop(write_stdout(string_concat("[FAIL] ", string_concat(name, " — empty string\n"))));
+    pass(NIL);
+};
+
+func:check_contains = NIL(string:name, string:needle, string:haystack) {
+    if (string_contains(haystack, needle)) {
+        g_pass = g_pass + 1i64;
+        drop(write_stdout(string_concat("[PASS] ", string_concat(name, "\n"))));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    drop(write_stdout(string_concat("[FAIL] ", string_concat(name,
+        string_concat(" — expected to contain \"", string_concat(needle, "\"\n"))))));
+    pass(NIL);
+};
+
+func:main = int32() {
+
+    // ── T01: ssh_known_hosts_path is non-empty and contains "known_hosts" ───
+    string:kh_path = raw ssh_known_hosts_path();
+    drop(check_nonempty("T01a ssh_known_hosts_path non-empty", kh_path));
+    drop(check_contains("T01b ssh_known_hosts_path contains 'known_hosts'", "known_hosts", kh_path));
+
+    // T02: ssh_kh_load with non-existent path returns a valid (empty) handle.
+    // The library creates an empty buffer even if the file is missing — this is
+    // correct: ssh_kh_check on an empty buffer returns KH_NEW_HOST (0).
+    int64:missing_kh = raw ssh_kh_load_path("/tmp/nitty_v0.8.1_no_such_known_hosts_12345");
+    // Verify: check returns NEW_HOST (not a crash) when using this empty handle
+    int64:dummy_buf = raw SSH_buf_create(4i64);
+    int64:empty_check = raw ssh_kh_check(missing_kh, "nobody.example.com", "ssh-rsa", dummy_buf);
+    drop(raw SSH_buf_free(dummy_buf));
+    drop(check_int("T02 ssh_kh_check on empty-file handle = KH_NEW_HOST", 0i64, empty_check));
+
+    // ── T03: ssh_kh_check with kh_buf=0 returns KH_NEW_HOST ─────────────────
+    int64:buf0 = raw SSH_buf_create(8i64); // dummy key_blob
+    int64:check_result = raw ssh_kh_check(0i64, "example.com", "ssh-rsa", buf0);
+    drop(raw SSH_buf_free(buf0));
+    int64:kh_new = raw KH_NEW_HOST();
+    drop(check_int("T03 ssh_kh_check null buf = KH_NEW_HOST", kh_new, check_result));
+
+    // ── T04: Constants are distinct ──────────────────────────────────────────
+    int64:t = raw KH_TRUSTED();
+    int64:n = raw KH_NEW_HOST();
+    int64:m = raw KH_MISMATCH();
+    int64:e = raw KH_ERROR();
+    drop(check_int("T04a KH_TRUSTED = 1",  1i64,  t));
+    drop(check_int("T04b KH_NEW_HOST = 0", 0i64,  n));
+    drop(check_int("T04c KH_MISMATCH = -1", -1i64, m));
+    drop(check_int("T04d KH_ERROR = -2",   -2i64, e));
+
+    // ── T05: ssh_kh_mismatch_warning returns non-empty warning ──────────────
+    string:warn = raw ssh_kh_mismatch_warning("test.example.com");
+    drop(check_nonempty("T05a mismatch_warning non-empty", warn));
+    drop(check_contains("T05b mismatch_warning contains WARNING", "WARNING", warn));
+    drop(check_contains("T05c mismatch_warning contains host", "test.example.com", warn));
+
+    // ── T06: ssh_kh_tofu_prompt returns prompt with host ────────────────────
+    string:prompt = raw ssh_kh_tofu_prompt("myserver.local");
+    drop(check_nonempty("T06a tofu_prompt non-empty", prompt));
+    drop(check_contains("T06b tofu_prompt contains host", "myserver.local", prompt));
+    drop(check_contains("T06c tofu_prompt asks yes/no", "yes/no", prompt));
+
+    // Summary
+    drop(write_stdout(string_concat("Result: ", string_concat(
+        string_from_int(g_pass), string_concat(" passed, ",
+        string_concat(string_from_int(g_fail), " failed\n"))))));
+    if (g_fail != 0i64) { exit 1i32; }
+    exit 0i32;
+};

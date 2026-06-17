@@ -1,0 +1,611 @@
+// ssh_auth.npk — Multi-method SSH authentication negotiator (v0.8.2)
+//
+// Implements the ordered auth chain:
+//   Agent → Pubkey (ed25519 → rsa) → KBD-Interactive → Password
+//
+// All state is stored in flat int64[N] arrays + a string[N] array for paths.
+// No structs, no recursion. Nitpick constraints compliant.
+//
+// Usage:
+//   auth_init(pane_id, session, username, key_path)
+//   loop: auth_try_next(pane_id) until AUTH_RESULT_OK or AUTH_RESULT_FAIL
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/src/nitpick_ssh.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/src/nitpick_unix_socket.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+
+// ── Constants ────────────────────────────────────────────────────────────────
+// All declared with `fixed` — Nitpick's const. No Result<T> wrapping.
+// Accessible inside and outside this module without raw.
+
+// Auth method indices (order of attempt)
+pub fixed int32:AUTH_METHOD_AGENT    = 0i32;
+pub fixed int32:AUTH_METHOD_PUBKEY   = 1i32;
+pub fixed int32:AUTH_METHOD_KBDINT   = 2i32;
+pub fixed int32:AUTH_METHOD_PASSWORD = 3i32;
+pub fixed int32:AUTH_METHOD_COUNT    = 4i32;
+pub fixed int32:AUTH_METHOD_NONE     = 99i32;
+
+// auth_try_next return codes
+pub fixed int32:AUTH_RESULT_IN_PROGRESS = 0i32;   // keep calling
+pub fixed int32:AUTH_RESULT_OK          = 1i32;   // authenticated
+pub fixed int32:AUTH_RESULT_FAIL        = 2i32;   // all methods exhausted
+pub fixed int32:AUTH_RESULT_NEED_INPUT  = 3i32;   // password/passphrase needed
+
+// SSH Agent protocol message types (RFC 4253 §6)
+pub fixed int32:SSH_AGENTC_REQUEST_IDENTITIES = 11i32;
+pub fixed int32:SSH_AGENTC_SIGN_REQUEST       = 13i32;
+pub fixed int32:SSH_AGENT_IDENTITIES_ANSWER   = 12i32;
+pub fixed int32:SSH_AGENT_SIGN_RESPONSE       = 14i32;
+pub fixed int32:SSH_AGENT_FAILURE             = 5i32;
+pub fixed int32:SSH_AGENT_RSA_SHA2_256_FLAG   = 2i32;
+
+
+// ── Per-pane state arrays (max 32 panes) ────────────────────────────────────
+
+int64[32]:g_auth_session;      // SSH session handle
+int64[32]:g_auth_current_meth; // current method being tried (AUTH_METHOD_*)
+int64[32]:g_auth_meth_tried;   // bitmask of methods already tried
+int64[32]:g_auth_agent_keys;   // number of agent keys remaining
+int64[32]:g_auth_pubkey_idx;   // which pubkey file we're on (0=ed25519, 1=rsa)
+int64[32]:g_auth_state;        // sub-state for current method
+int64[32]:g_auth_privkey_hdl;  // loaded privkey handle (or 0)
+
+string[32]:g_auth_username;    // username for this pane
+string[32]:g_auth_key_path;    // override key path (or "" for defaults)
+string[32]:g_auth_error;       // last error message
+
+// Agent key storage: up to 8 keys per pane (type + blob)
+// Index: pane*8 + key_slot
+int64[256]:g_agent_key_blob;   // buffer handles
+string[256]:g_agent_key_type;  // "ssh-rsa" / "ssh-ed25519"
+
+// Agent socket fd per pane
+int64[32]:g_auth_agent_fd;
+
+// ── Public API ───────────────────────────────────────────────────────────────
+
+pub func:auth_init = NIL(int64:pane_id, int64:session, string:username, string:key_path) {
+    if (pane_id < 0i64 || pane_id >= 32i64) { pass(NIL); }
+    int64:p = pane_id;
+    g_auth_session[p]      = session;
+    g_auth_current_meth[p] = 0i64;
+    g_auth_meth_tried[p]   = 0i64;
+    g_auth_agent_keys[p]   = 0i64;
+    g_auth_pubkey_idx[p]   = 0i64;
+    g_auth_state[p]        = 0i64;
+    g_auth_privkey_hdl[p]  = 0i64;
+    g_auth_agent_fd[p]     = -1i64;
+    g_auth_username[p]     = string_concat(username, "");
+    g_auth_key_path[p]     = string_concat(key_path, "");
+    g_auth_error[p]        = "";
+    pass(NIL);
+};
+
+pub func:auth_has_error = int32(int64:pane_id) {
+    if (pane_id < 0i64 || pane_id >= 32i64) { pass 0i32; }
+    string:e = g_auth_error[pane_id];
+    if (string_length(e) > 0i64) { pass 1i32; }
+    pass 0i32;
+};
+
+pub func:auth_last_error = string(int64:pane_id) {
+    if (pane_id < 0i64 || pane_id >= 32i64) { pass ""; }
+    pass string_concat(g_auth_error[pane_id], "");
+};
+
+pub func:auth_reset = NIL(int64:pane_id) {
+    if (pane_id < 0i64 || pane_id >= 32i64) { pass(NIL); }
+    int64:p = pane_id;
+    // Free private key handle if loaded
+    if (g_auth_privkey_hdl[p] != 0i64) {
+        ssh_crypto_privkey_free(g_auth_privkey_hdl[p]);
+        g_auth_privkey_hdl[p] = 0i64;
+    }
+    // Close agent socket
+    if (g_auth_agent_fd[p] >= 0i64) {
+        drop(nitpick_unix_socket_close(g_auth_agent_fd[p]));
+        g_auth_agent_fd[p] = -1i64;
+    }
+    g_auth_current_meth[p] = 0i64;
+    g_auth_meth_tried[p]   = 0i64;
+    g_auth_agent_keys[p]   = 0i64;
+    g_auth_pubkey_idx[p]   = 0i64;
+    g_auth_state[p]        = 0i64;
+    g_auth_error[p]        = "";
+    pass(NIL);
+};
+
+// ── Internal: advance to next method ────────────────────────────────────────
+
+func:_next_method = NIL(int64:pane_id) {
+    int64:p = pane_id;
+    int64:cur = g_auth_current_meth[p];
+    g_auth_meth_tried[p] = g_auth_meth_tried[p] | (1i64 << cur);
+    // Free any loaded privkey
+    if (g_auth_privkey_hdl[p] != 0i64) {
+        ssh_crypto_privkey_free(g_auth_privkey_hdl[p]);
+        g_auth_privkey_hdl[p] = 0i64;
+    }
+    // Close agent socket if moving off agent
+    if (cur == 0i64 && g_auth_agent_fd[p] >= 0i64) {
+        drop(nitpick_unix_socket_close(g_auth_agent_fd[p]));
+        g_auth_agent_fd[p] = -1i64;
+    }
+    g_auth_pubkey_idx[p]   = 0i64;
+    g_auth_state[p]        = 0i64;
+    // Find next untried method
+    int64:next = cur + 1i64;
+    if (next >= 4i64) {
+        g_auth_current_meth[p] = 99i64;
+    }
+    if (next < 4i64) {
+        g_auth_current_meth[p] = next;
+    }
+    pass(NIL);
+};
+
+// ── Agent method ─────────────────────────────────────────────────────────────
+
+func:_try_agent = int32(int64:pane_id) {
+    int64:p = pane_id;
+    int64:session = g_auth_session[p];
+    string:user = string_concat(g_auth_username[p], "");
+
+    // State 0: connect to agent + request identities
+    if (g_auth_state[p] == 0i64) {
+        // Get SSH_AUTH_SOCK path
+        string:sock_path = raw get("SSH_AUTH_SOCK");
+        if (string_length(sock_path) == 0i64) {
+            // No agent available, skip
+            drop(_next_method(p));
+            pass 0i32;
+        }
+        // Connect
+        int64:fd = nitpick_unix_socket_create();
+        if (fd < 0i64) {
+            drop(_next_method(p));
+            pass 0i32;
+        }
+        int64:conn_rc = nitpick_unix_socket_connect(fd, sock_path);
+        if (conn_rc < 0i64) {
+            drop(nitpick_unix_socket_close(fd));
+            drop(_next_method(p));
+            pass 0i32;
+        }
+        g_auth_agent_fd[p] = fd;
+
+        // Build SSH_AGENTC_REQUEST_IDENTITIES: uint32(1) + byte(11)
+        int64:req = raw ssh_buf_create(8i64);
+        req = raw ssh_encode_uint32(req, 1i64);       // length=1
+        req = raw ssh_encode_byte(req, 11i32);
+        string:req_str = raw ssh_buf_extract_str(req, 0i64, raw ssh_buf_len(req));
+        drop(nitpick_unix_socket_send(fd, req_str, raw ssh_buf_len(req)));
+        drop(raw ssh_buf_free(req));
+
+        // Read response: length(4) + type(1) + nkeys(4) + keys...
+        string:resp = nitpick_unix_socket_recv(fd, 8192i64);
+        if (string_length(resp) < 9i64) {
+            drop(nitpick_unix_socket_close(fd));
+            g_auth_agent_fd[p] = -1i64;
+            drop(_next_method(p));
+            pass 0i32;
+        }
+
+        // Parse SSH_AGENT_IDENTITIES_ANSWER
+        int64:resp_buf = raw ssh_buf_create(8192i64);
+        drop(raw ssh_buf_write_str(resp_buf, resp));
+        int32:msg_type = raw ssh_buf_read_byte(resp_buf, 4i64); // after length
+        if (msg_type != 12i32) {
+            drop(raw ssh_buf_free(resp_buf));
+            drop(nitpick_unix_socket_close(fd));
+            g_auth_agent_fd[p] = -1i64;
+            drop(_next_method(p));
+            pass 0i32;
+        }
+        int64:nkeys = raw ssh_decode_uint32(resp_buf, 5i64);
+        drop(raw ssh_buf_free(resp_buf));
+
+        if (nkeys == 0i64) {
+            drop(nitpick_unix_socket_close(fd));
+            g_auth_agent_fd[p] = -1i64;
+            drop(_next_method(p));
+            pass 0i32;
+        }
+
+        // Store nkeys and advance to state 1 (try keys one by one)
+        // For simplicity in v0.8.2: parse and store the first key blob + type
+        // More complete implementation would store all nkeys
+        g_auth_agent_keys[p] = nkeys;
+        g_auth_state[p] = 1i64;
+        pass 0i32;
+    }
+
+    // State 1: try agent sign for pubkey auth
+    if (g_auth_state[p] == 1i64) {
+        // Send pubkey query with "none" to discover if it's acceptable
+        // For agent: we need to build the USERAUTH_REQUEST with pubkey method
+        // using auth_pubkey_sign_data, then ask agent to sign it
+        // For v0.8.2, just skip agent and fall through to pubkey file auth
+        // since storing parsed agent keys requires more complex state
+        drop(_next_method(p));
+        pass 0i32;
+    }
+
+    pass 0i32;
+};
+
+// ── Pubkey file method ────────────────────────────────────────────────────────
+
+// Default key paths to try in order
+func:_key_path_for_index = string(int64:idx) {
+    string:home = raw home();
+    if (idx == 0i64) { pass string_concat(home, "/.ssh/id_ed25519"); }
+    if (idx == 1i64) { pass string_concat(home, "/.ssh/id_rsa"); }
+    pass "";
+};
+
+func:_try_pubkey = int32(int64:pane_id) {
+    int64:p = pane_id;
+    int64:session = g_auth_session[p];
+    string:user = string_concat(g_auth_username[p], "");
+
+    // Check which key files to try
+    string:override_path = string_concat(g_auth_key_path[p], "");
+
+    int64:key_idx = g_auth_pubkey_idx[p];
+
+    // Determine path for this attempt
+    string:priv_path = "";
+    if (string_length(override_path) > 0i64 && key_idx == 0i64) {
+        priv_path = override_path;
+    }
+    if (string_length(override_path) == 0i64) {
+        priv_path = _key_path_for_index(key_idx);
+    }
+    if (string_length(priv_path) == 0i64) {
+        // No more keys to try
+        drop(_next_method(p));
+        pass 0i32;
+    }
+
+    // Read the PEM file
+    string:pem_text = fs_read_file(priv_path);
+    if (string_length(pem_text) == 0i64) {
+        // Key file not found or empty, try next index
+        g_auth_pubkey_idx[p] = key_idx + 1i64;
+        if (string_length(override_path) > 0i64) {
+            // If override specified and can't read it, give up pubkey
+            drop(_next_method(p));
+        }
+        pass 0i32;
+    }
+
+    // Parse the private key
+    int64:privkey = raw ssh_crypto_parse_pem_privkey(pem_text);
+    if (privkey == 0i64) {
+        // Parse failed (maybe encrypted — skip for v0.8.2)
+        g_auth_pubkey_idx[p] = key_idx + 1i64;
+        if (string_length(override_path) > 0i64) {
+            drop(_next_method(p));
+        }
+        pass 0i32;
+    }
+    g_auth_privkey_hdl[p] = privkey;
+
+    // Determine key type
+    string:ktype = raw ssh_crypto_privkey_type(privkey);
+
+    // We need the public key blob. For ed25519: derive it from seed.
+    // For RSA: we need to compute it from n+e (not stored in privkey handle).
+    // For v0.8.2 we read the corresponding .pub file to get the public blob.
+    string:pub_path = string_concat(priv_path, ".pub");
+    string:pub_line = fs_read_file(pub_path);
+
+    int64:pubkey_buf = 0i64;
+    if (string_length(pub_line) > 0i64) {
+        // Format: "ssh-TYPE BASE64 comment\n"
+        // Extract the base64 blob (second field)
+        // Find space positions
+        int64:pub_len = string_length(pub_line);
+        int64:sp1 = 0i64;  // position of first space
+        int64:sp2 = 0i64;  // position of second space
+
+        // Scan for first space
+        int64:si = 0i64;
+        if (si < pub_len) {
+            string:c = string_substring(pub_line, si, si + 1i64);
+            if (string_contains(c, " ")) { sp1 = si; }
+        }
+        // Simple approach: use string_index_of if available, else iterate
+        // For now extract everything after the first space up to second space
+        // Nitpick doesn't have split, so we rely on known format
+        // "ssh-ed25519 AAAA... comment"
+        // Skip the key type prefix
+        int64:prefix_len = 0i64;
+        if (string_contains(pub_line, "ssh-ed25519 ")) { prefix_len = 12i64; }
+        if (string_contains(pub_line, "ssh-rsa "))     { prefix_len = 8i64; }
+
+        if (prefix_len > 0i64) {
+            // Find end of base64 blob (next space or newline or end)
+            string:b64_rest = string_substring(pub_line, prefix_len, pub_len);
+            int64:b64_len = string_length(b64_rest);
+            // Trim at first space/newline
+            string:b64_blob = b64_rest;
+            // The base64_decode handles newlines gracefully, so pass as-is
+            pubkey_buf = raw ssh_crypto_base64_decode(b64_blob);
+        }
+    }
+
+    if (pubkey_buf == 0i64) {
+        // Couldn't load pubkey blob, try next
+        ssh_crypto_privkey_free(privkey);
+        g_auth_privkey_hdl[p] = 0i64;
+        g_auth_pubkey_idx[p] = key_idx + 1i64;
+        if (string_length(override_path) > 0i64) {
+            drop(_next_method(p));
+        }
+        pass 0i32;
+    }
+
+    // Query server: does it accept this key?
+    int64:query_rc = raw ssh_auth_publickey_query(session, user, ktype, pubkey_buf);
+    if (query_rc != 0i64) {
+        // Not accepted, try next key
+        drop(raw ssh_buf_free(pubkey_buf));
+        ssh_crypto_privkey_free(privkey);
+        g_auth_privkey_hdl[p] = 0i64;
+        g_auth_pubkey_idx[p] = key_idx + 1i64;
+        if (string_length(override_path) > 0i64) {
+            drop(_next_method(p));
+        }
+        pass 0i32;
+    }
+
+    // Server accepts key. Build sign data and sign it.
+    int64:sign_data = raw ssh_auth_publickey_sign_data(session, user, ktype, pubkey_buf);
+    if (sign_data == 0i64) {
+        drop(raw ssh_buf_free(pubkey_buf));
+        ssh_crypto_privkey_free(privkey);
+        g_auth_privkey_hdl[p] = 0i64;
+        drop(_next_method(p));
+        pass 0i32;
+    }
+
+    // Sign
+    int64:sig_buf = 0i64;
+    if (string_contains(ktype, "ed25519")) {
+        sig_buf = raw ssh_crypto_ed25519_sign(privkey, sign_data);
+    }
+    if (string_contains(ktype, "rsa")) {
+        sig_buf = raw ssh_crypto_rsa_sign(privkey, sign_data);
+    }
+    drop(raw ssh_buf_free(sign_data));
+
+    if (sig_buf == 0i64) {
+        drop(raw ssh_buf_free(pubkey_buf));
+        ssh_crypto_privkey_free(privkey);
+        g_auth_privkey_hdl[p] = 0i64;
+        drop(_next_method(p));
+        pass 0i32;
+    }
+
+    // Send signed auth request
+    int64:auth_rc = raw ssh_auth_publickey_sign(session, user, ktype, pubkey_buf, sig_buf);
+    drop(raw ssh_buf_free(pubkey_buf));
+    drop(raw ssh_buf_free(sig_buf));
+    ssh_crypto_privkey_free(privkey);
+    g_auth_privkey_hdl[p] = 0i64;
+
+    if (auth_rc == 0i64) {
+        // Parse server response
+        int64:pkt = raw ssh_recv_packet(session);
+        if (pkt != 0i64) {
+            int32:mtype = raw ssh_buf_read_byte(pkt, 0i64);
+            drop(raw ssh_buf_free(pkt));
+            if (mtype == 52i32) { pass 1i32; }  // SSH_MSG_USERAUTH_SUCCESS
+        }
+    }
+
+    // Try next key
+    g_auth_pubkey_idx[p] = key_idx + 1i64;
+    if (string_length(override_path) > 0i64) {
+        drop(_next_method(p));
+    }
+    pass 0i32;
+};
+
+// ── Keyboard-Interactive method ───────────────────────────────────────────────
+// Single-prompt implementation: returns NEED_INPUT, caller provides answer.
+
+int64[32]:g_kbdint_pending;    // 1 if waiting for user input
+string[32]:g_kbdint_response;  // response provided by caller
+
+pub func:auth_provide_kbdint = NIL(int64:pane_id, string:response) {
+    if (pane_id < 0i64 || pane_id >= 32i64) { pass(NIL); }
+    g_kbdint_response[pane_id] = string_concat(response, "");
+    g_kbdint_pending[pane_id]  = 0i64;
+    pass(NIL);
+};
+
+func:_try_kbdint = int32(int64:pane_id) {
+    int64:p = pane_id;
+    int64:session = g_auth_session[p];
+    string:user = string_concat(g_auth_username[p], "");
+
+    // State 0: send keyboard-interactive request
+    if (g_auth_state[p] == 0i64) {
+        // Build SSH_MSG_USERAUTH_REQUEST with method "keyboard-interactive"
+        int64:req = raw ssh_buf_create(256i64);
+        req = raw ssh_encode_byte(req, 50i32);            // SSH_MSG_USERAUTH_REQUEST
+        req = raw ssh_encode_string(req, user);
+        req = raw ssh_encode_string(req, "ssh-connection");
+        req = raw ssh_encode_string(req, "keyboard-interactive");
+        req = raw ssh_encode_string(req, "");             // language tag
+        req = raw ssh_encode_string(req, "");             // submethods
+        drop(raw ssh_send_packet(session, req));
+        drop(raw ssh_buf_free(req));
+
+        // Read response
+        int64:pkt = raw ssh_recv_packet(session);
+        if (pkt == 0i64) {
+            drop(_next_method(p));
+            pass 0i32;
+        }
+        int32:mtype = raw ssh_buf_read_byte(pkt, 0i64);
+
+        // SSH_MSG_USERAUTH_INFO_REQUEST (60)
+        if (mtype == 60i32) {
+            drop(raw ssh_buf_free(pkt));
+            g_auth_state[p] = 1i64;
+            g_kbdint_pending[p] = 1i64;
+            g_kbdint_response[p] = "";
+            pass 3i32;
+        }
+        if (mtype == 52i32) { drop(raw ssh_buf_free(pkt)); pass 1i32; }
+        drop(raw ssh_buf_free(pkt));
+        drop(_next_method(p));
+        pass 0i32;
+    }
+
+    // State 1: waiting for user response
+    if (g_auth_state[p] == 1i64) {
+        if (g_kbdint_pending[p] == 1i64) {
+            pass 3i32;
+        }
+        // Have response — send SSH_MSG_USERAUTH_INFO_RESPONSE (61)
+        string:resp = string_concat(g_kbdint_response[p], "");
+        int64:reply = raw ssh_buf_create(256i64);
+        reply = raw ssh_encode_byte(reply, 61i32);        // SSH_MSG_USERAUTH_INFO_RESPONSE
+        reply = raw ssh_encode_uint32(reply, 1i64);       // num-responses = 1
+        reply = raw ssh_encode_string(reply, resp);
+        drop(raw ssh_send_packet(session, reply));
+        drop(raw ssh_buf_free(reply));
+
+        // Read response
+        int64:pkt2 = raw ssh_recv_packet(session);
+        if (pkt2 == 0i64) {
+            drop(_next_method(p));
+            pass 0i32;
+        }
+        int32:mtype2 = raw ssh_buf_read_byte(pkt2, 0i64);
+        drop(raw ssh_buf_free(pkt2));
+        if (mtype2 == 52i32) { pass 1i32; }
+        drop(_next_method(p));
+        pass 0i32;
+    }
+
+    pass 0i32;
+};
+
+// ── Password method ────────────────────────────────────────────────────────────
+
+int64[32]:g_pw_pending;       // 1 if waiting for user password
+string[32]:g_pw_response;     // password provided by caller
+
+pub func:auth_provide_password = NIL(int64:pane_id, string:password) {
+    if (pane_id < 0i64 || pane_id >= 32i64) { pass(NIL); }
+    g_pw_response[pane_id] = string_concat(password, "");
+    g_pw_pending[pane_id]  = 0i64;
+    pass(NIL);
+};
+
+func:_try_password = int32(int64:pane_id) {
+    int64:p = pane_id;
+    int64:session = g_auth_session[p];
+    string:user = string_concat(g_auth_username[p], "");
+
+    // State 0: request password from UI
+    if (g_auth_state[p] == 0i64) {
+        g_auth_state[p] = 1i64;
+        g_pw_pending[p] = 1i64;
+        g_pw_response[p] = "";
+        pass 3i32;
+    }
+
+    // State 1: waiting for password
+    if (g_auth_state[p] == 1i64) {
+        if (g_pw_pending[p] == 1i64) {
+            pass 3i32;
+        }
+        string:pw = string_concat(g_pw_response[p], "");
+
+        // Try auth
+        int64:rc = raw ssh_auth_password(session, user, pw);
+        if (rc == 0i64) {
+            // Parse server response
+            int64:pkt = raw ssh_recv_packet(session);
+            if (pkt != 0i64) {
+                int32:mtype = raw ssh_buf_read_byte(pkt, 0i64);
+                drop(raw ssh_buf_free(pkt));
+                if (mtype == 52i32) { pass 1i32; }
+            }
+        }
+        // Failed — advance state to allow retry? For v0.8.2, just fail out.
+        drop(_next_method(p));
+        pass 0i32;
+    }
+
+    pass 0i32;
+};
+
+// ── Main dispatcher ────────────────────────────────────────────────────────────
+
+pub func:auth_try_next = int32(int64:pane_id) {
+    if (pane_id < 0i64 || pane_id >= 32i64) { pass 2i32; }
+    int64:p = pane_id;
+    int64:meth = g_auth_current_meth[p];
+
+    if (meth == 99i64) { pass 2i32; }
+
+    // Check server support before attempting each method
+    int64:session = g_auth_session[p];
+    string:server_methods = raw SSH_auth_failure_methods(session);
+
+    if (meth == 0i64) {
+        int32:r = raw _try_agent(p);
+        pass r;
+    }
+
+    if (meth == 1i64) {
+        // Skip if server doesn't advertise publickey (after first auth_none)
+        if (string_length(server_methods) > 0i64) {
+            if (!string_contains(server_methods, "publickey")) {
+                drop(_next_method(p));
+                pass 0i32;
+            }
+        }
+        int32:r = raw _try_pubkey(p);
+        pass r;
+    }
+
+    if (meth == 2i64) {
+        if (string_length(server_methods) > 0i64) {
+            if (!string_contains(server_methods, "keyboard-interactive")) {
+                drop(_next_method(p));
+                pass 0i32;
+            }
+        }
+        int32:r = raw _try_kbdint(p);
+        pass r;
+    }
+
+    if (meth == 3i64) {
+        if (string_length(server_methods) > 0i64) {
+            if (!string_contains(server_methods, "password")) {
+                drop(_next_method(p));
+                pass 0i32;
+            }
+        }
+        int32:r = raw _try_password(p);
+        pass r;
+    }
+
+    pass 2i32;
+};
+
+pub func:auth_current_method = int32(int64:pane_id) {
+    if (pane_id < 0i64 || pane_id >= 32i64) { pass 99i32; }
+    pass @cast<int32>(g_auth_current_meth[pane_id]);
+};

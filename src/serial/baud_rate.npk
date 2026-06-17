@@ -1,0 +1,86 @@
+// src/serial/baud_rate.npk — Baud rate constants and helpers (v0.9.0)
+//
+// Provides standard baud rate constants (Linux termios values) and utility
+// functions for baud rate labeling and validation.
+//
+// Standard termios baud constants (Linux x86-64):
+//   B300..B38400 are in low bits (7..15)
+//   B57600+ use the CBAUDEX extension range (4097+)
+//
+// The C shim handles actual cfsetspeed() calls — these constants are the
+// integer baud rates passed to nitty_serial_open/nitty_serial_set_baud.
+
+// ── Standard integer baud rates ──────────────────────────────────────────────
+
+pub fixed int64:BAUD_300     = 300i64;
+pub fixed int64:BAUD_1200    = 1200i64;
+pub fixed int64:BAUD_2400    = 2400i64;
+pub fixed int64:BAUD_4800    = 4800i64;
+pub fixed int64:BAUD_9600    = 9600i64;
+pub fixed int64:BAUD_19200   = 19200i64;
+pub fixed int64:BAUD_38400   = 38400i64;
+pub fixed int64:BAUD_57600   = 57600i64;
+pub fixed int64:BAUD_115200  = 115200i64;
+pub fixed int64:BAUD_230400  = 230400i64;
+pub fixed int64:BAUD_460800  = 460800i64;
+pub fixed int64:BAUD_921600  = 921600i64;
+pub fixed int64:BAUD_1000000 = 1000000i64;
+pub fixed int64:BAUD_1500000 = 1500000i64;
+pub fixed int64:BAUD_2000000 = 2000000i64;
+pub fixed int64:BAUD_3000000 = 3000000i64;
+
+// ── Public helpers ────────────────────────────────────────────────────────────
+
+/// Returns 1 if baud is a known standard rate, 0 otherwise.
+pub func:baud_is_standard = int64(int64:baud) {
+    if (baud == 300i64)     { pass(1i64); }
+    if (baud == 1200i64)    { pass(1i64); }
+    if (baud == 2400i64)    { pass(1i64); }
+    if (baud == 4800i64)    { pass(1i64); }
+    if (baud == 9600i64)    { pass(1i64); }
+    if (baud == 19200i64)   { pass(1i64); }
+    if (baud == 38400i64)   { pass(1i64); }
+    if (baud == 57600i64)   { pass(1i64); }
+    if (baud == 115200i64)  { pass(1i64); }
+    if (baud == 230400i64)  { pass(1i64); }
+    if (baud == 460800i64)  { pass(1i64); }
+    if (baud == 921600i64)  { pass(1i64); }
+    if (baud == 1000000i64) { pass(1i64); }
+    if (baud == 1500000i64) { pass(1i64); }
+    if (baud == 2000000i64) { pass(1i64); }
+    if (baud == 3000000i64) { pass(1i64); }
+    pass(0i64);
+};
+
+/// Returns a human-readable label for a baud rate, e.g. "115200 bps".
+/// For non-standard rates, returns "<rate> bps (custom)".
+pub func:baud_label = string(int64:baud) {
+    string:base = string_concat(string_from_int(baud), " bps");
+    int64:is_std = raw baud_is_standard(baud);
+    if (is_std == 0i64) {
+        pass(string_concat(base, " (custom)"));
+    }
+    pass(base);
+};
+
+/// Returns the nearest standard baud rate at or below the requested rate.
+/// Returns 115200 if baud is 0 or below all standards.
+pub func:baud_nearest_standard = int64(int64:baud) {
+    if (baud >= 3000000i64) { pass(3000000i64); }
+    if (baud >= 2000000i64) { pass(2000000i64); }
+    if (baud >= 1500000i64) { pass(1500000i64); }
+    if (baud >= 1000000i64) { pass(1000000i64); }
+    if (baud >= 921600i64)  { pass(921600i64);  }
+    if (baud >= 460800i64)  { pass(460800i64);  }
+    if (baud >= 230400i64)  { pass(230400i64);  }
+    if (baud >= 115200i64)  { pass(115200i64);  }
+    if (baud >= 57600i64)   { pass(57600i64);   }
+    if (baud >= 38400i64)   { pass(38400i64);   }
+    if (baud >= 19200i64)   { pass(19200i64);   }
+    if (baud >= 9600i64)    { pass(9600i64);    }
+    if (baud >= 4800i64)    { pass(4800i64);    }
+    if (baud >= 2400i64)    { pass(2400i64);    }
+    if (baud >= 1200i64)    { pass(1200i64);    }
+    if (baud >= 300i64)     { pass(300i64);     }
+    pass(115200i64);
+};

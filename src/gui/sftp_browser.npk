@@ -1,0 +1,312 @@
+// src/gui/sftp_browser.npk — SFTP Browser Panel (v0.8.5)
+//
+// Manages the SFTP browser side panel. Owns the composite GTK widget,
+// connects it to ssh_sftp.npk (session + listing) and sftp_transfer.npk
+// (file transfers). Provides a simple rename-dialog and file upload picker.
+//
+// Per-frame flow (called from terminal_widget.npk tw_on_draw):
+//   drop(sftp_browser_tick(pane_slot));   // advance SSH handshake
+//   drop(sftp_browser_poll_events());     // drain GTK widget event queue
+//
+// Toggled by Ctrl+Shift+S (hotkey "sftp.browser") and context menu action 16.
+
+use "gtk4_ffi.npk".*;
+use "../ssh/ssh_sftp.npk".*;
+use "../ssh/sftp_transfer.npk".*;
+use "../core/pane.npk".*;
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+pub fixed int64:SFTP_BROWSER_CLOSED  = 0i64;
+pub fixed int64:SFTP_BROWSER_OPEN    = 1i64;
+
+// ── Module state ──────────────────────────────────────────────────────────────
+
+int64:g_sb_widget       = 0i64;   // SFTP panel widget handle
+int64:g_sb_list_box     = 0i64;   // GtkListBox inside the panel
+int64:g_sb_path_label   = 0i64;   // path breadcrumb label
+int64:g_sb_status_label = 0i64;   // "N items" / "Connecting…" label
+int64:g_sb_xfer_label   = 0i64;   // transfer progress label
+int64:g_sb_state        = 0i64;   // SFTP_BROWSER_CLOSED / OPEN
+int64:g_sb_pane_slot    = -1i64;  // active pane this panel is showing
+int64:g_sb_initialized  = 0i64;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+/// Create the composite widget. Call once from app_init(), before the
+/// window is shown. Pass win + drawing_area to complete the panel attach.
+pub func:sftp_browser_init = NIL(int64:win, int64:drawing_area) {
+    int64:widget = nitty_gtk4_sftp_create();
+    g_sb_widget       = widget;
+    g_sb_list_box     = nitty_gtk4_sftp_list_box(widget);
+    g_sb_path_label   = nitty_gtk4_sftp_path_label(widget);
+    g_sb_status_label = nitty_gtk4_sftp_status_label(widget);
+    g_sb_xfer_label   = nitty_gtk4_sftp_xfer_label(widget);
+
+    // Attach panel to the right of the drawing area
+    nitty_gtk4_sftp_panel_attach(win, drawing_area, widget);
+    // Start hidden
+    nitty_gtk4_sftp_panel_set_visible(0i32);
+    g_sb_state       = SFTP_BROWSER_CLOSED;
+    g_sb_initialized = 1i64;
+
+    drop(sftp_init());
+    drop(xfer_init());
+    pass(NIL);
+};
+
+// ── Toggle ────────────────────────────────────────────────────────────────────
+
+/// Toggle the SFTP browser open/closed for the given pane_slot.
+/// If pane has no SSH session, shows a "Not connected" status and stays closed.
+pub func:sftp_browser_toggle = NIL(int64:pane_slot) {
+    if (g_sb_initialized == 0i64) { pass(NIL); }
+
+    if (g_sb_state == SFTP_BROWSER_OPEN && g_sb_pane_slot == pane_slot) {
+        // Already open for this pane — close it
+        nitty_gtk4_sftp_panel_set_visible(0i32);
+        g_sb_state     = SFTP_BROWSER_CLOSED;
+        g_sb_pane_slot = -1i64;
+        pass(NIL);
+    }
+
+    // Opening or switching pane
+    int64:session = raw pane_get_ssh_session(pane_slot);
+    if (session == 0i64) {
+        // No SSH connection — don't open
+        nitty_gtk4_label_set_text(g_sb_status_label, "No SSH connection on this pane");
+        nitty_gtk4_sftp_panel_set_visible(0i32);
+        g_sb_state = SFTP_BROWSER_CLOSED;
+        pass(NIL);
+    }
+
+    g_sb_pane_slot = pane_slot;
+
+    // If session state is NONE, open a new SFTP session
+    int64:sftp_state = raw sftp_session_state(pane_slot);
+    if (sftp_state == SFTP_STATE_NONE) {
+        drop(sftp_session_open(pane_slot));
+    }
+
+    // Refresh list and show
+    nitty_gtk4_label_set_text(g_sb_status_label, "Connecting\u2026");
+    nitty_gtk4_label_set_text(g_sb_path_label, "/");
+    nitty_gtk4_list_box_clear(g_sb_list_box);
+    nitty_gtk4_sftp_panel_set_visible(1i32);
+    g_sb_state = SFTP_BROWSER_OPEN;
+    pass(NIL);
+};
+
+// ── Directory listing helpers ─────────────────────────────────────────────────
+
+/// Rebuild the list box from the current sftp_entry_* results.
+func:_sb_populate_list = NIL(int64:pane_slot) {
+    nitty_gtk4_list_box_clear(g_sb_list_box);
+    int64:n = raw sftp_entry_count(pane_slot);
+    int64:i = 0i64;
+    while (i < n) {
+        string:label = raw sftp_entry_label(pane_slot, i);
+        drop(nitty_gtk4_list_box_append(g_sb_list_box, label));
+        i = i + 1i64;
+    }
+    string:cwd       = raw sftp_session_get_cwd(pane_slot);
+    string:count_str = string_concat(string_from_int(n), " items");
+    nitty_gtk4_label_set_text(g_sb_path_label, cwd);
+    nitty_gtk4_label_set_text(g_sb_status_label, count_str);
+    pass(NIL);
+};
+
+/// Navigate to a subdirectory by entry index.
+func:_sb_navigate_to_entry = NIL(int64:pane_slot, int64:entry_idx) {
+    int64:is_dir = raw sftp_entry_is_dir(pane_slot, entry_idx);
+    if (is_dir == 1i64) {
+        string:path = raw sftp_entry_path(pane_slot, entry_idx);
+        drop(sftp_list_dir(pane_slot, path));
+        nitty_gtk4_label_set_text(g_sb_status_label, "Loading\u2026");
+    }
+    // Files: no-op (download via context menu only)
+    pass(NIL);
+};
+
+/// Navigate up one directory level.
+func:_sb_navigate_up = NIL(int64:pane_slot) {
+    string:cwd = raw sftp_session_get_cwd(pane_slot);
+    int64:len = string_length(cwd);
+    if (len <= 1i64) { pass(NIL); }  // already at /
+    // Strip trailing slash if any
+    string:path = cwd;
+    // Find last '/' scanning from end
+    int64:i = len - 1i64;
+    // If path ends in '/', start search one earlier
+    if (string_substring(path, len - 1i64, len) == "/") { i = len - 2i64; }
+    while (i > 0i64) {
+        if (string_substring(path, i, i + 1i64) == "/") {
+            string:parent = string_substring(path, 0i64, i);
+            if (string_length(parent) == 0i64) { parent = "/"; }
+            drop(sftp_list_dir(pane_slot, parent));
+            nitty_gtk4_label_set_text(g_sb_status_label, "Loading\u2026");
+            pass(NIL);
+        }
+        i = i - 1i64;
+    }
+    // Fell through to root
+    drop(sftp_list_dir(pane_slot, "/"));
+    nitty_gtk4_label_set_text(g_sb_status_label, "Loading\u2026");
+    pass(NIL);
+};
+
+// ── Frame tick ────────────────────────────────────────────────────────────────
+
+/// Advance SFTP session and transfer state machines.
+/// Call every frame from tw_on_draw for each SSH pane.
+pub func:sftp_browser_tick = NIL(int64:pane_slot) {
+    if (g_sb_initialized == 0i64 || g_sb_pane_slot != pane_slot) { pass(NIL); }
+
+    int64:sftp_state_was = raw sftp_session_state(pane_slot);
+
+    // Advance SFTP session state machine
+    drop(sftp_tick(pane_slot));
+
+    int64:sftp_state_now = raw sftp_session_state(pane_slot);
+
+    // Listing just completed → repopulate list
+    if (sftp_state_was == SFTP_STATE_LISTING && sftp_state_now == SFTP_STATE_READY) {
+        drop(_sb_populate_list(pane_slot));
+    }
+
+    // Session just became ready for the first time → list home directory
+    if (sftp_state_was == SFTP_STATE_INIT && sftp_state_now == SFTP_STATE_READY) {
+        drop(sftp_list_dir(pane_slot, "/"));
+        nitty_gtk4_label_set_text(g_sb_status_label, "Loading\u2026");
+    }
+
+    // Error state
+    if (sftp_state_now == SFTP_STATE_ERROR) {
+        string:err = raw sftp_session_error(pane_slot);
+        nitty_gtk4_label_set_text(g_sb_status_label, string_concat("Error: ", err));
+    }
+
+    // Advance transfer engine
+    drop(xfer_tick(pane_slot));
+
+    // Update xfer label each frame
+    string:xfer_sum = raw xfer_summary(pane_slot);
+    nitty_gtk4_label_set_text(g_sb_xfer_label, xfer_sum);
+
+    pass(NIL);
+};
+
+/// Poll SFTP browser widget events each frame.
+/// Returns 1 if an event was processed (caller may want redraw), else 0.
+pub func:sftp_browser_poll_events = int64() {
+    if (g_sb_initialized == 0i64 || g_sb_state == SFTP_BROWSER_CLOSED) { pass 0i64; }
+    int64:pane_slot = g_sb_pane_slot;
+    int64:sftp_state = raw sftp_session_state(pane_slot);
+    int64:ready = is (sftp_state == SFTP_STATE_READY) : 1i64 : 0i64;
+
+    int64:ev = nitty_gtk4_sftp_event_poll(g_sb_widget);
+    if (ev == 0i64) { pass 0i64; }
+
+    int64:row = nitty_gtk4_sftp_event_row();
+
+    // SFTP_EV_ACTIVATE (1) — double-click or Enter: navigate into dir
+    if (ev == 1i64 && ready == 1i64 && row >= 0i64) {
+        drop(_sb_navigate_to_entry(pane_slot, row));
+    }
+
+    // SFTP_EV_REFRESH (2)
+    if (ev == 2i64 && ready == 1i64) {
+        string:cwd = raw sftp_session_get_cwd(pane_slot);
+        drop(sftp_list_dir(pane_slot, cwd));
+        nitty_gtk4_label_set_text(g_sb_status_label, "Refreshing\u2026");
+    }
+
+    // SFTP_EV_DOWNLOAD (3)
+    if (ev == 3i64 && ready == 1i64 && row >= 0i64) {
+        string:remote = raw sftp_entry_path(pane_slot, row);
+        string:name   = raw sftp_entry_name(pane_slot, row);
+        // Download to ~/Downloads/<name>
+        string:home_dl = string_concat(
+            nitty_gtk4_prompt_string("Download to local path:", name), "");
+        if (string_length(home_dl) > 0i64) {
+            drop(xfer_enqueue(pane_slot, XFER_DIR_DOWNLOAD, home_dl, remote));
+        }
+    }
+
+    // SFTP_EV_UPLOAD (4) — prompt for local path, upload to cwd
+    if (ev == 4i64 && ready == 1i64) {
+        string:local_path = nitty_gtk4_prompt_string("Upload local file path:", "");
+        if (string_length(local_path) > 0i64) {
+            // Derive remote path from cwd + basename
+            string:cwd_ul = raw sftp_session_get_cwd(pane_slot);
+            // Simple basename: last segment after last '/'
+            int64:lp_len = string_length(local_path);
+            int64:lp_i   = lp_len - 1i64;
+            string:bname = local_path;
+            while (lp_i >= 0i64) {
+                if (string_substring(local_path, lp_i, lp_i + 1i64) == "/") {
+                    bname = string_substring(local_path, lp_i + 1i64, lp_len);
+                    lp_i  = -1i64;  // break
+                }
+                lp_i = lp_i - 1i64;
+            }
+            string:sep_ul = is (string_length(cwd_ul) > 1i64) : "/" : "";
+            string:remote_ul = string_concat(cwd_ul, string_concat(sep_ul, bname));
+            drop(xfer_enqueue(pane_slot, XFER_DIR_UPLOAD, local_path, remote_ul));
+        }
+    }
+
+    // SFTP_EV_RENAME (5)
+    if (ev == 5i64 && ready == 1i64 && row >= 0i64) {
+        string:old_path = raw sftp_entry_path(pane_slot, row);
+        string:old_name = raw sftp_entry_name(pane_slot, row);
+        string:new_name = nitty_gtk4_prompt_string("Rename to:", old_name);
+        if (string_length(new_name) > 0i64 && new_name != old_name) {
+            string:cwd_ren = raw sftp_session_get_cwd(pane_slot);
+            string:sep_ren = is (string_length(cwd_ren) > 1i64) : "/" : "";
+            string:new_path = string_concat(cwd_ren, string_concat(sep_ren, new_name));
+            drop(sftp_rename(pane_slot, old_path, new_path));
+            // Refresh after rename
+            drop(sftp_list_dir(pane_slot, cwd_ren));
+        }
+    }
+
+    // SFTP_EV_DELETE (6)
+    if (ev == 6i64 && ready == 1i64 && row >= 0i64) {
+        string:del_path = raw sftp_entry_path(pane_slot, row);
+        int64:del_is_dir = raw sftp_entry_is_dir(pane_slot, row);
+        if (del_is_dir == 1i64) {
+            drop(sftp_rmdir(pane_slot, del_path));
+        }
+        if (del_is_dir != 1i64) {
+            drop(sftp_delete(pane_slot, del_path));
+        }
+        string:cwd_del = raw sftp_session_get_cwd(pane_slot);
+        drop(sftp_list_dir(pane_slot, cwd_del));
+    }
+
+    // SFTP_EV_MKDIR (7)
+    if (ev == 7i64 && ready == 1i64) {
+        string:new_dir = nitty_gtk4_prompt_string("New folder name:", "");
+        if (string_length(new_dir) > 0i64) {
+            string:cwd_mk = raw sftp_session_get_cwd(pane_slot);
+            string:sep_mk = is (string_length(cwd_mk) > 1i64) : "/" : "";
+            string:dir_path = string_concat(cwd_mk, string_concat(sep_mk, new_dir));
+            drop(sftp_mkdir(pane_slot, dir_path));
+            drop(sftp_list_dir(pane_slot, cwd_mk));
+        }
+    }
+
+    // SFTP_EV_UP (8)
+    if (ev == 8i64 && ready == 1i64) {
+        drop(_sb_navigate_up(pane_slot));
+    }
+
+    nitty_gtk4_queue_redraw();
+    pass(1i64);
+};
+
+/// Return 1 if the SFTP browser panel is currently open.
+pub func:sftp_browser_is_open = int64() {
+    pass(g_sb_state);
+};

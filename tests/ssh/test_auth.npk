@@ -1,0 +1,121 @@
+// tests/ssh/test_auth.npk — SSH auth unit tests (v0.8.2)
+//
+// Tests for ssh_auth.npk multi-method authentication negotiator.
+// These are unit tests that verify state management without a live server.
+//
+// T01: auth_init sets current_method to AUTH_METHOD_AGENT (== 0)
+// T02: auth_current_method after reset == 0 (AGENT)
+// T03a-e: AUTH_METHOD_* constants are distinct
+// T04a-c: AUTH_RESULT_* constants are distinct
+// T05: auth_has_error == 0 after init
+// T06: auth_last_error length == 0 after init
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/src/nitpick_ssh.npk".*;
+use "../../src/ssh/ssh_auth.npk".*;
+use "../../src/core/pane.npk".*;
+
+int64:STDOUT = 1i64;
+
+func:write_stdout = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check_int = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        drop(write_stdout(string_concat("[PASS] ", string_concat(name, "\n"))));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    drop(write_stdout(string_concat("[FAIL] ", string_concat(name,
+        string_concat(" expected=", string_concat(string_from_int(expected),
+        string_concat(" got=", string_concat(string_from_int(got), "\n"))))))));
+    pass(NIL);
+};
+
+func:main = int32() {
+    // Declare all variables up-front (Nitpick requires this)
+    int32:m_agent    = 0i32;
+    int32:m_pubkey   = 0i32;
+    int32:m_kbdint   = 0i32;
+    int32:m_password = 0i32;
+    int32:m_none     = 0i32;
+    int32:r_ok       = 0i32;
+    int32:r_fail2    = 0i32;
+    int32:r_input    = 0i32;
+    int32:r_progress = 0i32;
+    int32:eq_ab      = 0i32;
+    int32:eq_ac      = 0i32;
+    int32:eq_bc      = 0i32;
+    int32:eq_cd      = 0i32;
+    int32:eq_de      = 0i32;
+    int32:eq_of      = 0i32;
+    int32:eq_oi      = 0i32;
+    int32:eq_fp      = 0i32;
+    string:e         = "";
+    int32:herr       = 0i32;
+    int32:cur        = 0i32;
+
+    // T01: auth_init with valid pane slot (slot 0)
+    // Use a fake session handle (0 — we won't actually call auth)
+    drop(auth_init(0i64, 0i64, "testuser", ""));
+    cur = raw auth_current_method(0i64);
+    drop(check_int("T01: current_method after init == 0 (AGENT)",
+        0i64, @cast<int64>(cur)));
+
+    // T02: auth_current_method changes after auth_reset
+    drop(auth_reset(0i64));
+    cur = raw auth_current_method(0i64);
+    drop(check_int("T02: current_method after reset == 0 (AGENT)",
+        0i64, @cast<int64>(cur)));
+
+    // T03: AUTH_METHOD_* constants are distinct
+    m_agent    = AUTH_METHOD_AGENT;
+    m_pubkey   = AUTH_METHOD_PUBKEY;
+    m_kbdint   = AUTH_METHOD_KBDINT;
+    m_password = AUTH_METHOD_PASSWORD;
+    m_none     = AUTH_METHOD_NONE;
+    eq_ab = 0i32; if (m_agent    == m_pubkey)   { eq_ab = 1i32; }
+    eq_ac = 0i32; if (m_agent    == m_kbdint)   { eq_ac = 1i32; }
+    eq_bc = 0i32; if (m_pubkey   == m_kbdint)   { eq_bc = 1i32; }
+    eq_cd = 0i32; if (m_kbdint   == m_password) { eq_cd = 1i32; }
+    eq_de = 0i32; if (m_password == m_none)      { eq_de = 1i32; }
+    drop(check_int("T03a: AGENT != PUBKEY",   0i64, @cast<int64>(eq_ab)));
+    drop(check_int("T03b: AGENT != KBDINT",   0i64, @cast<int64>(eq_ac)));
+    drop(check_int("T03c: PUBKEY != KBDINT",  0i64, @cast<int64>(eq_bc)));
+    drop(check_int("T03d: KBDINT != PASSWORD",0i64, @cast<int64>(eq_cd)));
+    drop(check_int("T03e: PASSWORD != NONE",  0i64, @cast<int64>(eq_de)));
+
+    // T04: AUTH_RESULT_* constants are distinct
+    r_ok       = AUTH_RESULT_OK;
+    r_fail2    = AUTH_RESULT_FAIL;
+    r_input    = AUTH_RESULT_NEED_INPUT;
+    r_progress = AUTH_RESULT_IN_PROGRESS;
+    eq_of = 0i32; if (r_ok    == r_fail2)    { eq_of = 1i32; }
+    eq_oi = 0i32; if (r_ok    == r_input)    { eq_oi = 1i32; }
+    eq_fp = 0i32; if (r_fail2 == r_progress) { eq_fp = 1i32; }
+    drop(check_int("T04a: OK != FAIL",         0i64, @cast<int64>(eq_of)));
+    drop(check_int("T04b: OK != NEED_INPUT",   0i64, @cast<int64>(eq_oi)));
+    drop(check_int("T04c: FAIL != IN_PROGRESS",0i64, @cast<int64>(eq_fp)));
+
+    // T05: auth_init then auth_has_error = 0
+    drop(auth_init(1i64, 0i64, "alice", ""));
+    herr = raw auth_has_error(1i64);
+    drop(check_int("T05: auth_has_error == 0 after init", 0i64, @cast<int64>(herr)));
+
+    // T06: auth_last_error returns empty string after init
+    e = raw auth_last_error(1i64);
+    drop(check_int("T06: auth_last_error length == 0 after init", 0i64, string_length(e)));
+
+    // Summary
+    drop(write_stdout(string_concat("\n--- Results: ", string_concat(string_from_int(g_pass),
+        string_concat(" passed, ", string_concat(string_from_int(g_fail), " failed\n"))))));
+
+    if (g_fail > 0i64) { exit 1i32; }
+    exit 0i32;
+};

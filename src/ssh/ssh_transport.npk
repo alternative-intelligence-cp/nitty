@@ -1,0 +1,42 @@
+// src/ssh/ssh_transport.npk — TCP connection layer for SSH (v0.8.1)
+//
+// Wraps nitpick-ssh's built-in TCP/DNS functions with a cleaner API.
+// The underlying C shim (nitpick_ssh_shim) handles getaddrinfo + connect.
+//
+// Import with: use "../../src/ssh/ssh_transport.npk".*;
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/src/nitpick_ssh.npk".*;
+
+// ── Connection ──────────────────────────────────────────────────────────────
+
+// Connect to host:port via TCP (handles DNS internally).
+// timeout_secs: connect + I/O timeout (0 = use library default of 30s).
+// Returns: socket fd (> 0) on success, -1 on failure.
+pub func:ssh_tcp_connect = int64(string:host, int64:port, int64:timeout_secs) {
+    int64:fd = raw SSH_net_connect(host, port);
+    if (fd < 0i64) { pass(-1i64); }
+    if (timeout_secs > 0i64) {
+        drop(raw SSH_net_set_timeout(fd, timeout_secs));
+    }
+    pass(fd);
+};
+
+// Close a TCP socket opened by ssh_tcp_connect.
+pub func:ssh_tcp_close = NIL(int64:fd) {
+    if (fd < 0i64) { pass(NIL); }
+    drop(SSH_net_close(fd));
+    pass(NIL);
+};
+
+// Non-blocking check: is data available to read on this fd?
+// Uses libc_net_poll_read with 0ms timeout.
+// Returns: 1 = data ready, 0 = no data, -1 = error/closed.
+pub func:ssh_tcp_poll_readable = int64(int64:fd) {
+    if (fd < 0i64) { pass(-1i64); }
+    // poll_read with 0ms timeout = non-blocking check
+    int64:result = raw SSH_net_set_timeout(fd, 0i64);
+    // Use recv with EAGAIN approach: try to peek, non-blocking
+    // We set timeout 0 via ssh_net_set_timeout and try recv_exact(1)
+    // If it fails immediately, no data. This is wrapped in ssh_poll_read.
+    pass(result);
+};

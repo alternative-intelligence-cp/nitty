@@ -1,0 +1,122 @@
+// src/serial/serial_ffi.npk — FFI declarations for the serial C shim (v0.9.1)
+//
+// All functions return bare values (no Result<T> wrapping) since they are
+// in an extern block. Call them directly without 'raw'.
+//
+// The serial shim is at shim/serial/nitty_serial_shim.c
+
+extern "serial_shim" {
+    // ── Open / Close ─────────────────────────────────────────────────────────
+
+    // Open and configure a serial port.
+    // parity: 0=none, 1=odd, 2=even
+    // flow_control: 0=none, 1=hardware (RTS/CTS), 2=software (XON/XOFF)
+    // Returns fd on success, -1 on error.
+    func:nitty_serial_open = int64(
+        string:path,
+        int64:baud,
+        int64:data_bits,
+        int64:parity,
+        int64:stop_bits,
+        int64:flow_control
+    );
+
+    // Close the serial port and restore original termios.
+    // Returns 0 on success, -1 on error.
+    func:nitty_serial_close = int64(int64:fd);
+
+    // Change baud rate on an already-open fd.
+    // Returns 0 on success, -1 on error.
+    func:nitty_serial_set_baud = int64(int64:fd, int64:baud);
+
+    // ── Read ─────────────────────────────────────────────────────────────────
+
+    // Read available bytes into internal 16KB buffer.
+    // Returns: >0 = bytes read, 0 = EOF, -1 = error, -2 = EAGAIN (no data).
+    func:nitty_serial_read_buffered = int64(int64:fd);
+
+    // Length of data in the read buffer (valid after nitty_serial_read_buffered).
+    func:nitty_serial_read_buf_len = int64();
+
+    // Pointer to the null-terminated read buffer contents.
+    func:nitty_serial_read_buf_str = string();
+
+    // ── Write ────────────────────────────────────────────────────────────────
+
+    // Write a string to the serial port. Returns bytes written or -1.
+    func:nitty_serial_write_string = int64(int64:fd, string:data);
+
+    // Write a single byte to the serial port. Returns 1 on success or -1.
+    func:nitty_serial_write_byte = int64(int64:fd, int64:byte_val);
+
+    // ── Flush / Drain ────────────────────────────────────────────────────────
+
+    // Discard input and output buffers (TCIOFLUSH).
+    func:nitty_serial_flush = int64(int64:fd);
+
+    // Wait for output to drain (tcdrain).
+    func:nitty_serial_drain = int64(int64:fd);
+
+    // ── Device check ─────────────────────────────────────────────────────────
+
+    // Returns 1 if fd refers to a TTY device, 0 otherwise (isatty).
+    func:nitty_serial_is_tty = int64(int64:fd);
+
+    // ── Port enumeration ─────────────────────────────────────────────────────
+
+    // Scan /dev/ for ttyUSB*, ttyACM*, ttyS[0-7]. Returns port count (0..64).
+    func:nitty_serial_enumerate = int64();
+
+    // Number of ports found by the last nitty_serial_enumerate() call.
+    func:nitty_serial_port_count = int64();
+
+    // Device path of port i (e.g. "/dev/ttyUSB0"). Returns "" if out of range.
+    func:nitty_serial_port_name = string(int64:i);
+
+    // Description of port i (e.g. "FTDI FT232R"). Returns "" if unknown.
+    func:nitty_serial_port_desc = string(int64:i);
+
+    // ── Control signals & modem status (v0.9.1) ──────────────────────────────
+
+    // Send a BREAK signal. duration_ms=0 uses default (~250ms).
+    // Returns 0 on success, -1 on error.
+    func:nitty_serial_send_break = int64(int64:fd, int64:duration_ms);
+
+    // Set or clear DTR (Data Terminal Ready). state=1 asserts, state=0 clears.
+    // Returns 0 on success, -1 on error.
+    func:nitty_serial_set_dtr = int64(int64:fd, int64:state);
+
+    // Set or clear RTS (Request To Send). state=1 asserts, state=0 clears.
+    // Returns 0 on success, -1 on error.
+    func:nitty_serial_set_rts = int64(int64:fd, int64:state);
+
+    // Read modem status register (TIOCMGET).
+    // Returns bitmask with CTS/DSR/DCD/RI bits, or -1 on error.
+    func:nitty_serial_get_modem_status = int64(int64:fd);
+
+    // Bitmask extractors (operate on value from nitty_serial_get_modem_status).
+    func:nitty_serial_modem_cts = int64(int64:status);
+    func:nitty_serial_modem_dsr = int64(int64:status);
+    func:nitty_serial_modem_dcd = int64(int64:status);
+    func:nitty_serial_modem_ri  = int64(int64:status);
+
+    // Write a single byte then sleep delay_us microseconds (slow-feed mode).
+    // Returns 1 on success, -1 on write error.
+    func:nitty_serial_write_byte_delayed = int64(int64:fd, int64:byte_val, int64:delay_us);
+
+    // ── Byte-level string helpers (v0.9.1) ───────────────────────────────────
+
+    // Extract the integer byte value of character at index i in a string.
+    // Returns 0..255, or -1 if out of range.
+    func:nitty_serial_byte_at = int64(string:s, int64:i);
+
+    // Format data as an xxd-style hex dump.
+    // len: number of bytes in data to format (use string_length(data))
+    // byte_offset: running offset counter to print in the offset column
+    // max_bytes: cap at this many bytes (0 = no limit)
+    // Returns a pointer to the formatted string (valid until next call).
+    func:nitty_serial_hexdump = string(string:data, int64:len, int64:byte_offset, int64:max_bytes);
+
+    // Returns the byte length of the last nitty_serial_hexdump result.
+    func:nitty_serial_hexdump_len = int64();
+}

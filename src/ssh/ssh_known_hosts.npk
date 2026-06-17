@@ -1,0 +1,101 @@
+// src/ssh/ssh_known_hosts.npk — Known hosts file management (v0.8.1)
+//
+// Wraps nitpick-ssh's built-in known_hosts functions with a cleaner API
+// and adds path resolution (using $HOME from nitpick-env).
+//
+// Known hosts check results:
+//   KH_TRUSTED  (1)  — host is known, fingerprint matches
+//   KH_NEW_HOST (0)  — host not in file (TOFU: trust on first use)
+//   KH_MISMATCH (-1) — host key has CHANGED — POTENTIAL MITM ATTACK
+//   KH_ERROR    (-2) — load/check error
+//
+// Import with: use "../../src/ssh/ssh_known_hosts.npk".*;
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/src/nitpick_ssh.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
+
+// ── Result Constants ────────────────────────────────────────────────────────
+
+pub func:KH_TRUSTED   = int64() { pass( 1i64); };   // fingerprint matches
+pub func:KH_NEW_HOST  = int64() { pass( 0i64); };   // not in file → TOFU
+pub func:KH_MISMATCH  = int64() { pass(-1i64); };   // CHANGED! → block
+pub func:KH_ERROR     = int64() { pass(-2i64); };   // file load/parse error
+
+// ── Path Helpers ────────────────────────────────────────────────────────────
+
+// Return the path to ~/.ssh/known_hosts.
+// Uses nitpick-env to read $HOME.
+pub func:ssh_known_hosts_path = string() {
+    string:home = raw get("HOME");
+    if (string_length(home) == 0i64) { pass("/root/.ssh/known_hosts"); }
+    string:path = string_concat(home, "/.ssh/known_hosts");
+    pass(path);
+};
+
+// ── Load / Check / Add ──────────────────────────────────────────────────────
+
+// Load known_hosts from the default path (~/.ssh/known_hosts).
+// Returns: kh_buf handle (> 0) on success, 0 on error / file not found.
+pub func:ssh_kh_load = int64() {
+    string:path = raw ssh_known_hosts_path();
+    int64:h = raw SSH_known_hosts_load(path);
+    pass(h);
+};
+
+// Load known_hosts from an explicit path.
+// Returns: kh_buf handle (> 0) on success, 0 on error.
+pub func:ssh_kh_load_path = int64(string:path) {
+    int64:h = raw SSH_known_hosts_load(path);
+    pass(h);
+};
+
+// Check a host key against a loaded known_hosts buffer.
+// host:     hostname/IP as presented to connect (e.g. "example.com")
+// key_type: "ssh-rsa" or "ssh-ed25519"
+// key_blob: buffer handle containing the raw host key bytes
+// Returns: KH_TRUSTED (1), KH_NEW_HOST (0), KH_MISMATCH (-1)
+pub func:ssh_kh_check = int64(int64:kh_buf, string:host, string:key_type, int64:key_blob) {
+    if (kh_buf == 0i64) { pass(0i64); }  // no known_hosts file → treat as new
+    int64:result = raw SSH_known_hosts_check(kh_buf, host, key_type, key_blob);
+    pass(result);
+};
+
+// Add a host key to the known_hosts file (default path).
+// key_b64: base64-encoded public key string (as in known_hosts file format)
+// Returns: 0 on success, -1 on write failure.
+pub func:ssh_kh_add = int64(string:host, string:key_type, string:key_b64) {
+    string:path = raw ssh_known_hosts_path();
+    int64:result = raw SSH_known_hosts_add(path, host, key_type, key_b64);
+    pass(result);
+};
+
+// Add a host key to an explicit known_hosts path.
+pub func:ssh_kh_add_path = int64(string:path, string:host, string:key_type, string:key_b64) {
+    int64:result = raw SSH_known_hosts_add(path, host, key_type, key_b64);
+    pass(result);
+};
+
+// ── User-facing Messages ─────────────────────────────────────────────────────
+
+// Generate a critical warning message for a host key mismatch.
+pub func:ssh_kh_mismatch_warning = string(string:host) {
+    string:msg = string_concat(
+        "\r\n\033[1;31m@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\r\n",
+        string_concat("@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\r\n",
+        string_concat("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\r\n",
+        string_concat("IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!\r\n",
+        string_concat("The host key for '", string_concat(host,
+        string_concat("' has changed.\r\n",
+        string_concat("Connection refused for security.\033[0m\r\n", ""))))))));
+    pass(msg);
+};
+
+// Generate a TOFU (trust on first use) prompt message.
+pub func:ssh_kh_tofu_prompt = string(string:host) {
+    string:msg = string_concat(
+        "The authenticity of host '",
+        string_concat(host, string_concat(
+        "' can't be established.\r\n",
+        "Are you sure you want to continue connecting? (yes/no): ")));
+    pass(msg);
+};

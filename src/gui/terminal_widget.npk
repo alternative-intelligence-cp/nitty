@@ -77,6 +77,16 @@ use "../config/window_state.npk".*;  // v0.7.3: WinState type for saved state
 use "../terminal/bell.npk".*;        // v0.7.4: bell dispatch
 use "../terminal/activity.npk".*;    // v0.7.4: background tab activity monitor
 use "../terminal/process_monitor.npk".*; // v0.7.4: process completion notifications
+use "connection_manager.npk".*;          // v0.8.3: connection manager sidebar
+use "profile_editor.npk".*;              // v0.8.3: profile editor dialog
+use "../ssh/ssh_session.npk".{ssh_poll_read, ssh_get_state}; // v0.8.3: SSH data poll
+use "../ssh/ssh_forward.npk".{fwd_local_tick, fwd_dynamic_tick}; // v0.8.4: port forward relay
+use "../ssh/ssh_jump.npk".{jump_relay_tick, jump_is_active};      // v0.8.4: jump host relay
+use "../core/pane.npk".{pane_get_type, PANE_TYPE_SSH};            // v0.8.4: pane type check
+use "sftp_browser.npk".*;                                         // v0.8.5: SFTP browser panel
+
+// v0.8.4: Built-in string byte accessor (Nitpick runtime)
+extern func:npk_string_byte_at = int64(string:s, int64:i);
 
 // ═══════════════════════════════════════════════════════════════════════
 // Module state
@@ -259,6 +269,13 @@ func:dispatch_action = NIL(string:action, int64:rows, int64:cols) {
         // App
         ("app.settings") { drop(settings_open()); },
         ("app.quit")     { drop(nitty_gtk4_window_close(nitty_gtk4_get_main_window())); },
+        // v0.8.3: Connection Manager toggle
+        ("connection.manager") { drop(cm_toggle()); },
+        // v0.8.5: SFTP browser toggle
+        ("sftp.browser") {
+            int64:sftp_active_pane = raw split_tree_get_active();
+            drop(sftp_browser_toggle(sftp_active_pane));
+        },
         // v0.6.3: Quake mode toggle
         ("quake.toggle") { drop(quake_toggle()); },
         (*) { }  // unknown action — no-op
@@ -316,6 +333,16 @@ pub func:tw_on_draw = NIL() {
             drop(dispatch_action("quake.toggle", g_tw_rows, g_tw_cols));
         }
     }
+
+    // v0.8.3 Step 0c: Poll connection manager sidebar events each frame
+    drop(cm_tick());
+
+    // v0.8.5 Step 0d: Advance SFTP session + transfer state machines for active SSH pane
+    int64:sftp_pane_id = raw split_tree_get_active();
+    if (raw pane_get_type(sftp_pane_id) == PANE_TYPE_SSH) {
+        drop(sftp_browser_tick(sftp_pane_id));
+    }
+    drop(sftp_browser_poll_events());
 
     // Step 0: Focus change reporting (DECSET 1004)
     int64:cur_focused = nitty_gtk4_get_focused();
@@ -1031,6 +1058,39 @@ pub func:tw_on_draw = NIL() {
     int64:a_slot = raw tm_get_active_index();
     if (available_start > 0i64) {
         drop(activity_on_output(a_slot, 1i64, a_now));
+    }
+
+    // v0.8.4: SSH + Port Forward tick — drain active SSH pane data each frame
+    // For each active pane, check if it is an SSH pane and drain its channel data.
+    // Currently processes the primary active pane only (one SSH session per draw frame).
+    int64:ssh_pane_slot = raw tm_get_active_pane_slot(raw tm_get_active_index());
+    int64:ssh_ptype = raw pane_get_type(ssh_pane_slot);
+    if (ssh_ptype == PANE_TYPE_SSH()) {
+        string:ssh_data = raw ssh_poll_read(ssh_pane_slot);
+        int64:sdi = 0i64;
+        int64:sdlen = string_length(ssh_data);
+        while (sdi < sdlen) {
+            // npk_string_byte_at extracts the raw byte value at index sdi
+            int64:ssh_byte = raw npk_string_byte_at(ssh_data, sdi);
+            if (ssh_byte >= 0i64) {
+                drop(pipeline_feed(ssh_byte));
+            }
+            sdi = sdi + 1i64;
+        }
+        if (sdlen > 0i64) {
+            if (raw viewport_is_at_bottom() == 0i64) {
+                drop(viewport_scroll_to_bottom());
+            }
+            drop(activity_on_output(a_slot, 1i64, a_now));
+            drop(tw_queue_redraw());
+        }
+        // Port forwarding relay ticks
+        drop(fwd_local_tick(ssh_pane_slot));
+        drop(fwd_dynamic_tick(ssh_pane_slot));
+        // Jump host relay tick (no-op if not a jump connection)
+        if (raw jump_is_active(ssh_pane_slot) != 0i64) {
+            drop(jump_relay_tick(ssh_pane_slot));
+        }
     }
 
     // Step 2: Sync terminal state to C render grid

@@ -1,0 +1,227 @@
+// tests/ssh/test_ssh_forward.npk — Unit tests for v0.8.4 SSH Port Forwarding
+//
+// Tests cover:
+//   - Profile field accessors (forwarding and jump host fields)
+//   - fwd_init (smoke test)
+//   - fwd_parse_local_rule parsing correctness (via exported accessor functions)
+//
+// Jump host module (ssh_jump.npk) is excluded from this test binary because
+// it transitively imports gtk4_ffi.npk (via ssh_session.npk → auth_dialog.npk),
+// which is only available in the GTK4 GUI build context. Jump-specific logic is
+// verified via integration test or through the full GUI binary.
+//
+// Pattern follows test_connection_manager.npk:
+//   - func:main = int32(), not pub
+//   - println() for output
+//   - exit 0i32 / exit 1i32
+
+use "../../src/config/profile.npk".*;
+use "../../src/ssh/ssh_forward.npk".*;
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        println(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    println(string_concat("  FAIL: ", string_concat(name, string_concat(
+        " expected=", string_concat(string_from_int(expected),
+        string_concat(" got=", string_from_int(got)))))));
+    pass(NIL);
+};
+
+func:check_str = NIL(string:name, string:expected, string:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        println(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    println(string_concat("  FAIL: ", string_concat(name, string_concat(
+        " expected=\"", string_concat(expected, string_concat("\" got=\"",
+        string_concat(got, "\"")))))));
+    pass(NIL);
+};
+
+// ── T01: Profile forwarding field defaults ────────────────────────────────────
+
+func:test_t01_profile_fwd_defaults = NIL() {
+    println("T01: profile forwarding field defaults");
+    drop(profiles_init());
+
+    int64:slot = 0i64;
+    drop(check_str("T01: local_fwd default empty", "", raw profile_get_local_fwd(slot)));
+    drop(check_str("T01: remote_fwd default empty", "", raw profile_get_remote_fwd(slot)));
+    drop(check("T01: dynamic_port default 0", 0i64, raw profile_get_dynamic_port(slot)));
+    drop(check_str("T01: jump_host default empty", "", raw profile_get_jump_host(slot)));
+    drop(check("T01: jump_port default 22", 22i64, raw profile_get_jump_port(slot)));
+    drop(check_str("T01: jump_user default empty", "", raw profile_get_jump_user(slot)));
+    drop(check("T01: has_jump default 0", 0i64, raw profile_has_jump(slot)));
+
+    pass(NIL);
+};
+
+// ── T02: Profile forwarding field set/get ─────────────────────────────────────
+
+func:test_t02_profile_fwd_set_get = NIL() {
+    println("T02: profile_set_forwarding / getters");
+    drop(profiles_init());
+
+    int64:slot = 0i64;
+    drop(profile_set_forwarding(slot, "8080:localhost:80", "9000:127.0.0.1:9000", 1080i64));
+    drop(check_str("T02: local_fwd set", "8080:localhost:80", raw profile_get_local_fwd(slot)));
+    drop(check_str("T02: remote_fwd set", "9000:127.0.0.1:9000", raw profile_get_remote_fwd(slot)));
+    drop(check("T02: dynamic_port set", 1080i64, raw profile_get_dynamic_port(slot)));
+
+    pass(NIL);
+};
+
+// ── T03: Profile jump host set/get ────────────────────────────────────────────
+
+func:test_t03_profile_jump_set_get = NIL() {
+    println("T03: profile_set_jump / getters");
+    drop(profiles_init());
+
+    int64:slot = 0i64;
+    drop(profile_set_jump(slot, "bastion.example.com", 2222i64, "deploy"));
+    drop(check_str("T03: jump_host set", "bastion.example.com", raw profile_get_jump_host(slot)));
+    drop(check("T03: jump_port set", 2222i64, raw profile_get_jump_port(slot)));
+    drop(check_str("T03: jump_user set", "deploy", raw profile_get_jump_user(slot)));
+    drop(check("T03: has_jump true", 1i64, raw profile_has_jump(slot)));
+
+    // Clear jump host
+    drop(profile_set_jump(slot, "", 22i64, ""));
+    drop(check("T03: has_jump after clear", 0i64, raw profile_has_jump(slot)));
+
+    // port <= 0 → 22 fallback
+    drop(profile_set_jump(slot, "j.host", 0i64, "u"));
+    drop(check("T03: jump_port 0 → 22", 22i64, raw profile_get_jump_port(slot)));
+
+    // Out of range slot
+    drop(check_str("T03: jump_host oob", "", raw profile_get_jump_host(100i64)));
+    drop(check("T03: jump_port oob", 22i64, raw profile_get_jump_port(100i64)));
+    drop(check("T03: has_jump oob", 0i64, raw profile_has_jump(100i64)));
+
+    pass(NIL);
+};
+
+// ── T04: profile_has_jump cross-slot independence ─────────────────────────────
+
+func:test_t04_jump_independence = NIL() {
+    println("T04: jump fields per-slot independence");
+    drop(profiles_init());
+    // profiles_init() creates 1 profile at slot 0; profile_has_jump()
+    // guards on slot >= g_prof_count so we use slot 0 here.
+    // Slot 1 (not in count) always returns 0 — that proves independence.
+
+    drop(profile_set_jump(0i64, "j.example.com", 22i64, ""));
+    drop(check("T04: has_jump(0) set", 1i64, raw profile_has_jump(0i64)));
+    // Slot 1 is beyond g_prof_count (=1), should be false
+    drop(check("T04: has_jump(1) out-of-count → 0", 0i64, raw profile_has_jump(1i64)));
+    // Slot 63 out of range
+    drop(check("T04: has_jump(63) out-of-count → 0", 0i64, raw profile_has_jump(63i64)));
+
+    pass(NIL);
+};
+
+// ── T05: fwd_init smoke test ──────────────────────────────────────────────────
+
+func:test_t05_fwd_init = NIL() {
+    println("T05: fwd_init smoke test");
+    drop(fwd_init());
+    // If we didn't crash, it's a pass
+    g_pass = g_pass + 1i64;
+    println("  PASS: T05: fwd_init completed without crash");
+    pass(NIL);
+};
+
+// ── T06: fwd_parse_local_rule parsing ────────────────────────────────────────
+
+func:test_t06_fwd_parse_local_rule = NIL() {
+    println("T06: fwd_parse_local_rule");
+    drop(fwd_init());
+
+    // Valid: "8080:localhost:80"
+    int64:r1 = raw fwd_parse_local_rule("8080:localhost:80", 0i64, "", 0i64);
+    drop(check("T06: r1 valid=1", 1i64, r1));
+    drop(check("T06: r1 local_port=8080", 8080i64, raw fwd_get_parsed_local_port()));
+    drop(check_str("T06: r1 remote_host=localhost", "localhost", raw fwd_get_parsed_remote_host()));
+    drop(check("T06: r1 remote_port=80", 80i64, raw fwd_get_parsed_remote_port()));
+
+    // Valid: "2222:10.0.0.1:22"
+    int64:r2 = raw fwd_parse_local_rule("2222:10.0.0.1:22", 0i64, "", 0i64);
+    drop(check("T06: r2 valid=1", 1i64, r2));
+    drop(check("T06: r2 local_port=2222", 2222i64, raw fwd_get_parsed_local_port()));
+    drop(check_str("T06: r2 remote_host=10.0.0.1", "10.0.0.1", raw fwd_get_parsed_remote_host()));
+    drop(check("T06: r2 remote_port=22", 22i64, raw fwd_get_parsed_remote_port()));
+
+    // Empty string → 0
+    int64:r3 = raw fwd_parse_local_rule("", 0i64, "", 0i64);
+    drop(check("T06: r3 empty→0", 0i64, r3));
+
+    // Missing second colon → 0
+    int64:r4 = raw fwd_parse_local_rule("8080:localhost", 0i64, "", 0i64);
+    drop(check("T06: r4 no_rport→0", 0i64, r4));
+
+    pass(NIL);
+};
+
+// ── T07: fwd_local_start on slot 0 (no live socket expected in unit test) ─────
+
+func:test_t07_fwd_local_start_tracking = NIL() {
+    println("T07: fwd_local_start tracking (port tracking only, no live socket)");
+    drop(fwd_init());
+
+    // fwd_track_local adds to per-slot array
+    int64:idx1 = raw fwd_track_local(0i64, 8080i64);
+    drop(check("T07: track_local slot0 idx=0", 0i64, idx1));
+
+    int64:idx2 = raw fwd_track_local(0i64, 9090i64);
+    drop(check("T07: track_local slot0 idx=1", 1i64, idx2));
+
+    // Different pane slot
+    int64:idx3 = raw fwd_track_local(1i64, 3000i64);
+    drop(check("T07: track_local slot1 idx=0", 0i64, idx3));
+
+    // Overflow (all 8 slots used for slot 0)
+    drop(fwd_track_local(0i64, 7000i64));
+    drop(fwd_track_local(0i64, 7001i64));
+    drop(fwd_track_local(0i64, 7002i64));
+    drop(fwd_track_local(0i64, 7003i64));
+    drop(fwd_track_local(0i64, 7004i64));
+    drop(fwd_track_local(0i64, 7005i64));
+    // slot 0 now full; next should return -1
+    int64:ovf = raw fwd_track_local(0i64, 7006i64);
+    drop(check("T07: track_local overflow → -1", -1i64, ovf));
+
+    pass(NIL);
+};
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+func:main = int32() {
+    println("=== test_ssh_forward: Port Forwarding & Jump Host ===");
+
+    drop(test_t01_profile_fwd_defaults());
+    drop(test_t02_profile_fwd_set_get());
+    drop(test_t03_profile_jump_set_get());
+    drop(test_t04_jump_independence());
+    drop(test_t05_fwd_init());
+    drop(test_t06_fwd_parse_local_rule());
+    drop(test_t07_fwd_local_start_tracking());
+
+    println("=== Results ===");
+    if (g_fail > 0i64) {
+        println(string_concat(string_from_int(g_fail), " test(s) FAILED."));
+        exit 1i32;
+    }
+    println(string_concat("All ", string_concat(string_from_int(g_pass),
+        " port forwarding tests passed.")));
+    exit 0i32;
+};

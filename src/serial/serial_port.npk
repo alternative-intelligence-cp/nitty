@@ -1,0 +1,215 @@
+// src/serial/serial_port.npk — Serial port abstraction (v0.9.1)
+//
+// Provides SerialConfig struct, parity/flow/newline constants,
+// and pub functions for open, close, read, write, flush, drain,
+// break signals, and modem control (DTR/RTS/status).
+//
+// All I/O is delegated to the C shim (serial_ffi.npk). This module
+// is a type-safe Nitpick wrapper — no termios manipulation here.
+//
+// API summary:
+//   serial_default_config() → SerialConfig     — 8N1 115200 CRLF no flow
+//   serial_open(cfg) → int64                   — fd or -1 on error
+//   serial_close(fd) → NIL
+//   serial_set_baud(fd, baud) → int64          — 0=ok, -1=error
+//   serial_read(fd) → string                   — empty on EAGAIN/error
+//   serial_write(fd, data) → int64             — bytes written or -1
+//   serial_write_byte(fd, byte_val) → int64    — 1 or -1
+//   serial_flush(fd) → NIL
+//   serial_drain(fd) → NIL
+//   serial_is_open(fd) → int64                 — 1 if fd is a TTY, 0 otherwise
+//   serial_send_break(fd, duration_ms) → NIL   — send BREAK signal
+//   serial_set_dtr(fd, state) → NIL            — assert/clear DTR
+//   serial_set_rts(fd, state) → NIL            — assert/clear RTS
+//   serial_get_modem_status(fd) → int64        — bitmask (CTS/DSR/DCD/RI)
+//   serial_modem_cts/dsr/dcd/ri(fd) → int64   — individual line states
+
+use "../../src/serial/baud_rate.npk".*;
+use "../../src/serial/serial_ffi.npk".*;
+
+// ── Parity constants ─────────────────────────────────────────────────────────
+
+pub fixed int64:SERIAL_PARITY_NONE  = 0i64;
+pub fixed int64:SERIAL_PARITY_ODD   = 1i64;
+pub fixed int64:SERIAL_PARITY_EVEN  = 2i64;
+
+// ── Flow control constants ───────────────────────────────────────────────────
+
+pub fixed int64:SERIAL_FLOW_NONE     = 0i64;
+pub fixed int64:SERIAL_FLOW_HARDWARE = 1i64;  // RTS/CTS
+pub fixed int64:SERIAL_FLOW_SOFTWARE = 2i64;  // XON/XOFF
+
+// ── Newline mode constants ───────────────────────────────────────────────────
+
+pub fixed int64:NEWLINE_CR   = 0i64;  // Send \r for Enter; strip \r on recv
+pub fixed int64:NEWLINE_LF   = 1i64;  // Send \n for Enter; pass through
+pub fixed int64:NEWLINE_CRLF = 2i64;  // Send \r\n for Enter; normalize recv
+pub fixed int64:NEWLINE_NONE = 3i64;  // No conversion, raw bytes
+
+// ── SerialConfig struct ──────────────────────────────────────────────────────
+
+/// Configuration for a serial port connection.
+pub struct:SerialConfig = {
+    string:device;       // e.g. "/dev/ttyUSB0"
+    int64:baud;          // e.g. 115200
+    int64:data_bits;     // 5, 6, 7, or 8
+    int64:stop_bits;     // 1 or 2
+    int64:parity;        // SERIAL_PARITY_*
+    int64:flow_control;  // SERIAL_FLOW_*
+    int64:newline_mode;  // NEWLINE_* (default NEWLINE_CRLF)
+};
+
+// ── Public API — lifecycle ───────────────────────────────────────────────────
+
+/// Return a SerialConfig with standard 8N1 115200 defaults and CRLF newlines.
+pub func:serial_default_config = SerialConfig() {
+    pass(SerialConfig{
+        device:       "/dev/ttyUSB0",
+        baud:         115200i64,
+        data_bits:    8i64,
+        stop_bits:    1i64,
+        parity:       SERIAL_PARITY_NONE,
+        flow_control: SERIAL_FLOW_NONE,
+        newline_mode: NEWLINE_CRLF
+    });
+};
+
+/// Open and configure a serial port described by cfg.
+/// Returns the file descriptor (≥0) on success, -1 on failure.
+pub func:serial_open = int64(SerialConfig:scfg) {
+    int64:fd = nitty_serial_open(
+        scfg.device,
+        scfg.baud,
+        scfg.data_bits,
+        scfg.parity,
+        scfg.stop_bits,
+        scfg.flow_control
+    );
+    pass(fd);
+};
+
+/// Close a serial port fd and restore original termios.
+pub func:serial_close = NIL(int64:fd) {
+    if (fd < 0i64) { pass(NIL); }
+    drop(nitty_serial_close(fd));
+    pass(NIL);
+};
+
+// ── Public API — I/O ─────────────────────────────────────────────────────────
+
+/// Change the baud rate on an already-open serial port.
+/// Returns 0 on success, -1 on error.
+pub func:serial_set_baud = int64(int64:fd, int64:baud) {
+    if (fd < 0i64) { pass(-1i64); }
+    int64:r = nitty_serial_set_baud(fd, baud);
+    pass(r);
+};
+
+/// Read available bytes from the serial port.
+/// Returns a string of received bytes (possibly empty on EAGAIN or error).
+pub func:serial_read = string(int64:fd) {
+    if (fd < 0i64) { pass(""); }
+    int64:n = nitty_serial_read_buffered(fd);
+    if (n <= 0i64) { pass(""); }
+    string:data = nitty_serial_read_buf_str();
+    pass(data);
+};
+
+/// Write a string to the serial port.
+/// Returns bytes written on success, -1 on error.
+pub func:serial_write = int64(int64:fd, string:data) {
+    if (fd < 0i64) { pass(-1i64); }
+    if (string_is_empty(data)) { pass(0i64); }
+    int64:n = nitty_serial_write_string(fd, data);
+    pass(n);
+};
+
+/// Write a single byte value to the serial port.
+/// Returns 1 on success, -1 on error.
+pub func:serial_write_byte = int64(int64:fd, int64:byte_val) {
+    if (fd < 0i64) { pass(-1i64); }
+    int64:r = nitty_serial_write_byte(fd, byte_val);
+    pass(r);
+};
+
+/// Discard all pending input and output buffers (TCIOFLUSH).
+pub func:serial_flush = NIL(int64:fd) {
+    if (fd < 0i64) { pass(NIL); }
+    drop(nitty_serial_flush(fd));
+    pass(NIL);
+};
+
+/// Wait for all pending output to be transmitted (tcdrain).
+pub func:serial_drain = NIL(int64:fd) {
+    if (fd < 0i64) { pass(NIL); }
+    drop(nitty_serial_drain(fd));
+    pass(NIL);
+};
+
+/// Check if an fd is an open TTY device.
+/// Returns 1 if fd is a valid open serial port, 0 otherwise.
+pub func:serial_is_open = int64(int64:fd) {
+    if (fd < 0i64) { pass(0i64); }
+    int64:r = nitty_serial_is_tty(fd);
+    pass(r);
+};
+
+// ── Public API — control signals (v0.9.1) ────────────────────────────────────
+
+/// Send a BREAK signal to the serial device.
+/// duration_ms=0 uses the default (~250ms). Duration ≤2000ms recommended.
+pub func:serial_send_break = NIL(int64:fd, int64:duration_ms) {
+    if (fd < 0i64) { pass(NIL); }
+    drop(nitty_serial_send_break(fd, duration_ms));
+    pass(NIL);
+};
+
+/// Assert (state=1) or clear (state=0) the DTR (Data Terminal Ready) line.
+pub func:serial_set_dtr = NIL(int64:fd, int64:state) {
+    if (fd < 0i64) { pass(NIL); }
+    drop(nitty_serial_set_dtr(fd, state));
+    pass(NIL);
+};
+
+/// Assert (state=1) or clear (state=0) the RTS (Request To Send) line.
+pub func:serial_set_rts = NIL(int64:fd, int64:state) {
+    if (fd < 0i64) { pass(NIL); }
+    drop(nitty_serial_set_rts(fd, state));
+    pass(NIL);
+};
+
+/// Read modem status register. Returns bitmask, or -1 on error.
+/// Use serial_modem_cts/dsr/dcd/ri() to extract individual line states.
+pub func:serial_get_modem_status = int64(int64:fd) {
+    if (fd < 0i64) { pass(-1i64); }
+    int64:status = nitty_serial_get_modem_status(fd);
+    pass(status);
+};
+
+/// Returns 1 if CTS (Clear To Send) is asserted, 0 otherwise.
+pub func:serial_modem_cts = int64(int64:fd) {
+    int64:s = nitty_serial_get_modem_status(fd);
+    if (s < 0i64) { pass(0i64); }
+    pass(nitty_serial_modem_cts(s));
+};
+
+/// Returns 1 if DSR (Data Set Ready) is asserted, 0 otherwise.
+pub func:serial_modem_dsr = int64(int64:fd) {
+    int64:s = nitty_serial_get_modem_status(fd);
+    if (s < 0i64) { pass(0i64); }
+    pass(nitty_serial_modem_dsr(s));
+};
+
+/// Returns 1 if DCD (Data Carrier Detect) is asserted, 0 otherwise.
+pub func:serial_modem_dcd = int64(int64:fd) {
+    int64:s = nitty_serial_get_modem_status(fd);
+    if (s < 0i64) { pass(0i64); }
+    pass(nitty_serial_modem_dcd(s));
+};
+
+/// Returns 1 if RI (Ring Indicator) is asserted, 0 otherwise.
+pub func:serial_modem_ri = int64(int64:fd) {
+    int64:s = nitty_serial_get_modem_status(fd);
+    if (s < 0i64) { pass(0i64); }
+    pass(nitty_serial_modem_ri(s));
+};

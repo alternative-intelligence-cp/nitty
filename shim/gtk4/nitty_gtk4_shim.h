@@ -864,6 +864,95 @@ const char *nitty_gtk4_proc_notify_msg(void);
  */
 void nitty_gtk4_proc_register(int32_t slot, int64_t pid);
 
+/**
+ * v0.8.2: SSH Authentication Dialogs
+ *
+ * nitty_gtk4_prompt_password: Show a masked password/passphrase dialog.
+ *   title  - dialog title
+ *   prompt - label text shown to user
+ *   Returns entered password (static buffer) or "" if cancelled.
+ *
+ * nitty_gtk4_host_key_dialog: Show a host-key mismatch warning.
+ *   host     - hostname/IP of the server
+ *   key_type - "ssh-rsa", "ssh-ed25519", etc.
+ *   Returns 1 if user chose "Connect Anyway", 0 if cancelled.
+ */
+const char *nitty_gtk4_prompt_password(const char *title, const char *prompt);
+int64_t     nitty_gtk4_host_key_dialog(const char *host, const char *key_type);
+
+
+/* ── v0.8.3 Connection Manager UI — new additions ───────────────────────── */
+/* (paned/box/scrolled_window already exist from v0.5.x — not duplicated)   */
+
+/* GtkListBox */
+int64_t     nitty_gtk4_list_box_new(void);
+int64_t     nitty_gtk4_list_box_append(int64_t lb, const char *label);
+int64_t     nitty_gtk4_list_box_get_selected(int64_t lb);
+void        nitty_gtk4_list_box_clear(int64_t lb);
+void        nitty_gtk4_list_box_set_group_header(int64_t lb, int64_t row_idx, const char *header);
+
+/* GtkEntry */
+int64_t     nitty_gtk4_entry_new(void);
+const char *nitty_gtk4_entry_get_text(int64_t entry);
+void        nitty_gtk4_entry_set_placeholder(int64_t entry, const char *text);
+
+/* GtkButton */
+int64_t nitty_gtk4_button_new(const char *label);
+void    nitty_gtk4_button_set_sensitive(int64_t btn, int32_t sensitive);
+
+/* GtkLabel */
+int64_t nitty_gtk4_label_new(const char *text);
+void    nitty_gtk4_label_set_text(int64_t label, const char *text);
+
+/* Connection Manager composite sidebar */
+int64_t nitty_gtk4_cm_create(void);
+void    nitty_gtk4_cm_set_visible(int64_t cm, int32_t visible);
+int64_t nitty_gtk4_cm_list_box(int64_t cm);
+int64_t nitty_gtk4_cm_entry(int64_t cm);
+int64_t nitty_gtk4_cm_event_poll(void);
+int64_t nitty_gtk4_cm_event_profile_id(void);
+
+/* Sidebar attach — wraps window DrawingArea in GtkPaned with sidebar */
+void    nitty_gtk4_sidebar_attach(int64_t win, int64_t drawing_area, int64_t sidebar);
+void    nitty_gtk4_sidebar_set_visible(int32_t visible);
+
+/* Profile editor dialog */
+int32_t     nitty_gtk4_profile_editor_open(const char *name, const char *group,
+                const char *host, int64_t port, const char *user,
+                const char *auth_method, const char *key_path);
+const char *nitty_gtk4_profile_editor_get_name(void);
+const char *nitty_gtk4_profile_editor_get_group(void);
+const char *nitty_gtk4_profile_editor_get_host(void);
+int64_t     nitty_gtk4_profile_editor_get_port(void);
+const char *nitty_gtk4_profile_editor_get_user(void);
+const char *nitty_gtk4_profile_editor_get_auth(void);
+const char *nitty_gtk4_profile_editor_get_key_path(void);
+
+
+/* ── SFTP Browser panel (v0.8.5) ─────────────────────────────────────────── */
+
+/* Create SFTP browser composite widget (GtkBox with path label, list box,
+ * status label, xfer label). Returns widget pointer. */
+int64_t nitty_gtk4_sftp_create(void);
+
+/* Attach SFTP panel to the right side of the window (second GtkPaned). */
+void    nitty_gtk4_sftp_panel_attach(int64_t win, int64_t drawing_area,
+                                      int64_t sftp_panel);
+void    nitty_gtk4_sftp_panel_set_visible(int32_t visible);
+
+/* Accessors for internal sub-widgets */
+int64_t nitty_gtk4_sftp_path_label(int64_t sftp_widget);
+int64_t nitty_gtk4_sftp_list_box(int64_t sftp_widget);
+int64_t nitty_gtk4_sftp_status_label(int64_t sftp_widget);
+int64_t nitty_gtk4_sftp_xfer_label(int64_t sftp_widget);
+
+/* Event polling — returns event code each frame:
+ *   0 = none, 1 = activate entry, 2 = refresh, 3 = download,
+ *   4 = upload here, 5 = rename, 6 = delete, 7 = new folder, 8 = up
+ */
+int64_t nitty_gtk4_sftp_event_poll(int64_t sftp_widget);
+int64_t nitty_gtk4_sftp_event_row(void);   /* row index of last event */
+
 #ifdef __cplusplus
 }
 #endif

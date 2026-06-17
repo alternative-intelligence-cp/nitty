@@ -1,0 +1,294 @@
+// tests/serial/test_serial_modes.npk — Serial modes unit tests (v0.9.1)
+//
+// Test scenarios:
+//   T01: hexdump_format — known bytes produce correct hex output
+//   T02: hexdump_format — offset field increments correctly
+//   T03: hexdump_format — non-printable bytes shown as "." in ASCII column
+//   T04: hexdump_format — empty input returns empty string
+//   T05: hexdump_format — 16-byte input produces exactly one line
+//   T06: serial_newline_convert_send CR — \n → \r
+//   T07: serial_newline_convert_send LF — pass-through
+//   T08: serial_newline_convert_send CRLF — \n → \r\n
+//   T09: serial_newline_convert_send NONE — pass-through raw
+//   T10: serial_newline_convert_recv — bare \r normalized
+//   T11: serial_newline_detect CRLF — detected from \r\n sequence
+//   T12: serial_newline_detect CR — detected from bare \r
+//   T13: serial_newline_detect LF — detected from bare \n
+//   T14: serial_input_handle_key RAW — key returned immediately
+//   T15: serial_input_handle_key TEXT — printable keys buffered, enter sends
+//   T16: serial_input_handle_key READLINE — printable key buffered
+//   T17: serial_input_handle_key READLINE — Enter sends line + clears buffer
+//   T18: serial_input_handle_key READLINE — Backspace removes last char
+//   T19: serial_input_handle_key READLINE — Ctrl+C clears buffer, returns \x03
+//   T20: serial_history_add + serial_history_prev round-trip
+//   T21: history prev then next returns to empty (end of history)
+//   T22: serial_hex_offset_reset resets counter
+//   T23: serial_output_format TEXT — returns data unchanged
+//   T24: serial_output_format HEXDUMP — returns hex dump
+//
+// Run: npkbld build test_serial_modes && .nitpick_make/build/test_serial_modes
+
+use "../../src/serial/serial_modes.npk".*;
+use "../../src/serial/serial_port.npk".*;
+
+// ── Program endpoints ─────────────────────────────────────────────────────────
+
+func:failsafe = int32(tbb32:_code) { exit 1i32; };
+
+// ── Minimal pass/fail harness ─────────────────────────────────────────────────
+
+int64:STDOUT = 1i64;
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:pass_test = NIL(string:name) {
+    string:msg = string_concat("[PASS] ", string_concat(name, "\n"));
+    int64:l = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, l));
+    g_pass = g_pass + 1i64;
+    pass(NIL);
+};
+
+func:fail_test = NIL(string:name, string:detail) {
+    string:msg = string_concat("[FAIL] ", string_concat(name,
+        string_concat(": ", string_concat(detail, "\n"))));
+    int64:l = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, l));
+    g_fail = g_fail + 1i64;
+    pass(NIL);
+};
+
+func:assert_eq_str = NIL(string:name, string:got, string:expected) {
+    if (got == expected) { drop(pass_test(name)); }
+    if (got != expected) {
+        string:d = string_concat("got=[", string_concat(got,
+            string_concat("] want=[", string_concat(expected, "]"))));
+        drop(fail_test(name, d));
+    }
+    pass(NIL);
+};
+
+func:assert_eq_i64 = NIL(string:name, int64:got, int64:expected) {
+    if (got == expected) { drop(pass_test(name)); }
+    if (got != expected) {
+        string:d = string_concat("got=", string_concat(string_from_int(got),
+            string_concat(" want=", string_from_int(expected))));
+        drop(fail_test(name, d));
+    }
+    pass(NIL);
+};
+
+func:assert_contains = NIL(string:name, string:haystack, string:needle) {
+    if (string_contains(haystack, needle)) { drop(pass_test(name)); }
+    if (!string_contains(haystack, needle)) {
+        string:d = string_concat("needle=[", string_concat(needle,
+            string_concat("] not found in=[", string_concat(haystack, "]"))));
+        drop(fail_test(name, d));
+    }
+    pass(NIL);
+};
+
+func:assert_starts_with = NIL(string:name, string:haystack, string:prefix) {
+    if (string_starts_with(haystack, prefix)) { drop(pass_test(name)); }
+    if (!string_starts_with(haystack, prefix)) {
+        string:d = string_concat("prefix=[", string_concat(prefix,
+            string_concat("] not at start of=[", string_concat(haystack, "]"))));
+        drop(fail_test(name, d));
+    }
+    pass(NIL);
+};
+
+// ── T01–T05: hexdump_format ───────────────────────────────────────────────────
+
+func:test_hexdump = NIL() {
+    // T01: known bytes — "Hello" = 48 65 6C 6C 6F
+    string:dump1 = raw hexdump_format("Hello", 0i64);
+    drop(assert_contains("T01-hexdump-hex-H",     dump1, "48"));
+    drop(assert_contains("T01-hexdump-hex-e",     dump1, "65"));
+    drop(assert_contains("T01-hexdump-hex-l",     dump1, "6C"));
+    drop(assert_contains("T01-hexdump-ascii",     dump1, "Hello"));
+    drop(assert_starts_with("T01-hexdump-offset", dump1, "00000000"));
+
+    // T02: offset field — start at 0x10 = 16
+    string:dump2 = raw hexdump_format("X", 16i64);
+    drop(assert_starts_with("T02-hexdump-offset-16", dump2, "00000010"));
+
+    // T03: non-printable → "." — byte 0x01 = SOH (non-printable)
+    // We check for "." in the ASCII column; "01" in hex column
+    string:dump3 = raw hexdump_format("\x01", 0i64);
+    drop(assert_contains("T03-hexdump-nonprint-hex",   dump3, "01"));
+    drop(assert_contains("T03-hexdump-nonprint-ascii", dump3, "."));
+
+    // T04: empty input → empty string
+    string:dump4 = raw hexdump_format("", 0i64);
+    drop(assert_eq_str("T04-hexdump-empty", dump4, ""));
+
+    // T05: 16 bytes → exactly one line (ends with |\n, not two lines)
+    // We check that the output contains exactly one "00000000" prefix
+    string:sixteen = "0123456789ABCDEF";
+    string:dump5 = raw hexdump_format(sixteen, 0i64);
+    drop(assert_starts_with("T05-hexdump-16b-offset", dump5, "00000000"));
+    // Should not contain a second offset (00000010) since exactly 16 bytes
+    if (string_contains(dump5, "00000010")) {
+        drop(fail_test("T05-hexdump-16b-single-line", "got two lines for 16 bytes"));
+    }
+    if (!string_contains(dump5, "00000010")) {
+        drop(pass_test("T05-hexdump-16b-single-line"));
+    }
+
+    pass(NIL);
+};
+
+// ── T06–T10: newline conversion ───────────────────────────────────────────────
+
+func:test_newline = NIL() {
+    // T06: CR mode — \n → \r
+    string:r06 = raw serial_newline_convert_send("abc\ndef\n", NEWLINE_CR);
+    drop(assert_eq_str("T06-nl-send-CR", r06, "abc\rdef\r"));
+
+    // T07: LF mode — pass-through
+    string:r07 = raw serial_newline_convert_send("abc\ndef\n", NEWLINE_LF);
+    drop(assert_eq_str("T07-nl-send-LF", r07, "abc\ndef\n"));
+
+    // T08: CRLF mode — \n → \r\n
+    string:r08 = raw serial_newline_convert_send("abc\ndef\n", NEWLINE_CRLF);
+    drop(assert_eq_str("T08-nl-send-CRLF", r08, "abc\r\ndef\r\n"));
+
+    // T09: NONE mode — raw pass-through
+    string:r09 = raw serial_newline_convert_send("abc\x00\ndef", NEWLINE_NONE);
+    drop(assert_eq_str("T09-nl-send-NONE", r09, "abc\x00\ndef"));
+
+    // T10: recv normalization — bare \r → \r\n
+    string:r10 = raw serial_newline_convert_recv("ok\rfail", NEWLINE_CRLF);
+    drop(assert_eq_str("T10-nl-recv-normalize", r10, "ok\r\nfail"));
+
+    // T11: detect CRLF
+    int64:mode11 = raw serial_newline_detect("line1\r\nline2\r\n");
+    drop(assert_eq_i64("T11-nl-detect-CRLF", mode11, NEWLINE_CRLF));
+
+    // T12: detect CR-only
+    int64:mode12 = raw serial_newline_detect("line1\rline2\r");
+    drop(assert_eq_i64("T12-nl-detect-CR", mode12, NEWLINE_CR));
+
+    // T13: detect LF-only
+    int64:mode13 = raw serial_newline_detect("line1\nline2\n");
+    drop(assert_eq_i64("T13-nl-detect-LF", mode13, NEWLINE_LF));
+
+    pass(NIL);
+};
+
+// ── T14–T19: input handling ───────────────────────────────────────────────────
+
+func:test_input = NIL() {
+    int64:slot = 0i64;
+
+    // T14: RAW mode — every key passed through immediately
+    string:r14 = raw serial_input_handle_key(slot, "a", SERIAL_INPUT_RAW);
+    drop(assert_eq_str("T14-raw-key-a", r14, "a"));
+    string:r14b = raw serial_input_handle_key(slot, "\x1b[A", SERIAL_INPUT_RAW);
+    drop(assert_eq_str("T14-raw-key-up", r14b, "\x1b[A"));
+
+    // T15: TEXT mode — printable buffered, Enter sends
+    string:r15a = raw serial_input_handle_key(slot, "h", SERIAL_INPUT_TEXT);
+    drop(assert_eq_str("T15-text-buffer-h", r15a, ""));
+    string:r15b = raw serial_input_handle_key(slot, "i", SERIAL_INPUT_TEXT);
+    drop(assert_eq_str("T15-text-buffer-i", r15b, ""));
+    string:r15c = raw serial_input_handle_key(slot, "\r", SERIAL_INPUT_TEXT);
+    drop(assert_eq_str("T15-text-enter-sends", r15c, "hi\r\n"));
+    // Buffer should be empty after Enter
+    string:line15 = raw serial_input_get_line(slot);
+    drop(assert_eq_str("T15-text-buffer-cleared", line15, ""));
+
+    // T16: READLINE mode — printable buffered, empty returned
+    string:r16 = raw serial_input_handle_key(slot, "x", SERIAL_INPUT_READLINE);
+    drop(assert_eq_str("T16-rl-buffer-x", r16, ""));
+    string:line16 = raw serial_input_get_line(slot);
+    drop(assert_eq_str("T16-rl-line-has-x", line16, "x"));
+
+    // T17: READLINE Enter — sends line + clears buffer
+    string:r17 = raw serial_input_handle_key(slot, "\r", SERIAL_INPUT_READLINE);
+    drop(assert_eq_str("T17-rl-enter-sends", r17, "x\r\n"));
+    string:line17 = raw serial_input_get_line(slot);
+    drop(assert_eq_str("T17-rl-buffer-cleared", line17, ""));
+
+    // T18: READLINE Backspace — removes last char
+    drop(serial_input_handle_key(slot, "a", SERIAL_INPUT_READLINE));
+    drop(serial_input_handle_key(slot, "b", SERIAL_INPUT_READLINE));
+    drop(serial_input_handle_key(slot, "c", SERIAL_INPUT_READLINE));
+    drop(serial_input_handle_key(slot, "\x7f", SERIAL_INPUT_READLINE));  // Backspace
+    string:line18 = raw serial_input_get_line(slot);
+    drop(assert_eq_str("T18-rl-backspace", line18, "ab"));
+    // Clear for next test
+    drop(serial_input_handle_key(slot, "\r", SERIAL_INPUT_READLINE));
+
+    // T19: READLINE Ctrl+C — clears buffer, sends \x03
+    drop(serial_input_handle_key(slot, "z", SERIAL_INPUT_READLINE));
+    drop(serial_input_handle_key(slot, "y", SERIAL_INPUT_READLINE));
+    string:r19 = raw serial_input_handle_key(slot, "\x03", SERIAL_INPUT_READLINE);
+    drop(assert_eq_str("T19-rl-ctrl-c-sends", r19, "\x03"));
+    string:line19 = raw serial_input_get_line(slot);
+    drop(assert_eq_str("T19-rl-ctrl-c-clears", line19, ""));
+
+    pass(NIL);
+};
+
+// ── T20–T22: history ─────────────────────────────────────────────────────────
+
+func:test_history = NIL() {
+    int64:slot = 1i64;  // use slot 1 (fresh)
+
+    // T20: add + prev round-trip
+    drop(serial_history_add(slot, "first command"));
+    drop(serial_history_add(slot, "second command"));
+    string:prev1 = raw serial_history_prev(slot);
+    drop(assert_eq_str("T20-hist-prev-latest", prev1, "second command"));
+    string:prev2 = raw serial_history_prev(slot);
+    drop(assert_eq_str("T20-hist-prev-older", prev2, "first command"));
+
+    // T21: prev then next returns forward
+    string:next1 = raw serial_history_next(slot);
+    drop(assert_eq_str("T21-hist-next-forward", next1, "second command"));
+    string:next2 = raw serial_history_next(slot);
+    drop(assert_eq_str("T21-hist-next-draft", next2, ""));  // back to draft (empty)
+
+    // T22: hex_offset_reset
+    int64:slot2 = 2i64;
+    drop(serial_output_format(slot2, "ABCDEF", SERIAL_OUTPUT_HEXDUMP));
+    drop(serial_hex_offset_reset(slot2));
+    string:dump_after_reset = raw serial_output_format(slot2, "A", SERIAL_OUTPUT_HEXDUMP);
+    drop(assert_starts_with("T22-hex-offset-reset", dump_after_reset, "00000000"));
+
+    // T23: TEXT output — returns data unchanged
+    string:r23 = raw serial_output_format(3i64, "hello\r\n", SERIAL_OUTPUT_TEXT);
+    drop(assert_eq_str("T23-output-text", r23, "hello\r\n"));
+
+    // T24: HEXDUMP output — returns formatted hex dump
+    int64:slot4 = 4i64;
+    string:r24 = raw serial_output_format(slot4, "AB", SERIAL_OUTPUT_HEXDUMP);
+    drop(assert_contains("T24-output-hexdump-41", r24, "41"));  // 'A' = 0x41
+    drop(assert_contains("T24-output-hexdump-42", r24, "42"));  // 'B' = 0x42
+
+    pass(NIL);
+};
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+pub func:main = int32() {
+    string:banner = "=== Nitty v0.9.1 Serial Modes Tests ===\n";
+    drop(sys(WRITE, STDOUT, banner, string_length(banner)));
+
+    drop(test_hexdump());
+    drop(test_newline());
+    drop(test_input());
+    drop(test_history());
+
+    string:summary = string_concat("\n=== Results: ",
+        string_concat(string_from_int(g_pass),
+        string_concat(" passed, ",
+        string_concat(string_from_int(g_fail),
+        " failed\n"))));
+    drop(sys(WRITE, STDOUT, summary, string_length(summary)));
+
+    if (g_fail > 0i64) { exit(1i32); }
+    exit(0i32);
+};

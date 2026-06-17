@@ -1,0 +1,349 @@
+// src/gui/connection_manager.npk — Connection Manager sidebar controller (v0.8.3)
+//
+// Owns the GTK4 sidebar widget lifecycle. Polls for button/list events each
+// frame and dispatches them to the appropriate action (connect, edit, import, etc.)
+//
+// Usage (called from app.npk):
+//   drop(cm_init());         // load profile store, create sidebar
+//   drop(cm_init_ui());      // attach sidebar to window (call after window created)
+//   // Each frame in tw_on_draw:
+//   drop(cm_tick());
+
+use "/home/randy/Workspace/REPOS/nitty/src/gui/gtk4_ffi.npk".*;
+use "/home/randy/Workspace/REPOS/nitty/src/config/profile.npk".*;
+use "/home/randy/Workspace/REPOS/nitty/src/ssh/ssh_config_parser.npk".*;
+use "/home/randy/Workspace/REPOS/nitty/src/ssh/ssh_session.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
+
+// ── Module state ──────────────────────────────────────────────────────────────
+
+int64:g_cm_widget     = 0i64;   // GTK4 sidebar GtkBox ptr
+int64:g_cm_visible    = 0i64;   // 1 if sidebar is shown
+int64:g_cm_sel_prof   = -1i64;  // currently selected profile slot (-1 = none)
+int64:g_cm_init_done  = 0i64;   // 1 after cm_init_ui() ran
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/// Initialize the connection store. Call from app_init() after config_load().
+/// Profile data was already loaded by profiles_load_toml() — this is a no-op
+/// if profiles are already seeded, but ensures at least one profile exists.
+pub func:cm_init = NIL() {
+    // profiles_init is idempotent — seeds "Default" only if count == 0
+    drop(profiles_init());
+    pass(NIL);
+};
+
+/// Create the sidebar widget and attach it to the window.
+/// Call from app_run() after window_configure() has created the GtkWindow.
+pub func:cm_init_ui = NIL() {
+    if (g_cm_init_done == 1i64) { pass(NIL); }
+
+    // Create the composite sidebar widget (C builds the full layout)
+    g_cm_widget = nitty_gtk4_cm_create();
+
+    // Attach to window: rewires DrawingArea into GtkPaned
+    int64:win = nitty_gtk4_get_main_window();
+    int64:da  = nitty_gtk4_drawing_area_new();
+    nitty_gtk4_sidebar_attach(win, da, g_cm_widget);
+
+    // Start hidden; user toggles with Ctrl+Shift+B
+    nitty_gtk4_sidebar_set_visible(0i32);
+    g_cm_visible   = 0i64;
+    g_cm_init_done = 1i64;
+
+    // Populate the list box with current profiles
+    drop(cm_rebuild_list());
+    pass(NIL);
+};
+
+/// Toggle sidebar visibility.
+pub func:cm_toggle = NIL() {
+    if (g_cm_init_done == 0i64) { pass(NIL); }
+    if (g_cm_visible == 0i64) {
+        nitty_gtk4_sidebar_set_visible(1i32);
+        g_cm_visible = 1i64;
+    } else {
+        nitty_gtk4_sidebar_set_visible(0i32);
+        g_cm_visible = 0i64;
+    }
+    pass(NIL);
+};
+
+/// Returns 1 if the sidebar is currently visible.
+pub func:cm_is_visible = int64() { pass(g_cm_visible); };
+
+/// Repopulate the GtkListBox from the current profile store.
+/// Groups profiles by g_prof_group, emitting group headers.
+pub func:cm_rebuild_list = NIL() {
+    if (g_cm_init_done == 0i64) { pass(NIL); }
+    int64:lb = nitty_gtk4_cm_list_box(g_cm_widget);
+    nitty_gtk4_list_box_clear(lb);
+
+    // Emit "Recent" section first (if any)
+    int64:recent_count = raw prof_recent_count();
+    if (recent_count > 0i64) {
+        // Add a sentinel/header row for "Recent"
+        drop(nitty_gtk4_list_box_append(lb, "— Recent Connections —"));
+        int64:ri = 0i64;
+        while (ri < recent_count && ri < 5i64) {
+            int64:slot = raw prof_get_recent(ri);
+            if (slot >= 0i64 && slot < raw profile_count()) {
+                string:host = raw profile_get_ssh_host(slot);
+                string:user = raw profile_get_ssh_user(slot);
+                string:name = raw profile_get_name(slot);
+                string:entry_label = string_concat(name, string_concat(" (", string_concat(user, string_concat("@", string_concat(host, ")")))));
+                drop(nitty_gtk4_list_box_append(lb, entry_label));
+            }
+            ri = ri + 1i64;
+        }
+    }
+
+    // Emit all profiles grouped by group name
+    // Track which groups we've already emitted a header for
+    string[16]:seen_groups;
+    int64:seen_count = 0i64;
+    int64:i = 0i64;
+    int64:count = raw profile_count();
+
+    while (i < count) {
+        string:grp = raw profile_get_group(i);
+        if (string_length(grp) == 0i64) { grp = "General"; }
+
+        // Check if we've emitted this group header already
+        int64:found = 0i64;
+        int64:gi = 0i64;
+        while (gi < seen_count) {
+            if (seen_groups[gi] == grp) { found = 1i64; }
+            gi = gi + 1i64;
+        }
+
+        // First profile in this group — emit group header rows for all in group
+        if (found == 0i64 && seen_count < 16i64) {
+            seen_groups[seen_count] = grp;
+            seen_count = seen_count + 1i64;
+
+            // Add group header label row
+            int64:hdr_row = nitty_gtk4_list_box_append(lb, grp);
+            nitty_gtk4_list_box_set_group_header(lb, hdr_row, grp);
+
+            // Now add all profiles in this group
+            int64:j = 0i64;
+            while (j < count) {
+                string:jgrp = raw profile_get_group(j);
+                if (string_length(jgrp) == 0i64) { jgrp = "General"; }
+                if (jgrp == grp) {
+                    string:pname = raw profile_get_name(j);
+                    int64:ptype  = raw profile_get_type(j);
+                    string:row_label = pname;
+                    if (ptype == PROF_TYPE_SSH) {
+                        string:h = raw profile_get_ssh_host(j);
+                        string:u = raw profile_get_ssh_user(j);
+                        if (string_length(h) > 0i64) {
+                            row_label = string_concat(pname, string_concat(
+                                " — ", string_concat(u, string_concat("@", h))));
+                        }
+                    }
+                    drop(nitty_gtk4_list_box_append(lb, row_label));
+                }
+                j = j + 1i64;
+            }
+        }
+        i = i + 1i64;
+    }
+    pass(NIL);
+};
+
+/// Poll for events from the sidebar UI. Call each frame from tw_on_draw.
+pub func:cm_tick = NIL() {
+    if (g_cm_init_done == 0i64) { pass(NIL); }
+
+    int64:ev = nitty_gtk4_cm_event_poll();
+    if (ev == 0i64) { pass(NIL); }   // CM_EVENT_NONE
+
+    // CM_EVENT_CONNECT = 1
+    if (ev == 1i64) {
+        int64:row_id = nitty_gtk4_cm_event_profile_id();
+        if (row_id >= 0i64) {
+            // row_id maps to profile slot (simplified: row = slot for now)
+            drop(_cm_do_connect(row_id));
+        }
+    }
+
+    // CM_EVENT_NEW = 2
+    if (ev == 2i64) {
+        drop(pf_editor_open(-1i64));
+        drop(cm_rebuild_list());
+    }
+
+    // CM_EVENT_EDIT = 3
+    if (ev == 3i64) {
+        int64:sel = nitty_gtk4_list_box_get_selected(nitty_gtk4_cm_list_box(g_cm_widget));
+        if (sel >= 0i64 && sel < raw profile_count()) {
+            drop(pf_editor_open(sel));
+            drop(cm_rebuild_list());
+        }
+    }
+
+    // CM_EVENT_DELETE = 4
+    if (ev == 4i64) {
+        int64:sel = nitty_gtk4_list_box_get_selected(nitty_gtk4_cm_list_box(g_cm_widget));
+        if (sel >= 0i64 && sel < raw profile_count()) {
+            drop(_cm_delete_profile(sel));
+            drop(cm_rebuild_list());
+        }
+    }
+
+    // CM_EVENT_IMPORT = 5
+    if (ev == 5i64) {
+        string:home = raw env_get("HOME");
+        string:config_path = string_concat(home, "/.ssh/config");
+        int64:n = raw scp_parse(config_path);
+        if (n > 0i64) {
+            drop(scp_import_to_profiles());
+            drop(cm_rebuild_list());
+        }
+    }
+
+    // CM_EVENT_QUICK_CONN = 6
+    if (ev == 6i64) {
+        int64:entry = nitty_gtk4_cm_entry(g_cm_widget);
+        string:text = nitty_gtk4_entry_get_text(entry);
+        if (string_length(text) > 0i64) {
+            drop(_cm_quick_connect(text));
+        }
+    }
+
+    pass(NIL);
+};
+
+// ── Private helpers ───────────────────────────────────────────────────────────
+
+/// Parse "user@host:port" or "host" or "user@host" into components.
+/// Sets g_cm_qc_* scratch vars.
+string:g_cm_qc_user = "";
+string:g_cm_qc_host = "";
+int64:g_cm_qc_port  = 22i64;
+
+func:_parse_quick_connect = NIL(string:text) {
+    g_cm_qc_user = raw env_get("USER");
+    g_cm_qc_host = text;
+    g_cm_qc_port = 22i64;
+
+    int64:len = string_length(text);
+
+    // Find @ sign (separates user from host)
+    int64:at_pos = -1i64;
+    int64:i = 0i64;
+    while (i < len) {
+        if (string_substring(text, i, i + 1i64) == "@") { at_pos = i; }
+        i = i + 1i64;
+    }
+
+    if (at_pos >= 0i64) {
+        g_cm_qc_user = string_substring(text, 0i64, at_pos);
+        g_cm_qc_host = string_substring(text, at_pos + 1i64, len);
+        len = string_length(g_cm_qc_host);
+    }
+
+    // Find : sign (separates host from port)
+    int64:colon_pos = -1i64;
+    i = 0i64;
+    while (i < len) {
+        if (string_substring(g_cm_qc_host, i, i + 1i64) == ":") { colon_pos = i; }
+        i = i + 1i64;
+    }
+
+    if (colon_pos >= 0i64) {
+        string:port_str = string_substring(g_cm_qc_host, colon_pos + 1i64, len);
+        g_cm_qc_host    = string_substring(g_cm_qc_host, 0i64, colon_pos);
+        // Parse port
+        int64:port_val = 0i64;
+        int64:pi = 0i64;
+        int64:plen = string_length(port_str);
+        while (pi < plen) {
+            string:ch = string_substring(port_str, pi, pi + 1i64);
+            if (ch == "0") { port_val = port_val * 10i64; }
+            if (ch == "1") { port_val = port_val * 10i64 + 1i64; }
+            if (ch == "2") { port_val = port_val * 10i64 + 2i64; }
+            if (ch == "3") { port_val = port_val * 10i64 + 3i64; }
+            if (ch == "4") { port_val = port_val * 10i64 + 4i64; }
+            if (ch == "5") { port_val = port_val * 10i64 + 5i64; }
+            if (ch == "6") { port_val = port_val * 10i64 + 6i64; }
+            if (ch == "7") { port_val = port_val * 10i64 + 7i64; }
+            if (ch == "8") { port_val = port_val * 10i64 + 8i64; }
+            if (ch == "9") { port_val = port_val * 10i64 + 9i64; }
+            pi = pi + 1i64;
+        }
+        if (port_val > 0i64 && port_val < 65536i64) {
+            g_cm_qc_port = port_val;
+        }
+    }
+
+    pass(NIL);
+};
+
+/// Launch a quick-connect SSH session from "user@host:port" text.
+func:_cm_quick_connect = NIL(string:text) {
+    drop(_parse_quick_connect(text));
+    if (string_length(g_cm_qc_host) == 0i64) { pass(NIL); }
+
+    // Connect on pane slot 0 for now (simplified — full tab integration in v0.8.4)
+    int64:result = raw ssh_connect(0i64, g_cm_qc_host, g_cm_qc_port,
+                                   g_cm_qc_user, "", 80i64, 24i64);
+    // result < 0 = error; result = 0 = success
+    pass(NIL);
+};
+
+/// Launch an SSH session for a saved profile slot.
+func:_cm_do_connect = NIL(int64:slot) {
+    if (slot < 0i64 || slot >= raw profile_count()) { pass(NIL); }
+    if (raw profile_get_type(slot) != PROF_TYPE_SSH) { pass(NIL); }
+
+    string:host = raw profile_get_ssh_host(slot);
+    int64:port  = raw profile_get_ssh_port(slot);
+    string:user = raw profile_get_ssh_user(slot);
+    if (string_length(host) == 0i64) { pass(NIL); }
+    if (port <= 0i64) { port = 22i64; }
+    if (string_length(user) == 0i64) { user = raw env_get("USER"); }
+
+    drop(prof_add_recent(slot));
+
+    int64:result = raw ssh_connect(0i64, host, port, user, "", 80i64, 24i64);
+    pass(NIL);
+};
+
+/// Remove a profile slot (shift remaining profiles down).
+func:_cm_delete_profile = NIL(int64:slot) {
+    int64:count = raw profile_count();
+    if (slot < 0i64 || slot >= count) { pass(NIL); }
+
+    // Shift all slots above `slot` down by one
+    int64:i = slot;
+    while (i < count - 1i64) {
+        int64:next = i + 1i64;
+        g_prof_name[i]         = g_prof_name[next];
+        g_prof_type[i]         = g_prof_type[next];
+        g_prof_is_default[i]   = g_prof_is_default[next];
+        g_prof_inherits[i]     = g_prof_inherits[next];
+        g_prof_group[i]        = g_prof_group[next];
+        g_prof_shell_path[i]   = g_prof_shell_path[next];
+        g_prof_working_dir[i]  = g_prof_working_dir[next];
+        g_prof_startup_cmd[i]  = g_prof_startup_cmd[next];
+        g_prof_login_shell[i]  = g_prof_login_shell[next];
+        g_prof_ssh_host[i]     = g_prof_ssh_host[next];
+        g_prof_ssh_port[i]     = g_prof_ssh_port[next];
+        g_prof_ssh_user[i]     = g_prof_ssh_user[next];
+        g_prof_ssh_auth[i]     = g_prof_ssh_auth[next];
+        g_prof_ssh_key_path[i] = g_prof_ssh_key_path[next];
+        g_prof_keepalive[i]    = g_prof_keepalive[next];
+        g_prof_font_family[i]  = g_prof_font_family[next];
+        g_prof_font_size[i]    = g_prof_font_size[next];
+        g_prof_color_scheme[i] = g_prof_color_scheme[next];
+        g_prof_cursor_style[i] = g_prof_cursor_style[next];
+        g_prof_tab_title[i]    = g_prof_tab_title[next];
+        g_prof_env_count[i]    = g_prof_env_count[next];
+        i = i + 1i64;
+    }
+    g_prof_count = g_prof_count - 1i64;
+    pass(NIL);
+};

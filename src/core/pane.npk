@@ -1,6 +1,8 @@
-// src/core/pane.npk -- Per-pane data registry (v0.5.0)
+// src/core/pane.npk -- Per-pane data registry (v0.5.0, extended v0.8.1, v0.9.0)
 //
 // Maps pane_id -> PTY fd, shell PID, terminal dimensions.
+// v0.8.1 adds pane_type, pane_ssh_session, and pane_ssh_channel for SSH panes.
+// v0.9.0 adds PANE_TYPE_SERIAL, g_pane_serial_baud, g_pane_serial_path.
 // Uses the flat parallel-array pattern established by tab.npk.
 //
 // Pane slots are independent of tab slots: a tab has one SplitTree
@@ -14,6 +16,11 @@
 
 int64:MAX_PANES = 64i64;
 
+// Pane type constants (stored in g_pane_type)
+pub func:PANE_TYPE_LOCAL   = int64() { pass(0i64); };  // Local PTY shell (default)
+pub func:PANE_TYPE_SSH     = int64() { pass(1i64); };  // Remote SSH channel
+pub func:PANE_TYPE_SERIAL  = int64() { pass(2i64); };  // Serial port (v0.9.0)
+
 // ===================================================================
 // Module state -- parallel flat arrays
 // ===================================================================
@@ -24,6 +31,13 @@ int64[64]:g_pane_pid = [-1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, 
 int64[64]:g_pane_rows = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];     // terminal rows
 int64[64]:g_pane_cols = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];     // terminal cols
 int64[64]:g_pane_in_use = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];   // 1 = slot occupied, 0 = free
+// v0.8.1 SSH fields
+int64[64]:g_pane_type = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];        // PANE_TYPE_LOCAL=0 | PANE_TYPE_SSH=1 | PANE_TYPE_SERIAL=2
+int64[64]:g_pane_ssh_session = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64]; // nitpick-ssh session ahash handle (0 = none)
+int64[64]:g_pane_ssh_channel = [-1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64]; // SSH local channel_id (-1 = none)
+// v0.9.0 Serial fields
+int64[64]:g_pane_serial_baud = [115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64]; // serial baud rate (default 115200)
+string[64]:g_pane_serial_path = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]; // serial device path (e.g. "/dev/ttyUSB0")
 
 // ===================================================================
 // Public API: Lifecycle
@@ -43,24 +57,34 @@ pub func:pane_create = int64(int64:pane_id, int64:pty_fd, int64:pid, int64:rows,
     }
     if (found < 0i64) { pass(-1i64); }
 
-    g_pane_id[found]     = pane_id;
-    g_pane_pty_fd[found] = pty_fd;
-    g_pane_pid[found]    = pid;
-    g_pane_rows[found]   = rows;
-    g_pane_cols[found]   = cols;
-    g_pane_in_use[found] = 1i64;
+    g_pane_id[found]          = pane_id;
+    g_pane_pty_fd[found]      = pty_fd;
+    g_pane_pid[found]         = pid;
+    g_pane_rows[found]        = rows;
+    g_pane_cols[found]        = cols;
+    g_pane_in_use[found]         = 1i64;
+    g_pane_type[found]           = 0i64;       // PANE_TYPE_LOCAL
+    g_pane_ssh_session[found]    = 0i64;       // no SSH session
+    g_pane_ssh_channel[found]    = -1i64;      // no SSH channel
+    g_pane_serial_baud[found]    = 115200i64;  // default baud rate
+    g_pane_serial_path[found]    = "";         // no serial device
     pass(found);
 };
 
-/// Destroy (free) a pane slot. Does NOT close the PTY -- caller is responsible.
+/// Destroy (free) a pane slot. Does NOT close the PTY or SSH socket -- caller is responsible.
 pub func:pane_destroy = NIL(int64:slot) {
     if (slot < 0i64 || slot >= MAX_PANES) { pass(NIL); }
-    g_pane_id[slot]     = 0i64;
-    g_pane_pty_fd[slot] = -1i64;
-    g_pane_pid[slot]    = -1i64;
-    g_pane_rows[slot]   = 0i64;
-    g_pane_cols[slot]   = 0i64;
-    g_pane_in_use[slot] = 0i64;
+    g_pane_id[slot]          = 0i64;
+    g_pane_pty_fd[slot]      = -1i64;
+    g_pane_pid[slot]         = -1i64;
+    g_pane_rows[slot]        = 0i64;
+    g_pane_cols[slot]        = 0i64;
+    g_pane_in_use[slot]         = 0i64;
+    g_pane_type[slot]           = 0i64;
+    g_pane_ssh_session[slot]    = 0i64;
+    g_pane_ssh_channel[slot]    = -1i64;
+    g_pane_serial_baud[slot]    = 115200i64;
+    g_pane_serial_path[slot]    = "";
     pass(NIL);
 };
 
@@ -123,5 +147,70 @@ pub func:pane_set_pid = NIL(int64:slot, int64:pid) {
 pub func:pane_set_size = NIL(int64:slot, int64:rows, int64:cols) {
     g_pane_rows[slot] = rows;
     g_pane_cols[slot] = cols;
+    pass(NIL);
+};
+
+// ===================================================================
+// Public API: SSH Getters/Setters (v0.8.1)
+// ===================================================================
+
+pub func:pane_get_type = int64(int64:slot) {
+    pass(g_pane_type[slot]);
+};
+
+pub func:pane_set_type = NIL(int64:slot, int64:typ) {
+    g_pane_type[slot] = typ;
+    pass(NIL);
+};
+
+pub func:pane_get_ssh_session = int64(int64:slot) {
+    pass(g_pane_ssh_session[slot]);
+};
+
+pub func:pane_set_ssh_session = NIL(int64:slot, int64:session) {
+    g_pane_ssh_session[slot] = session;
+    pass(NIL);
+};
+
+pub func:pane_get_ssh_channel = int64(int64:slot) {
+    pass(g_pane_ssh_channel[slot]);
+};
+
+pub func:pane_set_ssh_channel = NIL(int64:slot, int64:channel_id) {
+    g_pane_ssh_channel[slot] = channel_id;
+    pass(NIL);
+};
+
+/// Check if a pane slot is an SSH pane (convenience helper)
+pub func:pane_is_ssh = int64(int64:slot) {
+    if (g_pane_type[slot] == 1i64) { pass(1i64); }
+    pass(0i64);
+};
+
+// ===================================================================
+// Public API: Serial Getters/Setters (v0.9.0)
+// ===================================================================
+
+/// Check if a pane slot is a serial pane (convenience helper)
+pub func:pane_is_serial = int64(int64:slot) {
+    if (g_pane_type[slot] == 2i64) { pass(1i64); }
+    pass(0i64);
+};
+
+pub func:pane_get_serial_baud = int64(int64:slot) {
+    pass(g_pane_serial_baud[slot]);
+};
+
+pub func:pane_set_serial_baud = NIL(int64:slot, int64:baud) {
+    g_pane_serial_baud[slot] = baud;
+    pass(NIL);
+};
+
+pub func:pane_get_serial_path = string(int64:slot) {
+    pass(g_pane_serial_path[slot]);
+};
+
+pub func:pane_set_serial_path = NIL(int64:slot, string:path) {
+    g_pane_serial_path[slot] = path;
     pass(NIL);
 };

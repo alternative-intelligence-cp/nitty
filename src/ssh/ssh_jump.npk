@@ -1,0 +1,281 @@
+// src/ssh/ssh_jump.npk — Jump Host (ProxyJump) Multi-hop SSH (v0.8.4)
+//
+// Implements SSH ProxyJump: connect to a jump/bastion host first, open a
+// direct-tcpip channel to the final target, then run a full SSH handshake
+// over that channel using a Unix socketpair as the transport bridge.
+//
+// Architecture:
+//   Jump session:  TCP → SSH → direct-tcpip channel to target:port
+//   Bridge:        socketpair (fd_a, fd_b)
+//                  Relay goroutine (jump_relay_tick): jump channel ↔ fd_b
+//   Target session: fd_a → SSH KEX/auth/PTY/shell → OPEN
+//
+// State stored per pane slot in module arrays:
+//   g_jump_pane_slot[i]   — the pane_slot being served (the *target* pane)
+//   g_jump_session[i]     — the jump SSH session handle
+//   g_jump_chan_id[i]      — the direct-tcpip channel id on the jump session
+//   g_jump_fd_a[i]         — socketpair fd_a (given to target session as transport)
+//   g_jump_fd_b[i]         — socketpair fd_b (relay side, reads jump channel data)
+//
+// Up to JUMP_MAX (8) concurrent jump connections are supported.
+//
+// Import with: use "../../src/ssh/ssh_jump.npk".*;
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/src/nitpick_ssh.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/src/nitpick_unix_socket.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/src/nitpick_socket_v2.npk".*;
+use "../../src/core/pane.npk".*;
+use "../../src/ssh/ssh_session.npk".*;
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+pub fixed int64:JUMP_MAX = 8i64;
+
+// ── Module-level state ────────────────────────────────────────────────────────
+
+int64[8]:g_jump_pane_slot;   // pane_slot this entry serves (-1 = free)
+int64[8]:g_jump_session;     // jump host session handle
+int64[8]:g_jump_chan_id;     // direct-tcpip channel id on jump session
+int64[8]:g_jump_fd_a;        // socketpair end A (target session transport)
+int64[8]:g_jump_fd_b;        // socketpair end B (relay read side)
+int64[8]:g_jump_chan_open;   // 1 = direct-tcpip channel confirmed open
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+
+pub func:jump_init = NIL() {
+    int64:i = 0i64;
+    while (i < JUMP_MAX) {
+        g_jump_pane_slot[i] = -1i64;
+        g_jump_session[i]   = 0i64;
+        g_jump_chan_id[i]   = -1i64;
+        g_jump_fd_a[i]      = -1i64;
+        g_jump_fd_b[i]      = -1i64;
+        g_jump_chan_open[i] = 0i64;
+        i = i + 1i64;
+    }
+    pass(NIL);
+};
+
+func:_jump_alloc_slot = int64() {
+    int64:i = 0i64;
+    while (i < JUMP_MAX) {
+        if (g_jump_pane_slot[i] < 0i64) { pass(i); }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+func:_jump_find_slot = int64(int64:pane_slot) {
+    int64:i = 0i64;
+    while (i < JUMP_MAX) {
+        if (g_jump_pane_slot[i] == pane_slot) { pass(i); }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+// ── Connect via Jump Host ─────────────────────────────────────────────────────
+
+/// Connect to target through a jump host.
+///
+/// pane_slot    — the pane that will host the target session
+/// jump_host    — jump host hostname
+/// jump_port    — jump host SSH port (usually 22)
+/// jump_user    — username on jump host
+/// target_host  — final destination hostname
+/// target_port  — final destination SSH port
+/// target_user  — username on final destination
+/// target_pass  — password hint for target auth (may be empty)
+/// cols, rows   — initial terminal dimensions
+///
+/// Returns: 0 on success, negative error code on failure.
+pub func:jump_connect = int64(int64:pane_slot,
+                               string:jump_host, int64:jump_port, string:jump_user,
+                               string:target_host, int64:target_port, string:target_user,
+                               string:target_pass, int64:cols, int64:rows) {
+
+    int64:ji = raw _jump_alloc_slot();
+    if (ji < 0i64) { pass(-1i64); } // no free jump slots
+
+    g_jump_pane_slot[ji] = pane_slot;
+
+    // ── Step 1: Connect to jump host (using a dedicated "jump pane" slot) ─────
+    // We reserve a slot in the upper range (32-63) for jump sessions.
+    // Jump sessions use pane slots [32 + ji] to avoid collision with real panes.
+    int64:jump_pane = 32i64 + ji;
+
+    // We need a pane slot entry for the jump session's pane state.
+    // Use pane_create with fd=-1 (SSH, no PTY).
+    int64:jump_pane_slot_created = raw pane_create(-1i64, -1i64, rows, cols);
+    // (ignore result — we use the fixed jump_pane index)
+
+    int64:conn_result = raw ssh_connect(jump_pane,
+        jump_host, jump_port, jump_user, "",
+        cols, rows);
+    if (conn_result != 0i64) {
+        g_jump_pane_slot[ji] = -1i64;
+        pass(-2i64); // jump host connection failed
+    }
+
+    int64:jump_session = raw pane_get_ssh_session(jump_pane);
+    int64:jump_shell_chan = raw pane_get_ssh_channel(jump_pane);
+    g_jump_session[ji] = jump_session;
+
+    // ── Step 2: Open direct-tcpip channel on jump session → target ────────────
+    drop(raw SSH_channel_init(jump_session));
+    int64:fwd_buf = raw SSH.forward_local(jump_session,
+        @cast_unchecked<int32>(0i64),         // chan_id placeholder
+        target_host, @cast_unchecked<int32>(target_port),
+        "127.0.0.1", 0i32);
+    int64:dtchan_id = raw SSH_channel_last_id(jump_session);
+    g_jump_chan_id[ji] = dtchan_id;
+    drop(raw SSH_send_packet(jump_session, fwd_buf));
+    drop(raw SSH_buf_free(fwd_buf));
+
+    // Wait for CHANNEL_OPEN_CONFIRM on jump session
+    int64:wait_iters = 0i64;
+    int64:confirmed = 0i64;
+    while (wait_iters < 64i64 && confirmed == 0i64) {
+        int64:payload = raw SSH_recv_packet(jump_session);
+        if (payload != 0i64) {
+            int32:r = raw SSH_dispatch(jump_session, payload);
+            drop(raw SSH_buf_free(payload));
+            // Check if direct-tcpip channel is now open
+            string:chan_state_key = string_concat("_chan_",
+                string_concat(raw SSH_handle_to_str(dtchan_id), "_state"));
+            string:chan_state = ahget(jump_session, chan_state_key);
+            if (chan_state == "open") { confirmed = 1i64; }
+        }
+        wait_iters = wait_iters + 1i64;
+    }
+    if (confirmed == 0i64) {
+        drop(ssh_disconnect(jump_pane));
+        g_jump_pane_slot[ji] = -1i64;
+        pass(-3i64); // direct-tcpip channel open failed
+    }
+    g_jump_chan_open[ji] = 1i64;
+
+    // ── Step 3: Create socketpair bridge ─────────────────────────────────────
+    int64:fd_a = raw UnixSocket.pair_a();
+    int64:fd_b = raw UnixSocket.pair_b();
+    if (fd_a < 0i64 || fd_b < 0i64) {
+        drop(ssh_disconnect(jump_pane));
+        g_jump_pane_slot[ji] = -1i64;
+        pass(-4i64); // socketpair failed
+    }
+    drop(raw UnixSocket.set_nonblock(fd_a, 1i32));
+    drop(raw UnixSocket.set_nonblock(fd_b, 1i32));
+    g_jump_fd_a[ji] = fd_a;
+    g_jump_fd_b[ji] = fd_b;
+
+    // ── Step 4: Run target SSH session over fd_a as transport ─────────────────
+    // Store fd_a in the target pane's session ahash as "_transport_fd"
+    // so ssh_session.npk can use it instead of calling socket_tcp_connect.
+    //
+    // NOTE: ssh_connect_over_fd is a new entry point we add to ssh_session.npk.
+    int64:target_result = raw ssh_connect_over_fd(pane_slot, fd_a,
+        target_host, target_port, target_user, target_pass, cols, rows);
+    if (target_result != 0i64) {
+        drop(raw UnixSocket.close(fd_a));
+        drop(raw UnixSocket.close(fd_b));
+        drop(ssh_disconnect(jump_pane));
+        g_jump_pane_slot[ji] = -1i64;
+        pass(target_result); // propagate target connect error
+    }
+
+    // Store jump pane reference in target session ahash for cleanup
+    int64:target_session = raw pane_get_ssh_session(pane_slot);
+    ahset(target_session, "_jump_slot", raw SSH_handle_to_str(ji));
+    ahset(target_session, "_jump_pane", raw SSH_handle_to_str(jump_pane));
+
+    pass(0i64);
+};
+
+// ── Relay Tick ────────────────────────────────────────────────────────────────
+
+/// Relay data between the jump direct-tcpip channel and the socketpair.
+/// Call from tw_on_draw() each frame for panes with active jump connections.
+pub func:jump_relay_tick = NIL(int64:pane_slot) {
+    int64:ji = raw _jump_find_slot(pane_slot);
+    if (ji < 0i64) { pass(NIL); }
+    if (g_jump_chan_open[ji] == 0i64) { pass(NIL); }
+
+    int64:jump_session = g_jump_session[ji];
+    int64:dtchan_id    = g_jump_chan_id[ji];
+    int64:fd_b         = g_jump_fd_b[ji];
+
+    // Direction 1: jump SSH channel → fd_b (target session reads from fd_a)
+    // Read accumulated channel data from the jump session
+    string:chan_data = raw SSH_channel_read(jump_session, dtchan_id);
+    if (string_length(chan_data) > 0i64) {
+        drop(raw UnixSocket.send(fd_b, chan_data));
+    }
+
+    // Direction 2: fd_b readable → push into jump channel as CHANNEL_DATA
+    // (Data from target session going toward the remote server)
+    string:local_data = raw UnixSocket.recv(fd_b, 32768i64);
+    if (string_length(local_data) > 0i64) {
+        int64:len = string_length(local_data);
+        int64:data_buf = raw SSH_buf_create(len + 16i64);
+        data_buf = nitpick_ssh_buf_write_bytes(data_buf, local_data,
+            @cast_unchecked<int32>(len));
+        int64:msg_buf = raw SSH_channel_data_msg(jump_session, dtchan_id, data_buf);
+        drop(raw SSH_buf_free(data_buf));
+        drop(raw SSH_send_packet(jump_session, msg_buf));
+        drop(raw SSH_buf_free(msg_buf));
+    }
+
+    // Also drain any SSH control packets on the jump session
+    // (keepalives, window adjustments, etc.)
+    int64:payload = raw SSH_recv_packet(jump_session);
+    if (payload != 0i64) {
+        drop(raw SSH_dispatch(jump_session, payload));
+        drop(raw SSH_buf_free(payload));
+    }
+
+    pass(NIL);
+};
+
+// ── Disconnect ────────────────────────────────────────────────────────────────
+
+/// Disconnect a jump host session and clean up.
+/// Call when the target pane's SSH session is closing.
+pub func:jump_disconnect = NIL(int64:pane_slot) {
+    int64:ji = raw _jump_find_slot(pane_slot);
+    if (ji < 0i64) { pass(NIL); }
+
+    // Close socketpair ends
+    int64:fd_a = g_jump_fd_a[ji];
+    int64:fd_b = g_jump_fd_b[ji];
+    if (fd_a >= 0i64) { drop(raw UnixSocket.close(fd_a)); }
+    if (fd_b >= 0i64) { drop(raw UnixSocket.close(fd_b)); }
+
+    // Disconnect jump session
+    int64:jump_session = g_jump_session[ji];
+    if (jump_session != 0i64) {
+        // Find the jump pane slot from the target session
+        int64:target_session = raw pane_get_ssh_session(pane_slot);
+        string:jump_pane_s = ahget(target_session, "_jump_pane");
+        int64:jump_pane = raw SSH_str_to_handle(jump_pane_s);
+        if (jump_pane >= 0i64) {
+            drop(ssh_disconnect(jump_pane));
+        }
+    }
+
+    // Free slot
+    g_jump_pane_slot[ji] = -1i64;
+    g_jump_session[ji]   = 0i64;
+    g_jump_chan_id[ji]   = -1i64;
+    g_jump_fd_a[ji]      = -1i64;
+    g_jump_fd_b[ji]      = -1i64;
+    g_jump_chan_open[ji] = 0i64;
+
+    pass(NIL);
+};
+
+/// Returns 1 if pane_slot has an active jump connection, 0 otherwise.
+pub func:jump_is_active = int64(int64:pane_slot) {
+    int64:ji = raw _jump_find_slot(pane_slot);
+    if (ji >= 0i64) { pass(1i64); }
+    pass(0i64);
+};

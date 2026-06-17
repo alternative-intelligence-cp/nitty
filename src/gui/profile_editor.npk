@@ -1,0 +1,83 @@
+// src/gui/profile_editor.npk — Profile create/edit dialog (v0.8.3)
+//
+// Thin Nitpick wrapper around the C-side profile editor dialog.
+// pf_editor_open(-1) creates a new profile.
+// pf_editor_open(slot) edits an existing profile.
+//
+// On OK: reads form values back via shim getters and updates profile arrays.
+// On Cancel: no-op.
+
+use "/home/randy/Workspace/REPOS/nitty/src/gui/gtk4_ffi.npk".*;
+use "/home/randy/Workspace/REPOS/nitty/src/config/profile.npk".*;
+
+/// Open the profile editor dialog.
+/// slot = -1  → create new profile
+/// slot >= 0  → edit existing profile at that slot
+/// Returns the slot index of the created/modified profile, or -1 on cancel.
+pub func:pf_editor_open = int64(int64:slot) {
+    // Populate initial values (empty strings for new, existing values for edit)
+    string:init_name     = "";
+    string:init_group    = "";
+    string:init_host     = "";
+    int64:init_port      = 22i64;
+    string:init_user     = "";
+    string:init_auth     = "";
+    string:init_key_path = "";
+
+    if (slot >= 0i64 && slot < raw profile_count()) {
+        init_name     = raw profile_get_name(slot);
+        init_group    = raw profile_get_group(slot);
+        init_host     = raw profile_get_ssh_host(slot);
+        init_port     = raw profile_get_ssh_port(slot);
+        init_user     = raw profile_get_ssh_user(slot);
+        init_auth     = raw profile_get_ssh_auth(slot);
+        init_key_path = raw profile_get_ssh_key_path(slot);
+    }
+
+    // Open the modal dialog (blocks until OK or Cancel)
+    int32:ok = nitty_gtk4_profile_editor_open(
+        init_name, init_group, init_host, init_port,
+        init_user, init_auth, init_key_path);
+
+    if (ok == 0i32) { pass(-1i64); }  // cancelled
+
+    // Read form results
+    string:new_name     = nitty_gtk4_profile_editor_get_name();
+    string:new_group    = nitty_gtk4_profile_editor_get_group();
+    string:new_host     = nitty_gtk4_profile_editor_get_host();
+    int64:new_port      = nitty_gtk4_profile_editor_get_port();
+    string:new_user     = nitty_gtk4_profile_editor_get_user();
+    string:new_auth     = nitty_gtk4_profile_editor_get_auth();
+    string:new_key_path = nitty_gtk4_profile_editor_get_key_path();
+
+    if (string_length(new_name) == 0i64) { new_name = "Unnamed"; }
+    if (new_port <= 0i64) { new_port = 22i64; }
+
+    if (slot < 0i64) {
+        // New profile — add to store
+        int64:new_slot = raw profile_add(
+            new_name,
+            PROF_TYPE_SSH,
+            0i64,   // not default
+            "",     // no inheritance
+            new_group,
+            "",     // no local shell
+            "",     // no working dir
+            "",     // no startup cmd
+            1i64    // login shell (irrelevant for SSH)
+        );
+        if (new_slot < 0i64) { pass(-1i64); }  // store full
+        drop(profile_set_ssh(new_slot, new_host, new_port,
+                             new_user, new_auth, new_key_path, 30i64));
+        pass(new_slot);
+    }
+
+    // Edit existing profile — update in place
+    g_prof_name[slot]         = new_name;
+    g_prof_group[slot]        = new_group;
+    g_prof_type[slot]         = PROF_TYPE_SSH;
+    drop(profile_set_ssh(slot, new_host, new_port,
+                         new_user, new_auth, new_key_path,
+                         raw profile_get_keepalive(slot)));
+    pass(slot);
+};
