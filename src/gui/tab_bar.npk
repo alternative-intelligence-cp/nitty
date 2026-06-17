@@ -18,6 +18,7 @@ use "../core/tab.npk".*;
 use "../core/split_tree.npk".*;
 use "gtk4_ffi.npk".*;
 use "color_scheme.npk".*;   // v0.6.4: mutable scheme state for theme integration
+use "../ssh/ssh_session.npk".{g_ssh_state, g_ssh_host, SSH_SESS_OPEN}; // v0.8.6: SSH state
 
 // ═══════════════════════════════════════════════════════════════════
 // Color state (mutable — updated by tb_apply_theme())
@@ -63,6 +64,11 @@ int64:TB_DOT_BELL_B = 100i64;
 int64:TB_DOT_COMP_R = 300i64;
 int64:TB_DOT_COMP_G = 820i64;
 int64:TB_DOT_COMP_B = 300i64;
+
+// SSH status dot (v0.8.6) — cyan = connected
+int64:TB_DOT_SSH_R = 0i64;
+int64:TB_DOT_SSH_G = 850i64;
+int64:TB_DOT_SSH_B = 900i64;
 
 // Layout constants
 int64:TB_PAD_X = 16i64;         // horizontal padding inside each tab
@@ -252,6 +258,7 @@ pub func:tb_render = NIL(int64:window_width) {
         // Draw tab title text
         // v0.5.3: Prefix maximize indicator to active tab title if maximized
         // v0.5.4: Prefix ⚡ broadcast indicator if broadcast is active
+        // v0.8.6: Active SSH tabs show hostname suffix
         string:title = raw tm_get_title_at(i);
         string:disp_title = title;
         if (is_active_tab == 1i64) {
@@ -261,6 +268,14 @@ pub func:tb_render = NIL(int64:window_width) {
             int64:bc_slot = raw tm_get_active_index();
             if (raw tab_get_broadcast_enabled(bc_slot) != 0i64) {
                 disp_title = string_concat("⚡ ", disp_title);
+            }
+        }
+        // v0.8.6: SSH hostname suffix on active tab when connected
+        if (is_active_tab == 1i64) {
+            if (g_ssh_state[i] == SSH_SESS_OPEN()) {
+                if (!string_is_empty(g_ssh_host[i])) {
+                    disp_title = string_concat(string_concat(disp_title, " ("), string_concat(g_ssh_host[i], ")"));
+                }
             }
         }
         int64:text_x = x + TB_PAD_X;
@@ -343,6 +358,22 @@ pub func:tb_render = NIL(int64:window_width) {
                 }
                 nitty_render_draw_dot(comp_x, dot_y,
                     TB_DOT_COMP_R, TB_DOT_COMP_G, TB_DOT_COMP_B);
+            }
+
+            // v0.8.6: SSH connected dot (cyan, leftmost — additional indicator)
+            if (g_ssh_state[i] == SSH_SESS_OPEN()) {
+                int64:ssh_dot_x = x + 6i64;   // far-left edge of tab
+                nitty_render_draw_dot(ssh_dot_x, dot_y,
+                    TB_DOT_SSH_R, TB_DOT_SSH_G, TB_DOT_SSH_B);
+            }
+        }
+
+        // v0.8.6: SSH dot on ACTIVE tab too (show state for active SSH tab)
+        if (is_active_tab == 1i64) {
+            if (g_ssh_state[i] == SSH_SESS_OPEN()) {
+                int64:ssh_dot_ax = x + 6i64;
+                nitty_render_draw_dot(ssh_dot_ax, dot_y,
+                    TB_DOT_SSH_R, TB_DOT_SSH_G, TB_DOT_SSH_B);
             }
         }
 

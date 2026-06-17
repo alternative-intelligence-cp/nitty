@@ -77,6 +77,10 @@ string[64]:g_prof_ssh_jump_host;  // ProxyJump hostname (empty = direct)
 int64[64]:g_prof_ssh_jump_port;   // ProxyJump SSH port (default 22)
 string[64]:g_prof_ssh_jump_user;  // ProxyJump username (empty = same as profile user)
 
+// SSH v0.8.6 feature flags
+int64[64]:g_prof_x11_forwarding;  // 1 = enable X11 forwarding, 0 = disable
+int64[64]:g_prof_ssh_compress;    // 1 = enable zlib compression, 0 = disable
+
 // Serial params (placeholder — v0.9.x fills these)
 string[64]:g_prof_serial_dev;
 int64[64]:g_prof_serial_baud;
@@ -147,6 +151,8 @@ func:_prof_clear_slot = NIL(int64:i) {
     g_prof_ssh_jump_host[i]    = "";
     g_prof_ssh_jump_port[i]    = 22i64;
     g_prof_ssh_jump_user[i]    = "";
+    g_prof_x11_forwarding[i]   = 0i64;
+    g_prof_ssh_compress[i]     = 0i64;
     g_prof_serial_dev[i]   = "";
     g_prof_serial_baud[i]  = 9600i64;
     g_prof_telnet_host[i]  = "";
@@ -591,6 +597,9 @@ pub func:profiles_load_toml = NIL() {
             g_prof_ssh_jump_host[slot]   = p_jump_host;
             g_prof_ssh_jump_port[slot]   = p_jump_port;
             g_prof_ssh_jump_user[slot]   = p_jump_user;
+            // v0.8.6 feature flags
+            g_prof_x11_forwarding[slot]  = raw Toml.get_int(string_concat(prefix, "x11_forwarding"));
+            g_prof_ssh_compress[slot]    = raw Toml.get_int(string_concat(prefix, "ssh_compress"));
             g_prof_count = g_prof_count + 1i64;
         }
         i = i + 1i64;
@@ -634,6 +643,9 @@ pub func:profiles_save_toml = NIL() {
         drop(raw Toml.set_string(string_concat(prefix, "ssh_jump_host"),    g_prof_ssh_jump_host[i]));
         drop(raw Toml.set_int(string_concat(prefix, "ssh_jump_port"),       g_prof_ssh_jump_port[i]));
         drop(raw Toml.set_string(string_concat(prefix, "ssh_jump_user"),    g_prof_ssh_jump_user[i]));
+        // v0.8.6 feature flags
+        drop(raw Toml.set_int(string_concat(prefix, "x11_forwarding"),      g_prof_x11_forwarding[i]));
+        drop(raw Toml.set_int(string_concat(prefix, "ssh_compress"),         g_prof_ssh_compress[i]));
         i = i + 1i64;
     }
     pass(NIL);
@@ -696,4 +708,60 @@ pub func:profile_has_jump = int64(int64:slot) {
     if (slot < 0i64 || slot >= g_prof_count) { pass(0i64); }
     if (string_length(g_prof_ssh_jump_host[slot]) > 0i64) { pass(1i64); }
     pass(0i64);
+};
+
+// ── v0.8.6: X11 Forwarding + Compression accessors ────────────────────────────
+
+/// Get X11 forwarding flag (1=enabled, 0=disabled).
+pub func:profile_get_x11_forwarding = int64(int64:slot) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(0i64); }
+    pass(g_prof_x11_forwarding[slot]);
+};
+
+/// Set X11 forwarding flag.
+pub func:profile_set_x11_forwarding = NIL(int64:slot, int64:enabled) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(NIL); }
+    g_prof_x11_forwarding[slot] = enabled;
+    pass(NIL);
+};
+
+/// Get SSH compression flag (1=enabled, 0=disabled).
+pub func:profile_get_ssh_compress = int64(int64:slot) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(0i64); }
+    pass(g_prof_ssh_compress[slot]);
+};
+
+/// Set SSH compression flag.
+pub func:profile_set_ssh_compress = NIL(int64:slot, int64:enabled) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(NIL); }
+    g_prof_ssh_compress[slot] = enabled;
+    pass(NIL);
+};
+
+// ── Telnet getters/setters (v0.9.2) ──────────────────────────────────────────
+
+/// Get Telnet hostname for profile slot.
+pub func:profile_get_telnet_host = string(int64:slot) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(""); }
+    pass(g_prof_telnet_host[slot]);
+};
+
+/// Set Telnet hostname for profile slot.
+pub func:profile_set_telnet_host = NIL(int64:slot, string:host) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(NIL); }
+    g_prof_telnet_host[slot] = host;
+    pass(NIL);
+};
+
+/// Get Telnet port for profile slot.
+pub func:profile_get_telnet_port = int64(int64:slot) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(23i64); }
+    pass(g_prof_telnet_port[slot]);
+};
+
+/// Set Telnet port for profile slot.
+pub func:profile_set_telnet_port = NIL(int64:slot, int64:port) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(NIL); }
+    g_prof_telnet_port[slot] = port;
+    pass(NIL);
 };

@@ -15,30 +15,40 @@
 int64:g_sch_count = 0i64;
 
 // Index arrays — one slot per schema entry (up to 32)
-string[32]:g_sch_key     = ["", "", "", "", "", "", "", "",
+string[48]:g_sch_key     = ["", "", "", "", "", "", "", "",
                              "", "", "", "", "", "", "", "",
                              "", "", "", "", "", "", "", "",
-                             "", "", "", "", "", "", "", ""];
-int64[32]:g_sch_type     = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
-                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
-                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
-                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
-string[32]:g_sch_default = ["", "", "", "", "", "", "", "",
-                             "", "", "", "", "", "", "", "",
+,
                              "", "", "", "", "", "", "", "",
                              "", "", "", "", "", "", "", ""];
-int64[32]:g_sch_min      = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+int64[48]:g_sch_type     = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                              0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+,
                              0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                              0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
-int64[32]:g_sch_max      = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+string[48]:g_sch_default = ["", "", "", "", "", "", "", "",
+                             "", "", "", "", "", "", "", "",
+                             "", "", "", "", "", "", "", "",
+,
+                             "", "", "", "", "", "", "", "",
+                             "", "", "", "", "", "", "", ""];
+int64[48]:g_sch_min      = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                              0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+int64[48]:g_sch_max      = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+,
                              0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                              0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
 
 // Enum valid values: up to 4 per entry, stored in a flat 32×4 grid
 // Access: g_sch_enum_vals[entry_idx * 4 + val_idx]
-string[128]:g_sch_enum_vals  = ["", "", "", "", "", "", "", "",
+string[192]:g_sch_enum_vals  = ["", "", "", "", "", "", "", "",
                                  "", "", "", "", "", "", "", "",
                                  "", "", "", "", "", "", "", "",
                                  "", "", "", "", "", "", "", "",
@@ -53,17 +63,28 @@ string[128]:g_sch_enum_vals  = ["", "", "", "", "", "", "", "",
                                  "", "", "", "", "", "", "", "",
                                  "", "", "", "", "", "", "", "",
                                  "", "", "", "", "", "", "", "",
-                                 "", "", "", "", "", "", "", ""];
-int64[32]:g_sch_enum_count   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+    ,
+                             "", "", "", "", "", "", "", "",
+                             "", "", "", "", "", "", "", "",
+                                  "", "", "", "", "", "", "", "",
+                                  "", "", "", "", "", "", "", "",
+                                  "", "", "", "", "", "", "", "",
+                                  "", "", "", "", "", "", "", "",
+                                  "", "", "", "", "", "", "", "",
+                                  "", "", "", "", "", "", "", "",
+                                  "", "", "", "", "", "", "", ""];
+int64[48]:g_sch_enum_count   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                                  0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                                  0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
-                                 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+    ,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 /// Add a String/Int/Bool/FloatX1000 entry (no enum values)
 func:_sch_add = NIL(string:key, int64:typ, string:def, int64:mn, int64:mx) {
-    if (g_sch_count >= 32i64) { pass(NIL); }
+    if (g_sch_count >= 48i64) { pass(NIL); }
     int64:i = g_sch_count;
     g_sch_key[i]     = key;
     g_sch_type[i]    = typ;
@@ -78,7 +99,7 @@ func:_sch_add = NIL(string:key, int64:typ, string:def, int64:mn, int64:mx) {
 func:_sch_add_enum = NIL(string:key, string:def,
                          string:v0, string:v1, string:v2, string:v3,
                          int64:nvals) {
-    if (g_sch_count >= 32i64) { pass(NIL); }
+    if (g_sch_count >= 48i64) { pass(NIL); }
     int64:i = g_sch_count;
     g_sch_key[i]     = key;
     g_sch_type[i]    = 3i64;  // Enum
@@ -185,6 +206,12 @@ pub func:schema_init = NIL() {
     drop(_sch_add("terminal.activity_silence_threshold",     T_INT,  "5000",  1000i64, 60000i64));
     drop(_sch_add("terminal.process_completion_notification",T_BOOL, "1",     0i64, 0i64));
     drop(_sch_add("terminal.process_min_duration",           T_INT,  "10000", 1000i64, 300000i64));
+
+    // zmodem.* — v0.8.7: Zmodem file transfer configuration
+    //   zmodem.auto_detect:    bool   — 1 = auto-intercept **\x18B headers (default: 1)
+    //   zmodem.download_dir:   string — destination for received files (default: ~/Downloads)
+    drop(_sch_add("zmodem.auto_detect",  T_BOOL, "1",          0i64, 0i64));
+    drop(_sch_add("zmodem.download_dir", T_STR,  "~/Downloads", 0i64, 0i64));
 
     pass(NIL);
 };

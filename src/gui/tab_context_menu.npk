@@ -21,6 +21,7 @@
 //  14  = Explode Panes       v0.5.5
 //  15  = Port Forwards...   v0.8.4
 //  16  = SFTP Browser       v0.8.5
+//  17  = Session Info       v0.8.7 (SSH panes only)
 
 use "../core/tab_manager.npk".*;
 use "../core/split_tree.npk".*;
@@ -28,6 +29,7 @@ use "../gui/split_view.npk".*;
 use "gtk4_ffi.npk".*;
 use "../gui/forward_status.npk".*;
 use "../gui/sftp_browser.npk".*;
+use "../gui/ssh_session_info.npk".{ssi_show}; // v0.8.7
 
 // ═══════════════════════════════════════════════════════════════════
 // Preset color palette (packed RGB)
@@ -202,6 +204,12 @@ pub func:tcm_poll = NIL() {
     if (action == 16i64) {
         int64:sftp_pane_slot = raw tm_get_active_pane_slot(tab_idx);
         drop(sftp_browser_toggle(sftp_pane_slot));
+    }
+
+    // v0.8.7: Session Info — display SSH session parameters for the active pane
+    if (action == 17i64) {
+        int64:ssi_pane_slot = raw tm_get_active_pane_slot(tab_idx);
+        drop(ssi_show(ssi_pane_slot));
     }
 
     // Queue a redraw after any context menu action

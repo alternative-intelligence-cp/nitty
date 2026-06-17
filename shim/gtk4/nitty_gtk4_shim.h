@@ -953,6 +953,93 @@ int64_t nitty_gtk4_sftp_xfer_label(int64_t sftp_widget);
 int64_t nitty_gtk4_sftp_event_poll(int64_t sftp_widget);
 int64_t nitty_gtk4_sftp_event_row(void);   /* row index of last event */
 
+/* ── v0.8.6: X11 Forwarding socket relay ────────────────────────────────── */
+
+/**
+ * Connect to the local X11 Unix socket for the given DISPLAY string.
+ * display_str: e.g. ":0", ":1.0", "localhost:0"
+ * Returns an open socket fd on success, -1 on failure.
+ */
+int64_t nitty_x11_connect_display(const char *display_str);
+
+/**
+ * Read up to len bytes from the X11 socket fd into a static internal buffer.
+ * Returns a pointer to the data as a C string (may contain NUL bytes),
+ * or "" if nothing available / error. Sets *out_len to actual bytes read.
+ * For Nitpick FFI: returns string; caller should use string_length() for length.
+ */
+const char *nitty_x11_read(int32_t fd, int32_t len);
+
+/**
+ * Write data (len bytes) to the X11 socket fd.
+ * Returns bytes written, or -1 on error.
+ */
+int64_t nitty_x11_write(int32_t fd, const char *data, int32_t len);
+
+/**
+ * Close the X11 socket fd. Returns 0 on success.
+ */
+int64_t nitty_x11_close(int32_t fd);
+
+/**
+ * Return the value of the DISPLAY environment variable, or "" if not set.
+ */
+const char *nitty_x11_get_display(void);
+
+/**
+ * Read the MIT-MAGIC-COOKIE-1 for the given display from ~/.Xauthority.
+ * Returns the 32-char hex cookie, or "" on failure.
+ */
+const char *nitty_x11_read_auth_cookie(const char *display);
+
+/* ── v0.8.6: Encrypted vault (AES-256-GCM + PBKDF2-SHA256) ─────────────── */
+
+/**
+ * Encrypt plaintext using AES-256-GCM with a PBKDF2-SHA256-derived key.
+ * Key derivation: PBKDF2(passphrase, random_salt, 100000, 32).
+ * Returns base64(salt[16] || iv[12] || tag[16] || ciphertext) in a static buffer,
+ * or "" on failure. Thread-unsafe (static buffer).
+ */
+const char *nitpick_vault_encrypt(const char *passphrase, const char *plaintext);
+
+/**
+ * Decrypt a vault blob produced by nitpick_vault_encrypt.
+ * blob_b64: base64(salt || iv || tag || ciphertext).
+ * Returns the plaintext in a static buffer, or "" on failure.
+ */
+const char *nitpick_vault_decrypt(const char *passphrase, const char *blob_b64);
+
+/**
+ * Return current epoch seconds (time(NULL)) as int64_t.
+ * Used by ssh_vault.npk for auto-lock timeout.
+ */
+int64_t nitty_epoch_seconds(void);
+
+/* ── v0.8.6: Zlib compress / decompress ─────────────────────────────────── */
+
+/**
+ * Compress data (len bytes) using zlib deflate (level 6).
+ * Returns the compressed bytes as a string in a static buffer.
+ * Sets g_zlib_last_out_len to the compressed length.
+ * Returns "" on failure.
+ */
+const char *nitpick_zlib_compress(const char *data, int32_t len);
+
+/**
+ * Decompress zlib deflate data (len bytes), up to max_out bytes.
+ * Returns the decompressed bytes as a string in a static buffer.
+ * Sets g_zlib_last_out_len to the decompressed length.
+ * Returns "" on failure.
+ */
+const char *nitpick_zlib_decompress(const char *data, int32_t len, int32_t max_out);
+
+/**
+ * Return the actual byte length of the last compress/decompress output.
+ * Since the Nitpick string type may contain NUL bytes, use this instead
+ * of string_length() on binary compressed data.
+ */
+int64_t nitpick_zlib_last_len(void);
+
 #ifdef __cplusplus
 }
 #endif

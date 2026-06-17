@@ -1,8 +1,9 @@
-// src/core/pane.npk -- Per-pane data registry (v0.5.0, extended v0.8.1, v0.9.0)
+// src/core/pane.npk -- Per-pane data registry (v0.5.0, extended v0.8.1, v0.9.0, v0.9.2)
 //
 // Maps pane_id -> PTY fd, shell PID, terminal dimensions.
 // v0.8.1 adds pane_type, pane_ssh_session, and pane_ssh_channel for SSH panes.
 // v0.9.0 adds PANE_TYPE_SERIAL, g_pane_serial_baud, g_pane_serial_path.
+// v0.9.2 adds PANE_TYPE_TELNET, g_pane_telnet_host, g_pane_telnet_port.
 // Uses the flat parallel-array pattern established by tab.npk.
 //
 // Pane slots are independent of tab slots: a tab has one SplitTree
@@ -20,6 +21,7 @@ int64:MAX_PANES = 64i64;
 pub func:PANE_TYPE_LOCAL   = int64() { pass(0i64); };  // Local PTY shell (default)
 pub func:PANE_TYPE_SSH     = int64() { pass(1i64); };  // Remote SSH channel
 pub func:PANE_TYPE_SERIAL  = int64() { pass(2i64); };  // Serial port (v0.9.0)
+pub func:PANE_TYPE_TELNET  = int64() { pass(3i64); };  // Telnet client (v0.9.2)
 
 // ===================================================================
 // Module state -- parallel flat arrays
@@ -38,6 +40,9 @@ int64[64]:g_pane_ssh_channel = [-1i64, -1i64, -1i64, -1i64, -1i64, -1i64, -1i64,
 // v0.9.0 Serial fields
 int64[64]:g_pane_serial_baud = [115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64, 115200i64]; // serial baud rate (default 115200)
 string[64]:g_pane_serial_path = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]; // serial device path (e.g. "/dev/ttyUSB0")
+// v0.9.2 Telnet fields
+string[64]:g_pane_telnet_host = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]; // telnet hostname
+int64[64]:g_pane_telnet_port = [23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64, 23i64];   // telnet port (default 23)
 
 // ===================================================================
 // Public API: Lifecycle
@@ -68,6 +73,8 @@ pub func:pane_create = int64(int64:pane_id, int64:pty_fd, int64:pid, int64:rows,
     g_pane_ssh_channel[found]    = -1i64;      // no SSH channel
     g_pane_serial_baud[found]    = 115200i64;  // default baud rate
     g_pane_serial_path[found]    = "";         // no serial device
+    g_pane_telnet_host[found]    = "";         // no telnet host       (v0.9.2)
+    g_pane_telnet_port[found]    = 23i64;      // default telnet port  (v0.9.2)
     pass(found);
 };
 
@@ -85,6 +92,8 @@ pub func:pane_destroy = NIL(int64:slot) {
     g_pane_ssh_channel[slot]    = -1i64;
     g_pane_serial_baud[slot]    = 115200i64;
     g_pane_serial_path[slot]    = "";
+    g_pane_telnet_host[slot]    = "";      // v0.9.2
+    g_pane_telnet_port[slot]    = 23i64;   // v0.9.2
     pass(NIL);
 };
 
@@ -212,5 +221,33 @@ pub func:pane_get_serial_path = string(int64:slot) {
 
 pub func:pane_set_serial_path = NIL(int64:slot, string:path) {
     g_pane_serial_path[slot] = path;
+    pass(NIL);
+};
+
+// ===================================================================
+// Public API: Telnet Getters/Setters (v0.9.2)
+// ===================================================================
+
+/// Check if a pane slot is a Telnet pane (convenience helper)
+pub func:pane_is_telnet = int64(int64:slot) {
+    if (g_pane_type[slot] == 3i64) { pass(1i64); }
+    pass(0i64);
+};
+
+pub func:pane_get_telnet_host = string(int64:slot) {
+    pass(g_pane_telnet_host[slot]);
+};
+
+pub func:pane_set_telnet_host = NIL(int64:slot, string:host) {
+    g_pane_telnet_host[slot] = host;
+    pass(NIL);
+};
+
+pub func:pane_get_telnet_port = int64(int64:slot) {
+    pass(g_pane_telnet_port[slot]);
+};
+
+pub func:pane_set_telnet_port = NIL(int64:slot, int64:port) {
+    g_pane_telnet_port[slot] = port;
     pass(NIL);
 };

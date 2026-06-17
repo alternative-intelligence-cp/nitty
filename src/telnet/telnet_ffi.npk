@@ -1,0 +1,56 @@
+// src/telnet/telnet_ffi.npk — Telnet C shim FFI declarations (v0.9.2)
+//
+// Imports the nitty_telnet_shim C functions for use in telnet_session.npk.
+// The shim handles: hostname resolution, TCP connect/close, non-blocking
+// read/write, key-input queue, and IAC protocol helpers.
+//
+// Usage:
+//   use "../../src/telnet/telnet_ffi.npk".*;
+//
+// Note: str_byte_at is imported from stdlib/string.npk separately.
+
+extern "nitty_telnet_shim" {
+    // Hostname resolution
+    func:nitty_telnet_resolve          = string(string:hostname);
+
+    // Connection lifecycle
+    func:nitty_telnet_connect          = int64(string:ip_str, int64:port);
+    func:nitty_telnet_close            = int64(int64:fd);
+
+    // Non-blocking read (returns: n=bytes read, 0=EOF, -1=error, -2=EAGAIN)
+    func:nitty_telnet_read             = int64(int64:fd);
+    func:nitty_telnet_read_buf_len     = int64();
+    func:nitty_telnet_read_buf_str     = string();
+
+    // Raw write (caller is responsible for IAC-escaping)
+    func:nitty_telnet_write            = int64(int64:fd, string:data, int64:len);
+
+    // Key input queue
+    func:nitty_telnet_key_input_len     = int64();
+    func:nitty_telnet_key_input_str     = string();
+    func:nitty_telnet_key_input_consume = NIL();
+    func:nitty_telnet_key_input_push_byte = NIL(int64:byte_val);
+    func:nitty_telnet_key_input_push_str  = NIL(string:str);
+
+    // Active Telnet fd registration (key event routing)
+    func:nitty_telnet_set_active_fd    = NIL(int64:fd);
+    func:nitty_telnet_get_active_fd    = int64();
+
+    // ── Protocol helpers ───────────────────────────────────────────────
+    // Send IAC CMD OPT (3-byte sequence, handles bytes > 127)
+    func:nitty_telnet_write_iac3       = int64(int64:fd, int64:cmd, int64:opt);
+
+    // Send NAWS subnegotiation: IAC SB NAWS <cols> <rows> IAC SE
+    func:nitty_telnet_write_naws       = int64(int64:fd, int64:cols, int64:rows);
+
+    // Send TTYPE IS "xterm-256color": IAC SB TTYPE IS "xterm-256color" IAC SE
+    func:nitty_telnet_write_ttype_response = int64(int64:fd);
+
+    // Convert a raw byte value (0..255) to a 1-byte string
+    func:nitty_telnet_byte_to_str      = string(int64:b);
+
+    // IAC escaping: prepare(data, len) then read via str/len getters
+    func:nitty_telnet_escape_iac_prepare = NIL(string:data, int64:len);
+    func:nitty_telnet_escape_iac_str     = string();
+    func:nitty_telnet_escape_iac_len     = int64();
+}

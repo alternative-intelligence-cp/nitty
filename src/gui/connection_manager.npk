@@ -13,6 +13,8 @@ use "/home/randy/Workspace/REPOS/nitty/src/gui/gtk4_ffi.npk".*;
 use "/home/randy/Workspace/REPOS/nitty/src/config/profile.npk".*;
 use "/home/randy/Workspace/REPOS/nitty/src/ssh/ssh_config_parser.npk".*;
 use "/home/randy/Workspace/REPOS/nitty/src/ssh/ssh_session.npk".*;
+use "/home/randy/Workspace/REPOS/nitty/src/ssh/ssh_vault.npk".{vault_is_unlocked, vault_get_password}; // v0.8.6
+use "/home/randy/Workspace/REPOS/nitty/src/telnet/telnet_session.npk".*;           // v0.9.2
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
 
 // ── Module state ──────────────────────────────────────────────────────────────
@@ -141,6 +143,16 @@ pub func:cm_rebuild_list = NIL() {
                         if (string_length(h) > 0i64) {
                             row_label = string_concat(pname, string_concat(
                                 " — ", string_concat(u, string_concat("@", h))));
+                        }
+                    }
+                    // v0.9.2: Telnet label
+                    if (ptype == PROF_TYPE_TELNET) {
+                        string:th = raw profile_get_telnet_host(j);
+                        int64:tp  = raw profile_get_telnet_port(j);
+                        if (string_length(th) > 0i64) {
+                            string:tp_str = int_to_string(tp);
+                            row_label = string_concat(pname, string_concat(
+                                " — telnet://", string_concat(th, string_concat(":", tp_str))));
                         }
                     }
                     drop(nitty_gtk4_list_box_append(lb, row_label));
@@ -282,33 +294,118 @@ func:_parse_quick_connect = NIL(string:text) {
     pass(NIL);
 };
 
-/// Launch a quick-connect SSH session from "user@host:port" text.
+/// Launch a quick-connect session from text field.
+/// Supports:
+///   SSH:    "user@host:port" | "user@host" | "host:port" | "host"
+///   Telnet: "telnet:host:port" | "telnet:host"                   (v0.9.2)
 func:_cm_quick_connect = NIL(string:text) {
+    if (string_length(text) == 0i64) { pass(NIL); }
+
+    // v0.9.2: Check for "telnet:" prefix
+    int64:tlen = string_length(text);
+    int64:tel_prefix = 0i64;
+    if (tlen >= 7i64) {
+        if (string_substring(text, 0i64, 7i64) == "telnet:") {
+            tel_prefix = 1i64;
+        }
+    }
+
+    if (tel_prefix != 0i64) {
+        // Parse "telnet:host" or "telnet:host:port"
+        string:rest = string_substring(text, 7i64, tlen);
+        string:tel_host = rest;
+        int64:tel_port  = 23i64;
+        int64:rlen = string_length(rest);
+        int64:cpos = -1i64;
+        int64:ci = 0i64;
+        while (ci < rlen) {
+            if (string_substring(rest, ci, ci + 1i64) == ":") { cpos = ci; }
+            ci = ci + 1i64;
+        }
+        if (cpos >= 0i64) {
+            tel_host = string_substring(rest, 0i64, cpos);
+            string:port_str = string_substring(rest, cpos + 1i64, rlen);
+            int64:pv = 0i64;
+            int64:pi2 = 0i64;
+            int64:plen2 = string_length(port_str);
+            while (pi2 < plen2) {
+                string:ch2 = string_substring(port_str, pi2, pi2 + 1i64);
+                if (ch2 == "0") { pv = pv * 10i64; }
+                if (ch2 == "1") { pv = pv * 10i64 + 1i64; }
+                if (ch2 == "2") { pv = pv * 10i64 + 2i64; }
+                if (ch2 == "3") { pv = pv * 10i64 + 3i64; }
+                if (ch2 == "4") { pv = pv * 10i64 + 4i64; }
+                if (ch2 == "5") { pv = pv * 10i64 + 5i64; }
+                if (ch2 == "6") { pv = pv * 10i64 + 6i64; }
+                if (ch2 == "7") { pv = pv * 10i64 + 7i64; }
+                if (ch2 == "8") { pv = pv * 10i64 + 8i64; }
+                if (ch2 == "9") { pv = pv * 10i64 + 9i64; }
+                pi2 = pi2 + 1i64;
+            }
+            if (pv > 0i64 && pv < 65536i64) { tel_port = pv; }
+        }
+        if (string_length(tel_host) > 0i64) {
+            int64:rc = raw telnet_connect(0i64, tel_host, tel_port, 24i64, 80i64);
+            if (rc < 0i64) {
+                drop(nitty_gtk4_show_notification(
+                    string_concat("Telnet: could not connect to ", tel_host)));
+            }
+        }
+        pass(NIL);
+    }
+
+    // Default: SSH quick-connect
     drop(_parse_quick_connect(text));
     if (string_length(g_cm_qc_host) == 0i64) { pass(NIL); }
 
-    // Connect on pane slot 0 for now (simplified — full tab integration in v0.8.4)
     int64:result = raw ssh_connect(0i64, g_cm_qc_host, g_cm_qc_port,
                                    g_cm_qc_user, "", 80i64, 24i64);
-    // result < 0 = error; result = 0 = success
     pass(NIL);
 };
 
-/// Launch an SSH session for a saved profile slot.
+/// Launch a session (SSH or Telnet) for a saved profile slot.
 func:_cm_do_connect = NIL(int64:slot) {
     if (slot < 0i64 || slot >= raw profile_count()) { pass(NIL); }
-    if (raw profile_get_type(slot) != PROF_TYPE_SSH) { pass(NIL); }
 
-    string:host = raw profile_get_ssh_host(slot);
-    int64:port  = raw profile_get_ssh_port(slot);
-    string:user = raw profile_get_ssh_user(slot);
-    if (string_length(host) == 0i64) { pass(NIL); }
-    if (port <= 0i64) { port = 22i64; }
-    if (string_length(user) == 0i64) { user = raw env_get("USER"); }
+    int64:ptype = raw profile_get_type(slot);
 
-    drop(prof_add_recent(slot));
+    // SSH profile
+    if (ptype == PROF_TYPE_SSH) {
+        string:host = raw profile_get_ssh_host(slot);
+        int64:port  = raw profile_get_ssh_port(slot);
+        string:user = raw profile_get_ssh_user(slot);
+        if (string_length(host) == 0i64) { pass(NIL); }
+        if (port <= 0i64) { port = 22i64; }
+        if (string_length(user) == 0i64) { user = raw env_get("USER"); }
 
-    int64:result = raw ssh_connect(0i64, host, port, user, "", 80i64, 24i64);
+        // v0.8.6: Look up stored password from vault
+        string:stored_pass = "";
+        if (raw vault_is_unlocked() == 1i64) {
+            string:pname = raw profile_get_name(slot);
+            stored_pass = raw vault_get_password(pname);
+        }
+
+        drop(prof_add_recent(slot));
+        int64:result = raw ssh_connect(0i64, host, port, user, stored_pass, 80i64, 24i64);
+        pass(NIL);
+    }
+
+    // v0.9.2: Telnet profile
+    if (ptype == PROF_TYPE_TELNET) {
+        string:tel_host = raw profile_get_telnet_host(slot);
+        int64:tel_port  = raw profile_get_telnet_port(slot);
+        if (string_length(tel_host) == 0i64) { pass(NIL); }
+        if (tel_port <= 0i64) { tel_port = 23i64; }
+
+        drop(prof_add_recent(slot));
+        int64:rc = raw telnet_connect(0i64, tel_host, tel_port, 24i64, 80i64);
+        if (rc < 0i64) {
+            drop(nitty_gtk4_show_notification(
+                string_concat("Telnet: could not connect to ", tel_host)));
+        }
+        pass(NIL);
+    }
+
     pass(NIL);
 };
 
@@ -321,27 +418,30 @@ func:_cm_delete_profile = NIL(int64:slot) {
     int64:i = slot;
     while (i < count - 1i64) {
         int64:next = i + 1i64;
-        g_prof_name[i]         = g_prof_name[next];
-        g_prof_type[i]         = g_prof_type[next];
-        g_prof_is_default[i]   = g_prof_is_default[next];
-        g_prof_inherits[i]     = g_prof_inherits[next];
-        g_prof_group[i]        = g_prof_group[next];
-        g_prof_shell_path[i]   = g_prof_shell_path[next];
-        g_prof_working_dir[i]  = g_prof_working_dir[next];
-        g_prof_startup_cmd[i]  = g_prof_startup_cmd[next];
-        g_prof_login_shell[i]  = g_prof_login_shell[next];
-        g_prof_ssh_host[i]     = g_prof_ssh_host[next];
-        g_prof_ssh_port[i]     = g_prof_ssh_port[next];
-        g_prof_ssh_user[i]     = g_prof_ssh_user[next];
-        g_prof_ssh_auth[i]     = g_prof_ssh_auth[next];
-        g_prof_ssh_key_path[i] = g_prof_ssh_key_path[next];
-        g_prof_keepalive[i]    = g_prof_keepalive[next];
-        g_prof_font_family[i]  = g_prof_font_family[next];
-        g_prof_font_size[i]    = g_prof_font_size[next];
-        g_prof_color_scheme[i] = g_prof_color_scheme[next];
-        g_prof_cursor_style[i] = g_prof_cursor_style[next];
-        g_prof_tab_title[i]    = g_prof_tab_title[next];
-        g_prof_env_count[i]    = g_prof_env_count[next];
+        g_prof_name[i]           = g_prof_name[next];
+        g_prof_type[i]           = g_prof_type[next];
+        g_prof_is_default[i]     = g_prof_is_default[next];
+        g_prof_inherits[i]       = g_prof_inherits[next];
+        g_prof_group[i]          = g_prof_group[next];
+        g_prof_shell_path[i]     = g_prof_shell_path[next];
+        g_prof_working_dir[i]    = g_prof_working_dir[next];
+        g_prof_startup_cmd[i]    = g_prof_startup_cmd[next];
+        g_prof_login_shell[i]    = g_prof_login_shell[next];
+        g_prof_ssh_host[i]       = g_prof_ssh_host[next];
+        g_prof_ssh_port[i]       = g_prof_ssh_port[next];
+        g_prof_ssh_user[i]       = g_prof_ssh_user[next];
+        g_prof_ssh_auth[i]       = g_prof_ssh_auth[next];
+        g_prof_ssh_key_path[i]   = g_prof_ssh_key_path[next];
+        g_prof_keepalive[i]      = g_prof_keepalive[next];
+        g_prof_font_family[i]    = g_prof_font_family[next];
+        g_prof_font_size[i]      = g_prof_font_size[next];
+        g_prof_color_scheme[i]   = g_prof_color_scheme[next];
+        g_prof_cursor_style[i]   = g_prof_cursor_style[next];
+        g_prof_tab_title[i]      = g_prof_tab_title[next];
+        g_prof_env_count[i]      = g_prof_env_count[next];
+        // v0.8.6: shift new feature-flag arrays
+        g_prof_x11_forwarding[i] = g_prof_x11_forwarding[next];
+        g_prof_ssh_compress[i]   = g_prof_ssh_compress[next];
         i = i + 1i64;
     }
     g_prof_count = g_prof_count - 1i64;

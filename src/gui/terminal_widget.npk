@@ -82,8 +82,12 @@ use "profile_editor.npk".*;              // v0.8.3: profile editor dialog
 use "../ssh/ssh_session.npk".{ssh_poll_read, ssh_get_state}; // v0.8.3: SSH data poll
 use "../ssh/ssh_forward.npk".{fwd_local_tick, fwd_dynamic_tick}; // v0.8.4: port forward relay
 use "../ssh/ssh_jump.npk".{jump_relay_tick, jump_is_active};      // v0.8.4: jump host relay
-use "../core/pane.npk".{pane_get_type, PANE_TYPE_SSH};            // v0.8.4: pane type check
+use "../core/pane.npk".{pane_get_type, PANE_TYPE_SSH, PANE_TYPE_TELNET};  // v0.8.4 / v0.9.2
 use "sftp_browser.npk".*;                                         // v0.8.5: SFTP browser panel
+use "../ssh/ssh_x11.npk".{x11_tick};                              // v0.8.6: X11 forwarding relay
+use "../ssh/ssh_zmodem.npk".{zmodem_feed};                        // v0.8.6: Zmodem intercept
+use "../ssh/ssh_vault.npk".{vault_tick};                          // v0.8.6: vault auto-lock
+use "../telnet/telnet_session.npk".{telnet_poll_read, telnet_poll_key_input}; // v0.9.2: telnet support
 
 // v0.8.4: Built-in string byte accessor (Nitpick runtime)
 extern func:npk_string_byte_at = int64(string:s, int64:i);
@@ -1069,13 +1073,23 @@ pub func:tw_on_draw = NIL() {
         string:ssh_data = raw ssh_poll_read(ssh_pane_slot);
         int64:sdi = 0i64;
         int64:sdlen = string_length(ssh_data);
-        while (sdi < sdlen) {
-            // npk_string_byte_at extracts the raw byte value at index sdi
-            int64:ssh_byte = raw npk_string_byte_at(ssh_data, sdi);
-            if (ssh_byte >= 0i64) {
-                drop(pipeline_feed(ssh_byte));
+        // v0.8.6: Offer the raw SSH data to the Zmodem state machine first.
+        // If zmodem_feed returns 1, the entire data chunk has been consumed by
+        // the Zmodem receive engine and must NOT be fed to the VT pipeline.
+        int64:zm_consumed = 0i64;
+        if (sdlen > 0i64) {
+            zm_consumed = raw zmodem_feed(ssh_pane_slot, ssh_data);
+        }
+        // Feed to VT pipeline only when Zmodem did not consume the data.
+        if (zm_consumed == 0i64) {
+            while (sdi < sdlen) {
+                // npk_string_byte_at extracts the raw byte value at index sdi
+                int64:ssh_byte = raw npk_string_byte_at(ssh_data, sdi);
+                if (ssh_byte >= 0i64) {
+                    drop(pipeline_feed(ssh_byte));
+                }
+                sdi = sdi + 1i64;
             }
-            sdi = sdi + 1i64;
         }
         if (sdlen > 0i64) {
             if (raw viewport_is_at_bottom() == 0i64) {
@@ -1090,6 +1104,35 @@ pub func:tw_on_draw = NIL() {
         // Jump host relay tick (no-op if not a jump connection)
         if (raw jump_is_active(ssh_pane_slot) != 0i64) {
             drop(jump_relay_tick(ssh_pane_slot));
+        }
+        // v0.8.6: X11 forwarding relay tick — pump X11 socket data each frame
+        drop(x11_tick(ssh_pane_slot));
+    }
+
+    // v0.9.2: Telnet poll tick — drain active Telnet pane data each frame
+    // Mirrors the SSH tick: reads VT bytes, feeds the pipeline, drains key input.
+    int64:tel_pane_slot = raw tm_get_active_pane_slot(raw tm_get_active_index());
+    int64:tel_ptype = raw pane_get_type(tel_pane_slot);
+    if (tel_ptype == PANE_TYPE_TELNET()) {
+        // Send any pending keyboard input to the TCP socket
+        drop(telnet_poll_key_input(tel_pane_slot));
+        // Non-blocking read + IAC strip
+        string:tel_data = raw telnet_poll_read(tel_pane_slot);
+        int64:tel_di    = 0i64;
+        int64:tel_dlen  = string_length(tel_data);
+        if (tel_dlen > 0i64) {
+            if (raw viewport_is_at_bottom() == 0i64) {
+                drop(viewport_scroll_to_bottom());
+            }
+            while (tel_di < tel_dlen) {
+                int64:tel_byte = raw npk_string_byte_at(tel_data, tel_di);
+                if (tel_byte >= 0i64) {
+                    drop(pipeline_feed(tel_byte));
+                }
+                tel_di = tel_di + 1i64;
+            }
+            drop(activity_on_output(a_slot, 1i64, a_now));
+            drop(tw_queue_redraw());
         }
     }
 
@@ -1116,6 +1159,9 @@ pub func:tw_on_draw = NIL() {
 
     // v0.6.5: Poll config file watcher (hot-reload on external TOML edit)
     drop(watcher_poll());
+
+    // v0.8.6: Vault auto-lock tick (checks 15-min idle timeout, no-op otherwise)
+    drop(vault_tick());
 
     // v0.4.4: Periodic session save every 30 seconds
     int64:now_s = nitty_gtk4_monotonic_sec();

@@ -1,0 +1,121 @@
+// src/gui/ssh_session_info.npk — SSH Session Info Panel (v0.8.7)
+//
+// Displays a formatted info panel showing the current SSH session's
+// negotiated parameters: cipher, MAC, compression, Zmodem state.
+// Uses the existing single-argument notification toast shim.
+//
+// API:
+//   ssi_show(pane_slot) — display info for the given pane slot
+//   ssi_close()         — currently a no-op; notification auto-dismisses
+
+use "../../src/ssh/ssh_session.npk".{g_ssh_host, ssh_session_is_open};
+use "../../src/ssh/ssh_zmodem.npk".{zmodem_state};
+use "../../src/core/pane.npk".{pane_get_type, pane_get_ssh_session};
+use "../../src/gui/gtk4_ffi.npk".{nitty_gtk4_show_notification};
+
+// ── Internal: format a session info string ────────────────────────────────────
+
+// Build a human-readable multi-line info block for pane_slot.
+// Reads session negotiation data from the SSH session ahash.
+func:_ssi_format = string(int64:pane_slot) {
+    string:result = "SSH Session Info\n";
+    result = string_concat(result, "─────────────────────────────────────────\n");
+
+    // Host (from pub module-level array in ssh_session.npk)
+    string:host = g_ssh_host[pane_slot];
+    if (string_is_empty(host)) { host = "(unknown)"; }
+    result = string_concat(result, "  Host:        ");
+    result = string_concat(result, host);
+    result = string_concat(result, "\n");
+
+    // Read negotiated algorithm strings from the SSH session ahash
+    int64:session = raw pane_get_ssh_session(pane_slot);
+    string:enc_algo   = "(not connected)";
+    string:mac_algo   = "(not connected)";
+    string:comp_algo  = "none";
+    string:comp_actv  = "no";
+    string:user_str   = "(current)";
+
+    if (session != 0i64) {
+        // User — stored in session hash by ssh_connect
+        string:_user = ahget(session, "_user");
+        if (!string_is_empty(_user)) { user_str = _user; }
+
+        string:_enc = ahget(session, "_neg_enc_c2s");
+        if (!string_is_empty(_enc)) { enc_algo = _enc; }
+
+        string:_mac = ahget(session, "_neg_mac_c2s");
+        if (!string_is_empty(_mac)) { mac_algo = _mac; }
+
+        string:_comp = ahget(session, "_neg_comp");
+        if (!string_is_empty(_comp)) { comp_algo = _comp; }
+
+        string:_comp_active = ahget(session, "_compression_active");
+        if (_comp_active == "1") { comp_actv = "yes"; }
+    }
+
+    result = string_concat(result, "  User:        ");
+    result = string_concat(result, user_str);
+    result = string_concat(result, "\n");
+
+    result = string_concat(result, "  Cipher:      ");
+    result = string_concat(result, enc_algo);
+    result = string_concat(result, "\n");
+
+    result = string_concat(result, "  MAC:         ");
+    result = string_concat(result, mac_algo);
+    result = string_concat(result, "\n");
+
+    result = string_concat(result, "  Compression: ");
+    result = string_concat(result, comp_algo);
+    result = string_concat(result, " (active: ");
+    result = string_concat(result, comp_actv);
+    result = string_concat(result, ")\n");
+
+    // Zmodem
+    string:zm_str = "idle";
+    int64:zm_state = raw zmodem_state(pane_slot);
+    if (zm_state == 1i64) { zm_str = "receiving"; }
+    if (zm_state == 2i64) { zm_str = "sending"; }
+    if (zm_state == 3i64) { zm_str = "cancelled"; }
+    if (zm_state == 4i64) { zm_str = "done"; }
+    result = string_concat(result, "  Zmodem:      ");
+    result = string_concat(result, zm_str);
+    result = string_concat(result, "\n");
+
+    result = string_concat(result, "─────────────────────────────────────────");
+
+    pass(result);
+};
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+// Show the SSH session info for the given pane slot.
+// Uses the notification toast shim to display a multi-line info block.
+// Only shows if the pane has an active SSH session.
+pub func:ssi_show = NIL(int64:pane_slot) {
+    if (pane_slot < 0i64) { pass(NIL); }
+
+    // Validate: pane must be SSH type (type=1) and OPEN
+    int64:ptype = raw pane_get_type(pane_slot);
+    if (ptype != 1i64) {
+        // Not an SSH pane — show a brief notice
+        nitty_gtk4_show_notification("No SSH session on this pane.");
+        pass(NIL);
+    }
+
+    if (raw ssh_session_is_open(pane_slot) == 0i64) {
+        nitty_gtk4_show_notification("SSH session not connected.");
+        pass(NIL);
+    }
+
+    // Format and display
+    string:info = raw _ssi_format(pane_slot);
+    nitty_gtk4_show_notification(info);
+    pass(NIL);
+};
+
+// Dismiss the info panel (currently a no-op — toast auto-dismisses).
+pub func:ssi_close = NIL() {
+    pass(NIL);
+};

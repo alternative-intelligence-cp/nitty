@@ -29,6 +29,9 @@ use "../../src/ssh/ssh_auth.npk".*;
 use "../../src/ssh/auth_dialog.npk".*;
 use "../../src/core/pane.npk".*;
 use "../../src/ssh/ssh_forward.npk".{fwd_confirm_channel, fwd_close_channel, fwd_remote_accept};
+use "../../src/config/profile.npk".{profile_get_x11_forwarding, profile_get_ssh_compress}; // v0.8.7
+use "../../src/ssh/ssh_x11.npk".{x11_request_forwarding, x11_handle_open};                 // v0.8.7
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".{env_get}; // v0.8.7
 
 // ── Session State Constants ──────────────────────────────────────────────────
 
@@ -45,6 +48,8 @@ pub func:SSH_SESS_ERROR          = int64() { pass(5i64); };
 int64:_SSH_MAX = 64i64;
 string[64]:g_ssh_error = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""];
 int64[64]:g_ssh_state  = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+// v0.8.6: Per-slot hostname (for tab bar indicator and X11 forwarding)
+pub string[64]:g_ssh_host = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""];
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
@@ -124,6 +129,14 @@ pub func:ssh_connect = int64(int64:pane_slot, string:host, int64:port, string:us
         drop(_ssh_set_error(pane_slot, "Algorithm negotiation failed"));
         drop(SSH_disconnect(session));
         pass(-6i64);
+    }
+
+    // v0.8.7: Apply profile compression preference.
+    // If profile disables compression, override negotiated result to "none".
+    // If profile enables it, keep whatever was negotiated (zlib@openssh.com or none).
+    if (raw profile_get_ssh_compress(pane_slot) == 0i64) {
+        drop(raw SSH_compression_set(session, "none"));
+        ahset(session, "_compression_active", "0");
     }
 
     // ── Step 5: DH init — send our public key ────────────────────────────────
@@ -314,6 +327,19 @@ pub func:ssh_connect = int64(int64:pane_slot, string:host, int64:port, string:us
     }
     drop(raw SSH_buf_free(shell_resp));
 
+    // v0.8.7: X11 forwarding — send x11-req after shell channel is ready
+    // Only sends if the profile has x11_forwarding enabled.
+    if (raw profile_get_x11_forwarding(pane_slot) == 1i64) {
+        drop(x11_request_forwarding(pane_slot, session, chan_id));
+    }
+
+    // v0.8.7: If using zlib@openssh.com, activate compression now (post-auth).
+    // For plain "zlib" it was already activated after NEWKEYS (in nitpick_ssh.npk).
+    string:_comp_algo = raw SSH_compression_get(session);
+    if (_comp_algo == "zlib@openssh.com") {
+        ahset(session, "_compression_active", "1");
+    }
+
     // ── Connected — update pane state ─────────────────────────────────────────
     drop(pane_set_type(pane_slot, 1i64));            // PANE_TYPE_SSH
     drop(pane_set_ssh_session(pane_slot, session));
@@ -321,6 +347,7 @@ pub func:ssh_connect = int64(int64:pane_slot, string:host, int64:port, string:us
     // Store shell channel id in ahash for multi-channel dispatch
     ahset(session, "_shell_chan_id", raw SSH_handle_to_str(chan_id));
     g_ssh_state[pane_slot] = 4i64;                  // SSH_SESS_OPEN
+    g_ssh_host[pane_slot]  = host;                  // v0.8.6: store hostname
     g_ssh_error[pane_slot] = "";
 
     pass(0i64); // SSH_OK
@@ -351,6 +378,7 @@ pub func:ssh_disconnect = NIL(int64:pane_slot) {
     drop(pane_set_ssh_session(pane_slot, 0i64));
     drop(pane_set_ssh_channel(pane_slot, -1i64));
     g_ssh_state[pane_slot] = 0i64;                  // SSH_SESS_DISCONNECTED
+    g_ssh_host[pane_slot]  = "";                    // v0.8.6: clear hostname
     g_ssh_error[pane_slot] = "";
     pass(NIL);
 };
@@ -445,18 +473,27 @@ pub func:ssh_poll_read = string(int64:pane_slot) {
             }
 
             if (msg_type == 90i32) {
-                // SSH_MSG_CHANNEL_OPEN from server — "forwarded-tcpip" for remote fwd
-                // Parse: channel_type string, sender_channel, initial_window, max_packet,
-                //        connected_addr, connected_port, originator_addr, originator_port
-                // We need the connected_port to look up the remote fwd rule.
-                // Simplified: dispatch normally then call fwd_remote_accept with bind_port=0
-                // (fwd_remote_accept looks up available rules).
-                // TODO: parse bind_port from payload for multi-rule support
-                int32:r = raw SSH_dispatch(session, payload);
-                drop(raw SSH_buf_free(payload));
-                // Notify forward module
-                int64:new_chan = raw SSH_channel_last_id(session);
-                drop(fwd_remote_accept(pane_slot, session, 0i64, new_chan));
+                // SSH_MSG_CHANNEL_OPEN from server
+                // Parse channel type (string at offset 1)
+                int64:ct_slen = nitpick_ssh_decode_string_len(payload, 1i64);
+                string:chan_type = nitpick_ssh_decode_string_data(payload, 1i64);
+
+                if (chan_type == "x11") {
+                    // v0.8.7: X11 forwarding channel — route to x11 handler
+                    // Dispatch to update SSH state, then hand off x11 fd relay
+                    int32:x11_r = raw SSH_dispatch(session, payload);
+                    drop(raw SSH_buf_free(payload));
+                    int64:x11_new_chan = raw SSH_channel_last_id(session);
+                    drop(x11_handle_open(pane_slot, session, x11_new_chan));
+                }
+                if (chan_type != "x11") {
+                    // "forwarded-tcpip" for remote port fwd, or other types
+                    // TODO: parse bind_port from payload for multi-rule support
+                    int32:r = raw SSH_dispatch(session, payload);
+                    drop(raw SSH_buf_free(payload));
+                    int64:new_chan = raw SSH_channel_last_id(session);
+                    drop(fwd_remote_accept(pane_slot, session, 0i64, new_chan));
+                }
                 n = n + 1i64;
             }
 
@@ -751,6 +788,7 @@ pub func:ssh_connect_over_fd = int64(int64:pane_slot, int64:transport_fd,
     drop(pane_set_ssh_channel(pane_slot, chan_id2));
     ahset(session, "_shell_chan_id", raw SSH_handle_to_str(chan_id2));
     g_ssh_state[pane_slot] = 4i64;  // SSH_SESS_OPEN
+    g_ssh_host[pane_slot]  = host;  // v0.8.6: store hostname
     g_ssh_error[pane_slot] = "";
     pass(0i64);
 };

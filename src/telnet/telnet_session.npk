@@ -1,0 +1,478 @@
+// src/telnet/telnet_session.npk — Telnet client session manager (v0.9.2)
+//
+// Implements RFC 854 Telnet client with IAC option negotiation.
+//
+// One session per pane slot (0..63).  Each slot maintains:
+//   - TCP socket fd
+//   - IAC parser state machine
+//   - Subnegotiation accumulator
+//
+// Supported option negotiation:
+//   WILL SGA (3)    — we suppress go-ahead
+//   WILL NAWS (31)  — we send window size
+//   WILL TTYPE (24) — we declare "xterm-256color"
+//   DO   ECHO (1)   — let server echo
+//   WONT ECHO (1)   — we don't local-echo (server does it)
+//   DONT/WONT anything else unsupported
+//
+// Public API:
+//   telnet_connect(slot, host, port, rows, cols)  → int64  (0=ok, -1=err)
+//   telnet_poll_read(slot)                         → string (VT data, IAC stripped)
+//   telnet_poll_key_input(slot)                    → NIL    (drain key queue → write)
+//   telnet_write(slot, data)                       → int64  (bytes written)
+//   telnet_send_naws(slot, rows, cols)             → NIL
+//   telnet_close(slot)                             → NIL
+//   telnet_is_connected(slot)                      → int64  (0 or 1)
+//   telnet_get_host(slot)                          → string
+//   telnet_get_port(slot)                          → int64
+//   telnet_get_fd(slot)                            → int64
+
+use "../../src/telnet/telnet_ffi.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick/stdlib/string.npk".{str_byte_at};
+
+// ── IAC byte constants ────────────────────────────────────────────────────────
+func:_IAC  = int64() { pass(255i64); };
+func:_WILL = int64() { pass(251i64); };
+func:_WONT = int64() { pass(252i64); };
+func:_DO   = int64() { pass(253i64); };
+func:_DONT = int64() { pass(254i64); };
+func:_SB   = int64() { pass(250i64); };
+func:_SE   = int64() { pass(240i64); };
+func:_GA   = int64() { pass(249i64); };
+
+// ── Option codes ──────────────────────────────────────────────────────────────
+func:_OPT_ECHO  = int64() { pass(1i64);  };
+func:_OPT_SGA   = int64() { pass(3i64);  };
+func:_OPT_TTYPE = int64() { pass(24i64); };
+func:_OPT_NAWS  = int64() { pass(31i64); };
+
+// ── IAC parser states ─────────────────────────────────────────────────────────
+func:_ST_DATA    = int64() { pass(0i64); };  // normal data
+func:_ST_IAC     = int64() { pass(1i64); };  // saw 0xFF
+func:_ST_DO      = int64() { pass(2i64); };  // saw IAC DO
+func:_ST_DONT    = int64() { pass(3i64); };  // saw IAC DONT
+func:_ST_WILL    = int64() { pass(4i64); };  // saw IAC WILL
+func:_ST_WONT    = int64() { pass(5i64); };  // saw IAC WONT
+func:_ST_SB      = int64() { pass(6i64); };  // saw IAC SB — next byte is option
+func:_ST_SB_DATA = int64() { pass(7i64); };  // accumulating SB payload
+func:_ST_SB_IAC  = int64() { pass(8i64); };  // saw IAC inside SB payload
+
+// ── Module-level state (64 pane slots) ───────────────────────────────────────
+int64[64]:g_tel_fd;         // TCP socket fd  (-1 = not connected)
+int64[64]:g_tel_state;      // IAC parser state per slot
+int64[64]:g_tel_sb_opt;     // subnegotiation option being accumulated
+string[64]:g_tel_sb_buf;    // subnegotiation data accumulator
+string[64]:g_tel_host;      // hostname (for display)
+int64[64]:g_tel_port;       // port (default 23)
+int64[64]:g_tel_connected;  // 0=disconnected, 1=connected
+int64[64]:g_tel_rows;       // terminal rows (for NAWS)
+int64[64]:g_tel_cols;       // terminal cols (for NAWS)
+
+// Per-slot accumulated VT output from current read (reset each poll_read call)
+string[64]:g_tel_output;
+
+// ── Module init guard ─────────────────────────────────────────────────────────
+int64:g_tel_init_done = 0i64;
+
+func:_tel_ensure_init = NIL() {
+    if (g_tel_init_done != 0i64) { pass(NIL); }
+    int64:i = 0i64;
+    while (i < 64i64) {
+        g_tel_fd[i]        = -1i64;
+        g_tel_state[i]     = 0i64;
+        g_tel_sb_opt[i]    = 0i64;
+        g_tel_sb_buf[i]    = "";
+        g_tel_host[i]      = "";
+        g_tel_port[i]      = 23i64;
+        g_tel_connected[i] = 0i64;
+        g_tel_rows[i]      = 24i64;
+        g_tel_cols[i]      = 80i64;
+        g_tel_output[i]    = "";
+        i = i + 1i64;
+    }
+    g_tel_init_done = 1i64;
+    pass(NIL);
+};
+
+// ── Option negotiation responders ─────────────────────────────────────────────
+
+func:_handle_do = NIL(int64:slot, int64:opt) {
+    int64:fd = g_tel_fd[slot];
+    if (fd < 0i64) { pass(NIL); }
+    // Options we WILL support
+    if (opt == _OPT_SGA()) {
+        drop(nitty_telnet_write_iac3(fd, _WILL(), opt));
+        pass(NIL);
+    }
+    if (opt == _OPT_NAWS()) {
+        drop(nitty_telnet_write_iac3(fd, _WILL(), opt));
+        drop(telnet_send_naws(slot, g_tel_rows[slot], g_tel_cols[slot]));
+        pass(NIL);
+    }
+    if (opt == _OPT_TTYPE()) {
+        drop(nitty_telnet_write_iac3(fd, _WILL(), opt));
+        pass(NIL);
+    }
+    // Everything else: WONT
+    drop(nitty_telnet_write_iac3(fd, _WONT(), opt));
+    pass(NIL);
+};
+
+func:_handle_will = NIL(int64:slot, int64:opt) {
+    int64:fd = g_tel_fd[slot];
+    if (fd < 0i64) { pass(NIL); }
+    if (opt == _OPT_ECHO()) {
+        drop(nitty_telnet_write_iac3(fd, _DO(), opt));
+        pass(NIL);
+    }
+    if (opt == _OPT_SGA()) {
+        drop(nitty_telnet_write_iac3(fd, _DO(), opt));
+        pass(NIL);
+    }
+    // Everything else: DONT
+    drop(nitty_telnet_write_iac3(fd, _DONT(), opt));
+    pass(NIL);
+};
+
+func:_handle_dont = NIL(int64:slot, int64:opt) {
+    int64:fd = g_tel_fd[slot];
+    if (fd < 0i64) { pass(NIL); }
+    drop(nitty_telnet_write_iac3(fd, _WONT(), opt));
+    pass(NIL);
+};
+
+func:_handle_wont = NIL(int64:slot, int64:opt) {
+    int64:fd = g_tel_fd[slot];
+    if (fd < 0i64) { pass(NIL); }
+    drop(nitty_telnet_write_iac3(fd, _DONT(), opt));
+    pass(NIL);
+};
+
+func:_handle_sb = NIL(int64:slot, int64:opt) {
+    int64:fd = g_tel_fd[slot];
+    if (fd < 0i64) { pass(NIL); }
+    if (opt == _OPT_TTYPE()) {
+        // Server sent TTYPE SEND — we respond with terminal type
+        drop(nitty_telnet_write_ttype_response(fd));
+        pass(NIL);
+    }
+    // All other SB options: ignore
+    pass(NIL);
+};
+
+// ── Per-byte IAC state machine ────────────────────────────────────────────────
+
+func:_process_byte = NIL(int64:slot, int64:b) {
+    int64:st = g_tel_state[slot];
+
+    if (st == _ST_DATA()) {
+        if (b == _IAC()) {
+            g_tel_state[slot] = _ST_IAC();
+            pass(NIL);
+        }
+        if (b == _GA()) { pass(NIL); }  // bare GA: discard
+        // Normal data byte
+        string:ch = nitty_telnet_byte_to_str(b);
+        g_tel_output[slot] = string_concat(g_tel_output[slot], ch);
+        pass(NIL);
+    }
+
+    if (st == _ST_IAC()) {
+        if (b == _IAC()) {
+            // Escaped 0xFF → literal data byte
+            string:ch = nitty_telnet_byte_to_str(255i64);
+            g_tel_output[slot] = string_concat(g_tel_output[slot], ch);
+            g_tel_state[slot] = _ST_DATA();
+            pass(NIL);
+        }
+        if (b == _DO())   { g_tel_state[slot] = _ST_DO();   pass(NIL); }
+        if (b == _DONT()) { g_tel_state[slot] = _ST_DONT(); pass(NIL); }
+        if (b == _WILL()) { g_tel_state[slot] = _ST_WILL(); pass(NIL); }
+        if (b == _WONT()) { g_tel_state[slot] = _ST_WONT(); pass(NIL); }
+        if (b == _SB())   { g_tel_state[slot] = _ST_SB();   pass(NIL); }
+        // Other IAC commands (NOP, GA, etc.): ignore
+        g_tel_state[slot] = _ST_DATA();
+        pass(NIL);
+    }
+
+    if (st == _ST_DO()) {
+        drop(_handle_do(slot, b));
+        g_tel_state[slot] = _ST_DATA();
+        pass(NIL);
+    }
+    if (st == _ST_DONT()) {
+        drop(_handle_dont(slot, b));
+        g_tel_state[slot] = _ST_DATA();
+        pass(NIL);
+    }
+    if (st == _ST_WILL()) {
+        drop(_handle_will(slot, b));
+        g_tel_state[slot] = _ST_DATA();
+        pass(NIL);
+    }
+    if (st == _ST_WONT()) {
+        drop(_handle_wont(slot, b));
+        g_tel_state[slot] = _ST_DATA();
+        pass(NIL);
+    }
+
+    // IAC SB: next byte is the option code
+    if (st == _ST_SB()) {
+        g_tel_sb_opt[slot] = b;
+        g_tel_sb_buf[slot] = "";
+        g_tel_state[slot]  = _ST_SB_DATA();
+        pass(NIL);
+    }
+
+    // Accumulate SB payload
+    if (st == _ST_SB_DATA()) {
+        if (b == _IAC()) {
+            g_tel_state[slot] = _ST_SB_IAC();
+            pass(NIL);
+        }
+        string:sb_ch = nitty_telnet_byte_to_str(b);
+        g_tel_sb_buf[slot] = string_concat(g_tel_sb_buf[slot], sb_ch);
+        pass(NIL);
+    }
+
+    // IAC inside SB: SE = done, IAC = escaped 0xFF
+    if (st == _ST_SB_IAC()) {
+        if (b == _SE()) {
+            drop(_handle_sb(slot, g_tel_sb_opt[slot]));
+            g_tel_sb_buf[slot] = "";
+            g_tel_state[slot]  = _ST_DATA();
+            pass(NIL);
+        }
+        if (b == _IAC()) {
+            string:sb_iac = nitty_telnet_byte_to_str(255i64);
+            g_tel_sb_buf[slot] = string_concat(g_tel_sb_buf[slot], sb_iac);
+            g_tel_state[slot]  = _ST_SB_DATA();
+            pass(NIL);
+        }
+        // Malformed — abort SB and return to DATA
+        g_tel_sb_buf[slot] = "";
+        g_tel_state[slot]  = _ST_DATA();
+        pass(NIL);
+    }
+
+    // Unknown state — reset
+    g_tel_state[slot] = _ST_DATA();
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Public API
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// telnet_connect — connect to host:port for pane slot.
+/// Resolves hostname, creates TCP socket, sends initial option preferences.
+/// rows/cols used for the initial NAWS update.
+/// Returns 0 on success, -1 on failure.
+pub func:telnet_connect = int64(int64:slot, string:host, int64:port,
+                                int64:rows, int64:cols) {
+    drop(_tel_ensure_init());
+    if (slot < 0i64)   { pass(-1i64); }
+    if (slot >= 64i64) { pass(-1i64); }
+
+    // Close any existing connection on this slot
+    if (g_tel_fd[slot] >= 0i64) {
+        drop(nitty_telnet_close(g_tel_fd[slot]));
+        g_tel_fd[slot]        = -1i64;
+        g_tel_connected[slot] = 0i64;
+    }
+
+    // Resolve hostname → dotted-quad
+    string:ip_str = nitty_telnet_resolve(host);
+    if (string_length(ip_str) == 0i64) {
+        pass(-1i64);
+    }
+
+    // TCP connect (blocking)
+    int64:fd = nitty_telnet_connect(ip_str, port);
+    if (fd < 0i64) { pass(-1i64); }
+
+    // Store session state
+    g_tel_fd[slot]        = fd;
+    g_tel_host[slot]      = host;
+    g_tel_port[slot]      = port;
+    g_tel_rows[slot]      = rows;
+    g_tel_cols[slot]      = cols;
+    g_tel_state[slot]     = 0i64;
+    g_tel_sb_opt[slot]    = 0i64;
+    g_tel_sb_buf[slot]    = "";
+    g_tel_output[slot]    = "";
+    g_tel_connected[slot] = 1i64;
+
+    // Register with C input handler (routes key events to this fd)
+    drop(nitty_telnet_set_active_fd(fd));
+
+    // Send initial option preferences
+    drop(nitty_telnet_write_iac3(fd, _WILL(), _OPT_SGA()));
+    drop(nitty_telnet_write_iac3(fd, _WILL(), _OPT_NAWS()));
+    drop(nitty_telnet_write_iac3(fd, _WILL(), _OPT_TTYPE()));
+    drop(nitty_telnet_write_iac3(fd, _WONT(), _OPT_ECHO()));
+
+    // Initial NAWS
+    drop(telnet_send_naws(slot, rows, cols));
+
+    pass(0i64);
+};
+
+/// telnet_poll_read — non-blocking read + IAC stripping for one frame.
+/// Returns the VT data bytes (IAC sequences removed and processed) as a string.
+/// Returns "" when no data or on error.
+pub func:telnet_poll_read = string(int64:slot) {
+    drop(_tel_ensure_init());
+    if (slot < 0i64)   { pass(""); }
+    if (slot >= 64i64) { pass(""); }
+    if (g_tel_connected[slot] == 0i64) { pass(""); }
+
+    int64:fd = g_tel_fd[slot];
+    if (fd < 0i64) { pass(""); }
+
+    int64:n = nitty_telnet_read(fd);
+    if (n <= 0i64) {
+        if (n == 0i64) {
+            // Remote closed connection
+            g_tel_connected[slot] = 0i64;
+            drop(nitty_telnet_close(fd));
+            g_tel_fd[slot] = -1i64;
+            drop(nitty_telnet_set_active_fd(-1i64));
+        }
+        pass("");
+    }
+
+    // Feed raw bytes through IAC state machine
+    g_tel_output[slot] = "";
+    string:raw_data = nitty_telnet_read_buf_str();
+    int64:raw_len   = nitty_telnet_read_buf_len();
+    int64:i = 0i64;
+    while (i < raw_len) {
+        int64:b = raw str_byte_at(raw_data, i);
+        if (b >= 0i64) {
+            drop(_process_byte(slot, b));
+        }
+        i = i + 1i64;
+    }
+
+    pass(g_tel_output[slot]);
+};
+
+/// telnet_poll_key_input — drain keyboard input queue to the TCP socket.
+/// Call every draw frame when the active pane is a Telnet pane.
+pub func:telnet_poll_key_input = NIL(int64:slot) {
+    drop(_tel_ensure_init());
+    if (slot < 0i64)   { pass(NIL); }
+    if (slot >= 64i64) { pass(NIL); }
+    if (g_tel_connected[slot] == 0i64) { pass(NIL); }
+
+    int64:fd = g_tel_fd[slot];
+    if (fd < 0i64) { pass(NIL); }
+
+    int64:klen = nitty_telnet_key_input_len();
+    if (klen <= 0i64) { pass(NIL); }
+
+    // IAC-escape the raw key bytes before sending
+    string:kdata = nitty_telnet_key_input_str();
+    drop(nitty_telnet_escape_iac_prepare(kdata, klen));
+    string:esc_data = nitty_telnet_escape_iac_str();
+    int64:esc_len   = nitty_telnet_escape_iac_len();
+    if (esc_len > 0i64) {
+        drop(nitty_telnet_write(fd, esc_data, esc_len));
+    }
+    drop(nitty_telnet_key_input_consume());
+    pass(NIL);
+};
+
+/// telnet_write — send data to remote host with IAC 0xFF escaping.
+/// Returns bytes written, or -1 on error.
+pub func:telnet_write = int64(int64:slot, string:data) {
+    drop(_tel_ensure_init());
+    if (slot < 0i64)   { pass(-1i64); }
+    if (slot >= 64i64) { pass(-1i64); }
+    if (g_tel_connected[slot] == 0i64) { pass(-1i64); }
+
+    int64:fd = g_tel_fd[slot];
+    if (fd < 0i64) { pass(-1i64); }
+
+    int64:dlen = string_length(data);
+    if (dlen == 0i64) { pass(0i64); }
+
+    // Escape 0xFF bytes (IAC → IAC IAC)
+    drop(nitty_telnet_escape_iac_prepare(data, dlen));
+    string:esc = nitty_telnet_escape_iac_str();
+    int64:elen = nitty_telnet_escape_iac_len();
+    if (elen == 0i64) { pass(0i64); }
+    pass(nitty_telnet_write(fd, esc, elen));
+};
+
+/// telnet_send_naws — send IAC SB NAWS <cols> <rows> IAC SE.
+pub func:telnet_send_naws = NIL(int64:slot, int64:rows, int64:cols) {
+    drop(_tel_ensure_init());
+    if (slot < 0i64)   { pass(NIL); }
+    if (slot >= 64i64) { pass(NIL); }
+    if (g_tel_connected[slot] == 0i64) { pass(NIL); }
+
+    int64:fd = g_tel_fd[slot];
+    if (fd < 0i64) { pass(NIL); }
+
+    g_tel_rows[slot] = rows;
+    g_tel_cols[slot] = cols;
+
+    drop(nitty_telnet_write_naws(fd, cols, rows));
+    pass(NIL);
+};
+
+/// telnet_close — close the Telnet session for the given slot.
+pub func:telnet_close = NIL(int64:slot) {
+    drop(_tel_ensure_init());
+    if (slot < 0i64)   { pass(NIL); }
+    if (slot >= 64i64) { pass(NIL); }
+
+    int64:fd = g_tel_fd[slot];
+    if (fd >= 0i64) {
+        drop(nitty_telnet_close(fd));
+    }
+
+    g_tel_fd[slot]        = -1i64;
+    g_tel_connected[slot] = 0i64;
+    g_tel_state[slot]     = 0i64;
+    g_tel_sb_buf[slot]    = "";
+    g_tel_output[slot]    = "";
+
+    // Deregister from input routing if this was the active fd
+    int64:afd = nitty_telnet_get_active_fd();
+    if (afd == fd) {
+        drop(nitty_telnet_set_active_fd(-1i64));
+    }
+    pass(NIL);
+};
+
+// ── Getters ───────────────────────────────────────────────────────────────────
+pub func:telnet_is_connected = int64(int64:slot) {
+    drop(_tel_ensure_init());
+    if (slot < 0i64)   { pass(0i64); }
+    if (slot >= 64i64) { pass(0i64); }
+    pass(g_tel_connected[slot]);
+};
+
+pub func:telnet_get_fd = int64(int64:slot) {
+    drop(_tel_ensure_init());
+    if (slot < 0i64)   { pass(-1i64); }
+    if (slot >= 64i64) { pass(-1i64); }
+    pass(g_tel_fd[slot]);
+};
+
+pub func:telnet_get_host = string(int64:slot) {
+    drop(_tel_ensure_init());
+    if (slot < 0i64)   { pass(""); }
+    if (slot >= 64i64) { pass(""); }
+    pass(g_tel_host[slot]);
+};
+
+pub func:telnet_get_port = int64(int64:slot) {
+    drop(_tel_ensure_init());
+    if (slot < 0i64)   { pass(23i64); }
+    if (slot >= 64i64) { pass(23i64); }
+    pass(g_tel_port[slot]);
+};

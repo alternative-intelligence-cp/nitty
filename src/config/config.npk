@@ -63,6 +63,10 @@ int64:g_cfg_activity_silence_threshold        = 5000i64;
 int64:g_cfg_process_completion_notification   = 1i64;
 int64:g_cfg_process_min_duration              = 10000i64;
 
+// v0.8.7: Zmodem file transfer configuration
+int64:g_cfg_zmodem_auto_detect   = 1i64;          // 1 = auto-detect (default)
+string:g_cfg_zmodem_download_dir = "~/Downloads"; // destination for received files
+
 // State flags
 int64:g_cfg_is_default = 1i64;  // 1 if no config file found; 0 if loaded from disk
 int64:g_cfg_loaded     = 0i64;  // set to 1 after config_load() completes
@@ -102,6 +106,9 @@ func:_load_defaults = NIL() {
     g_cfg_activity_silence_threshold     = 5000i64;
     g_cfg_process_completion_notification = 1i64;
     g_cfg_process_min_duration           = 10000i64;
+    // v0.8.7 zmodem defaults
+    g_cfg_zmodem_auto_detect   = 1i64;
+    g_cfg_zmodem_download_dir  = "~/Downloads";
     pass(NIL);
 };
 
@@ -340,6 +347,19 @@ func:_read_from_toml = NIL() {
         g_cfg_process_min_duration = pmd_c;
     }
 
+    // v0.8.7: zmodem config
+    int32:has_zad = raw Toml.has_key("zmodem.auto_detect");
+    if (has_zad == 1i32) {
+        int32:v = raw Toml.get_bool("zmodem.auto_detect");
+        if (v == 1i32) { g_cfg_zmodem_auto_detect = 1i64; }
+        if (v == 0i32) { g_cfg_zmodem_auto_detect = 0i64; }
+    }
+    int32:has_zdd = raw Toml.has_key("zmodem.download_dir");
+    if (has_zdd == 1i32) {
+        string:zdd_v = raw Toml.get_string("zmodem.download_dir");
+        if (string_length(zdd_v) > 0i64) { g_cfg_zmodem_download_dir = zdd_v; }
+    }
+
     pass(NIL);
 };
 
@@ -488,6 +508,9 @@ pub func:config_save = int32() {
     drop(Toml.set_bool("terminal.copy_on_select",       @cast_unchecked<int32>(g_cfg_copy_on_select)));
     drop(Toml.set_bool("terminal.warn_multiline_paste",  @cast_unchecked<int32>(g_cfg_warn_multiline_paste)));
     drop(Toml.set_bool("terminal.right_click_paste",     @cast_unchecked<int32>(g_cfg_right_click_paste)));
+    // v0.8.7: zmodem config
+    drop(Toml.set_bool("zmodem.auto_detect",   @cast_unchecked<int32>(g_cfg_zmodem_auto_detect)));
+    drop(Toml.set_string("zmodem.download_dir", g_cfg_zmodem_download_dir));
 
     // v0.6.1: Serialize profiles into the same TOML document
     drop(profiles_save_toml());
@@ -600,3 +623,7 @@ pub func:cfg_activity_notification            = int64()  { pass(g_cfg_activity_n
 pub func:cfg_activity_silence_threshold       = int64()  { pass(g_cfg_activity_silence_threshold); };
 pub func:cfg_process_completion_notification  = int64()  { pass(g_cfg_process_completion_notification); };
 pub func:cfg_process_min_duration             = int64()  { pass(g_cfg_process_min_duration); };
+
+// v0.8.7: Zmodem config getters
+pub func:cfg_zmodem_auto_detect   = int64()  { pass(g_cfg_zmodem_auto_detect); };
+pub func:cfg_zmodem_download_dir  = string() { pass(g_cfg_zmodem_download_dir); };

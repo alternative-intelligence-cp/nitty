@@ -720,6 +720,22 @@ extern "nitty_gtk4_shim" {
     //   5=rename  6=delete  7=new folder  8=up
     func:nitty_gtk4_sftp_event_poll = int64(int64:sftp_widget);
     func:nitty_gtk4_sftp_event_row  = int64();  // row index of last activate/context event
+
+    // ── v0.8.6: X11 Forwarding socket relay ────────────────────────────────
+    func:nitty_x11_connect_display  = int64(string:display_str);
+    func:nitty_x11_read             = string(int32:fd, int32:len);
+    func:nitty_x11_write            = int64(int32:fd, string:data, int32:len);
+    func:nitty_x11_close            = int64(int32:fd);
+    func:nitty_x11_get_display      = string();
+    func:nitty_x11_read_auth_cookie = string(string:display);
+
+    // ── v0.8.6: Encrypted vault (AES-256-GCM + PBKDF2-SHA256) ───────────────
+    func:nitpick_vault_encrypt      = string(string:passphrase, string:plaintext);
+    func:nitpick_vault_decrypt      = string(string:passphrase, string:blob_b64);
+    func:nitty_epoch_seconds        = int64();
+
+    // ── v0.8.6: Zlib compress / decompress ──────────────────────────────────
+    func:nitpick_zlib_compress      = string(string:data, int32:len);
+    func:nitpick_zlib_decompress    = string(string:data, int32:len, int32:max_out);
+    func:nitpick_zlib_last_len      = int64();
 }
-
-
