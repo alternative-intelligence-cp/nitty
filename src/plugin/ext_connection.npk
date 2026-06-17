@@ -1,0 +1,139 @@
+// src/plugin/ext_connection.npk — ConnectionProvider extension point
+//
+// v0.10.1: Extension Point API
+//
+// Plugins register custom connection types that appear in the profile editor's
+// connection type dropdown. Each connection type provides a type_name,
+// display_name, icon, and a callback_id for create/destroy/read/write dispatch.
+//
+// Actual connection lifecycle dispatch (create_connection, read, write) is
+// wired in v0.10.2.
+//
+// Storage: flat parallel arrays, max 8 connection types.
+//
+// Public API:
+//   api_register_connection_provider(api, type_name, display_name, icon, callback_id) → int64
+//   api_unregister_connection_provider(api, type_name)                                → NIL
+//   ext_connection_init()                                                              → NIL
+//   ext_connection_type_count()                                                        → int64
+//   ext_connection_get_type_name(i)                                                    → string
+//   ext_connection_get_display_name(i)                                                 → string
+//   ext_connection_get_icon(i)                                                         → string
+//   ext_connection_get_callback_id(i)                                                  → int64
+//   ext_connection_get_plugin_slot(i)                                                  → int64
+
+use "./api.npk".*;
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+pub fixed int64:EXT_CONNECTION_MAX = 8i64;
+
+string[8]:g_ct_type_name;
+string[8]:g_ct_display_name;
+string[8]:g_ct_icon;
+int64[8]:g_ct_callback_id;
+int64[8]:g_ct_plugin_slot;
+int64:g_ct_count = 0i64;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+pub func:ext_connection_init = NIL() {
+    int64:i = 0i64;
+    while (i < EXT_CONNECTION_MAX) {
+        g_ct_type_name[i]    = "";
+        g_ct_display_name[i] = "";
+        g_ct_icon[i]         = "";
+        g_ct_callback_id[i]  = -1i64;
+        g_ct_plugin_slot[i]  = -1i64;
+        i = i + 1i64;
+    }
+    g_ct_count = 0i64;
+    pass(NIL);
+};
+
+// ── Internal lookup ───────────────────────────────────────────────────────────
+
+func:_ct_find = int64(string:type_name) {
+    int64:i = 0i64;
+    while (i < g_ct_count) {
+        if (g_ct_type_name[i] == type_name) { pass(i); }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+// ── Registration ──────────────────────────────────────────────────────────────
+
+// Register a custom connection type.
+// type_name    — unique identifier, e.g. "aws-ssm", "k8s-exec"
+// display_name — shown in the UI dropdown, e.g. "AWS SSM Session"
+// icon         — icon name or path
+// callback_id  — plugin-assigned integer for create/destroy/read/write dispatch
+// Returns registration index (>= 0) on success, -1 if full or duplicate.
+pub func:api_register_connection_provider = int64(PluginAPI:api, string:type_name,
+                                                   string:display_name, string:icon,
+                                                   int64:callback_id) {
+    if (raw _ct_find(type_name) >= 0i64)        { pass(-1i64); }
+    if (g_ct_count >= EXT_CONNECTION_MAX)   { pass(-1i64); }
+
+    int64:idx             = g_ct_count;
+    g_ct_type_name[idx]   = type_name;
+    g_ct_display_name[idx] = display_name;
+    g_ct_icon[idx]         = icon;
+    g_ct_callback_id[idx]  = callback_id;
+    g_ct_plugin_slot[idx]  = api.slot;
+    g_ct_count             = g_ct_count + 1i64;
+    pass(idx);
+};
+
+// Remove a connection type by type_name.
+pub func:api_unregister_connection_provider = NIL(PluginAPI:api, string:type_name) {
+    int64:idx = raw _ct_find(type_name);
+    if (idx < 0i64) { pass(NIL); }
+
+    int64:i = idx;
+    while (i < g_ct_count - 1i64) {
+        g_ct_type_name[i]    = g_ct_type_name[i + 1i64];
+        g_ct_display_name[i] = g_ct_display_name[i + 1i64];
+        g_ct_icon[i]         = g_ct_icon[i + 1i64];
+        g_ct_callback_id[i]  = g_ct_callback_id[i + 1i64];
+        g_ct_plugin_slot[i]  = g_ct_plugin_slot[i + 1i64];
+        i = i + 1i64;
+    }
+    g_ct_count = g_ct_count - 1i64;
+    pass(NIL);
+};
+
+// ── Accessors ─────────────────────────────────────────────────────────────────
+
+pub func:ext_connection_type_count = int64() { pass(g_ct_count); };
+
+pub func:ext_connection_get_type_name = string(int64:i) {
+    if (i < 0i64)          { pass(""); }
+    if (i >= g_ct_count)   { pass(""); }
+    pass(g_ct_type_name[i]);
+};
+
+pub func:ext_connection_get_display_name = string(int64:i) {
+    if (i < 0i64)          { pass(""); }
+    if (i >= g_ct_count)   { pass(""); }
+    pass(g_ct_display_name[i]);
+};
+
+pub func:ext_connection_get_icon = string(int64:i) {
+    if (i < 0i64)          { pass(""); }
+    if (i >= g_ct_count)   { pass(""); }
+    pass(g_ct_icon[i]);
+};
+
+pub func:ext_connection_get_callback_id = int64(int64:i) {
+    if (i < 0i64)          { pass(-1i64); }
+    if (i >= g_ct_count)   { pass(-1i64); }
+    pass(g_ct_callback_id[i]);
+};
+
+pub func:ext_connection_get_plugin_slot = int64(int64:i) {
+    if (i < 0i64)          { pass(-1i64); }
+    if (i >= g_ct_count)   { pass(-1i64); }
+    pass(g_ct_plugin_slot[i]);
+};

@@ -1,0 +1,144 @@
+// src/plugin/ext_context_menu.npk — ContextMenu extension point
+//
+// v0.10.1: Extension Point API
+//
+// Plugins register items that appear in the terminal right-click context menu.
+// Items are grouped by the `group` field (e.g. "edit", "session", "custom").
+// GTK4 menu wiring is deferred to v0.10.2.
+//
+// Storage: flat parallel arrays, max 32 items total.
+//
+// Public API:
+//   api_register_context_menu_item(api, id, label, icon, group, callback_id) → int64
+//   api_unregister_context_menu_item(api, id)                                → NIL
+//   ext_context_menu_init()                                                   → NIL
+//   ext_context_menu_count()                                                  → int64
+//   ext_context_menu_get_id(i)                                                → string
+//   ext_context_menu_get_label(i)                                             → string
+//   ext_context_menu_get_icon(i)                                              → string
+//   ext_context_menu_get_group(i)                                             → string
+//   ext_context_menu_get_callback_id(i)                                       → int64
+//   ext_context_menu_get_plugin_slot(i)                                       → int64
+
+use "./api.npk".*;
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+pub fixed int64:EXT_CONTEXT_MENU_MAX = 32i64;
+
+string[32]:g_cm_id;
+string[32]:g_cm_label;
+string[32]:g_cm_icon;
+string[32]:g_cm_group;
+int64[32]:g_cm_callback_id;
+int64[32]:g_cm_plugin_slot;
+int64:g_cm_count = 0i64;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+pub func:ext_context_menu_init = NIL() {
+    int64:i = 0i64;
+    while (i < EXT_CONTEXT_MENU_MAX) {
+        g_cm_id[i]          = "";
+        g_cm_label[i]       = "";
+        g_cm_icon[i]        = "";
+        g_cm_group[i]       = "";
+        g_cm_callback_id[i] = -1i64;
+        g_cm_plugin_slot[i] = -1i64;
+        i = i + 1i64;
+    }
+    g_cm_count = 0i64;
+    pass(NIL);
+};
+
+// ── Internal lookup ───────────────────────────────────────────────────────────
+
+func:_cm_find = int64(string:id) {
+    int64:i = 0i64;
+    while (i < g_cm_count) {
+        if (g_cm_id[i] == id) { pass(i); }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+// ── Registration ──────────────────────────────────────────────────────────────
+
+// Register a context menu item.
+// group: logical grouping for separator placement, e.g. "edit", "custom"
+// Returns registration index (>= 0) on success, -1 if full or duplicate id.
+pub func:api_register_context_menu_item = int64(PluginAPI:api, string:id,
+                                                 string:label, string:icon,
+                                                 string:group, int64:callback_id) {
+    if (raw _cm_find(id) >= 0i64)               { pass(-1i64); }
+    if (g_cm_count >= EXT_CONTEXT_MENU_MAX) { pass(-1i64); }
+
+    int64:idx            = g_cm_count;
+    g_cm_id[idx]          = id;
+    g_cm_label[idx]       = label;
+    g_cm_icon[idx]        = icon;
+    g_cm_group[idx]       = group;
+    g_cm_callback_id[idx] = callback_id;
+    g_cm_plugin_slot[idx] = api.slot;
+    g_cm_count            = g_cm_count + 1i64;
+    pass(idx);
+};
+
+// Remove a context menu item by id.
+pub func:api_unregister_context_menu_item = NIL(PluginAPI:api, string:id) {
+    int64:idx = raw _cm_find(id);
+    if (idx < 0i64) { pass(NIL); }
+
+    int64:i = idx;
+    while (i < g_cm_count - 1i64) {
+        g_cm_id[i]          = g_cm_id[i + 1i64];
+        g_cm_label[i]       = g_cm_label[i + 1i64];
+        g_cm_icon[i]        = g_cm_icon[i + 1i64];
+        g_cm_group[i]       = g_cm_group[i + 1i64];
+        g_cm_callback_id[i] = g_cm_callback_id[i + 1i64];
+        g_cm_plugin_slot[i] = g_cm_plugin_slot[i + 1i64];
+        i = i + 1i64;
+    }
+    g_cm_count = g_cm_count - 1i64;
+    pass(NIL);
+};
+
+// ── Accessors ─────────────────────────────────────────────────────────────────
+
+pub func:ext_context_menu_count = int64() { pass(g_cm_count); };
+
+pub func:ext_context_menu_get_id = string(int64:i) {
+    if (i < 0i64)          { pass(""); }
+    if (i >= g_cm_count)   { pass(""); }
+    pass(g_cm_id[i]);
+};
+
+pub func:ext_context_menu_get_label = string(int64:i) {
+    if (i < 0i64)          { pass(""); }
+    if (i >= g_cm_count)   { pass(""); }
+    pass(g_cm_label[i]);
+};
+
+pub func:ext_context_menu_get_icon = string(int64:i) {
+    if (i < 0i64)          { pass(""); }
+    if (i >= g_cm_count)   { pass(""); }
+    pass(g_cm_icon[i]);
+};
+
+pub func:ext_context_menu_get_group = string(int64:i) {
+    if (i < 0i64)          { pass(""); }
+    if (i >= g_cm_count)   { pass(""); }
+    pass(g_cm_group[i]);
+};
+
+pub func:ext_context_menu_get_callback_id = int64(int64:i) {
+    if (i < 0i64)          { pass(-1i64); }
+    if (i >= g_cm_count)   { pass(-1i64); }
+    pass(g_cm_callback_id[i]);
+};
+
+pub func:ext_context_menu_get_plugin_slot = int64(int64:i) {
+    if (i < 0i64)          { pass(-1i64); }
+    if (i >= g_cm_count)   { pass(-1i64); }
+    pass(g_cm_plugin_slot[i]);
+};

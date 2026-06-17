@@ -3,18 +3,21 @@
 // v0.10.0: Plugin Architecture — bridges manifest slots to registry slots
 // and drives plugin init/destroy lifecycle calls.
 //
-// In v0.10.0, plugin_init and plugin_destroy take no arguments.
-// The PluginAPI handle for registering providers is defined in v0.10.1.
+// v0.10.1: PluginAPI struct is now available. api_make(reg_slot) is called
+// in plugin_init_one() and logged. Actual plugin_init(api) dispatch requires
+// a C shim jump table (each plugin exports a C-callable init fn pointer)
+// which is deferred to v0.10.2. For now init_one transitions state → ACTIVE.
 //
 // Lifecycle:
 //   plugin_load(manifest_slot)      → finds registry slot, sets LOADED
-//   plugin_init_one(manifest_slot)  → calls plugin's init fn, sets ACTIVE/ERROR
-//   plugin_destroy_one(slot)        → calls plugin's destroy fn, sets UNLOADED
+//   plugin_init_one(manifest_slot)  → constructs PluginAPI, sets ACTIVE
+//   plugin_destroy_one(slot)        → sets UNLOADED
 //   plugin_destroy_all_reverse()    → destroys all in reverse dep order
 
 use "./manifest.npk".*;
 use "./plugin_registry.npk".*;
 use "./dependency.npk".*;
+use "./api.npk".*;
 
 // fd 1 = stdout
 int64:LDR_STDOUT = 1i64;
@@ -63,7 +66,12 @@ pub func:plugin_init_one = int64(int64:manifest_slot) {
     if (state == PLUGIN_STATE_DISABLED) { pass(-1i64); }
     if (state == PLUGIN_STATE_ERROR)    { pass(-1i64); }
 
-    // Transition to ACTIVE — plugin successfully initialized
+    // Construct PluginAPI for this plugin (v0.10.1).
+    // Actual plugin_init(api) dispatch via C shim is deferred to v0.10.2.
+    PluginAPI:api = raw api_make(reg_slot);
+    drop(api_log(api, "info", string_concat("init: ", name)));
+
+    // Transition to ACTIVE
     drop(plugin_set_state(reg_slot, PLUGIN_STATE_ACTIVE));
     drop(_ldr_log(string_concat("[plugin] active: ", string_concat(name, "\n"))));
     pass(0i64);

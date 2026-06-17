@@ -1,0 +1,306 @@
+// tests/plugin/test_api.npk — Extension Point API tests
+//
+// v0.10.1: Tests for api.npk and all ext_*.npk extension point modules.
+//
+// Test groups:
+//   T01–T03: api_make, api_get_slot, api_log
+//   T04–T06: ext_hotkey register/duplicate/unregister
+//   T07–T09: ext_toolbar register/unregister/set_state
+//   T10–T11: ext_tab_header register/get_position
+//   T12–T13: ext_context_menu register/unregister
+//   T14–T15: ext_settings register + get_count_for
+//   T16–T17: ext_terminal decorator register/unregister
+//   T18–T19: ext_connection register/get_display_name
+//   T20:     ext_config watch register + get_watch_key
+
+use "../../src/plugin/api.npk".*;
+use "../../src/plugin/ext_hotkey.npk".*;
+use "../../src/plugin/ext_toolbar.npk".*;
+use "../../src/plugin/ext_tab_header.npk".*;
+use "../../src/plugin/ext_context_menu.npk".*;
+use "../../src/plugin/ext_settings.npk".*;
+use "../../src/plugin/ext_terminal.npk".*;
+use "../../src/plugin/ext_connection.npk".*;
+use "../../src/plugin/ext_config.npk".*;
+
+int64:STDOUT = 1i64;
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+func:t_ok = NIL(string:name) {
+    g_pass = g_pass + 1i64;
+    string:msg = string_concat("  PASS: ", string_concat(name, "\n"));
+    int64:l = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, l));
+    pass(NIL);
+};
+
+func:t_fail = NIL(string:name, string:reason) {
+    g_fail = g_fail + 1i64;
+    string:msg = string_concat("  FAIL: ", string_concat(name,
+        string_concat(" — ", string_concat(reason, "\n"))));
+    int64:l = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, l));
+    pass(NIL);
+};
+
+func:t_assert_int = NIL(string:name, int64:got, int64:expected) {
+    if (got == expected) { drop(t_ok(name)); }
+    if (got != expected) {
+        drop(t_fail(name, string_concat("got ", string_concat(string_from_int(got),
+            string_concat(" expected ", string_from_int(expected))))));
+    }
+    pass(NIL);
+};
+
+func:t_assert_str = NIL(string:name, string:got, string:expected) {
+    if (got == expected) { drop(t_ok(name)); }
+    if (got != expected) {
+        drop(t_fail(name, string_concat("got '", string_concat(got,
+            string_concat("' expected '", string_concat(expected, "'"))))));
+    }
+    pass(NIL);
+};
+
+func:log_section = NIL(string:s) {
+    string:msg = string_concat("\n[", string_concat(s, "]\n"));
+    int64:l = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, l));
+    pass(NIL);
+};
+
+// ── T01–T03: PluginAPI core ───────────────────────────────────────────────────
+
+func:test_api_core = NIL() {
+    drop(log_section("T01-T03: PluginAPI core"));
+
+    // T01: api_make returns struct with correct slot
+    PluginAPI:api = raw api_make(5i64);
+    drop(t_assert_int("T01 api_make slot = 5", raw api_get_slot(api), 5i64));
+
+    // T02: api_make with slot 0
+    PluginAPI:api2 = raw api_make(0i64);
+    drop(t_assert_int("T02 api_make slot = 0", raw api_get_slot(api2), 0i64));
+
+    // T03: api_log does not crash (smoke test — output on stdout)
+    drop(api_log(api, "info", "test log from T03"));
+    drop(t_ok("T03 api_log smoke"));
+    pass(NIL);
+};
+
+// ── T04–T06: HotkeyProvider ───────────────────────────────────────────────────
+
+func:test_hotkey = NIL() {
+    drop(log_section("T04-T06: HotkeyProvider"));
+    drop(ext_hotkey_init());
+
+    PluginAPI:api = raw api_make(0i64);
+
+    // T04: Register a hotkey → returns index 0
+    int64:idx = raw api_register_hotkey(api, "plugin.test.search",
+                                         "Ctrl+Shift+F", "Search terminals", 42i64);
+    drop(t_assert_int("T04 register_hotkey returns 0", idx, 0i64));
+    drop(t_assert_str("T04b get_action", raw ext_hotkey_get_action(0i64), "plugin.test.search"));
+
+    // T05: Duplicate action → returns -1
+    int64:dup = raw api_register_hotkey(api, "plugin.test.search",
+                                         "Ctrl+F", "Dupe", 99i64);
+    drop(t_assert_int("T05 duplicate hotkey returns -1", dup, -1i64));
+    drop(t_assert_int("T05b count still 1", raw ext_hotkey_count(), 1i64));
+
+    // T06: Unregister → count = 0
+    drop(api_unregister_hotkey(api, "plugin.test.search"));
+    drop(t_assert_int("T06 count after unregister = 0", raw ext_hotkey_count(), 0i64));
+    pass(NIL);
+};
+
+// ── T07–T09: ToolbarButton ────────────────────────────────────────────────────
+
+func:test_toolbar = NIL() {
+    drop(log_section("T07-T09: ToolbarButton"));
+    drop(ext_toolbar_init());
+
+    PluginAPI:api = raw api_make(1i64);
+
+    // T07: Register a toolbar button → index 0
+    int64:idx = raw api_register_toolbar_button(api, "my-btn",
+                                                 "star-symbolic", "Star it",
+                                                 "right", 10i64);
+    drop(t_assert_int("T07 register_toolbar_button returns 0", idx, 0i64));
+    drop(t_assert_str("T07b get_id", raw ext_toolbar_get_id(0i64), "my-btn"));
+    drop(t_assert_str("T07c get_position", raw ext_toolbar_get_position(0i64), "right"));
+
+    // T08: Unregister → count = 0
+    drop(api_unregister_toolbar_button(api, "my-btn"));
+    drop(t_assert_int("T08 count after unregister = 0", raw ext_toolbar_count(), 0i64));
+
+    // T09: Re-register + set disabled state
+    drop(api_register_toolbar_button(api, "btn2", "edit", "Edit", "left", 20i64));
+    drop(api_set_toolbar_button_state(api, "btn2", 0i64));
+    drop(t_assert_int("T09 get_enabled = 0 after disable", raw ext_toolbar_get_enabled(0i64), 0i64));
+    pass(NIL);
+};
+
+// ── T10–T11: TabHeader ────────────────────────────────────────────────────────
+
+func:test_tab_header = NIL() {
+    drop(log_section("T10-T11: TabHeader"));
+    drop(ext_tab_header_init());
+
+    PluginAPI:api = raw api_make(2i64);
+
+    // T10: Register a tab header widget
+    int64:idx = raw api_register_tab_header(api, "git-branch", "after_title", 7i64);
+    drop(t_assert_int("T10 register_tab_header returns 0", idx, 0i64));
+    drop(t_assert_str("T10b get_id", raw ext_tab_header_get_id(0i64), "git-branch"));
+
+    // T11: position and callback_id correct
+    drop(t_assert_str("T11 get_position = after_title",
+                       raw ext_tab_header_get_position(0i64), "after_title"));
+    drop(t_assert_int("T11b get_callback_id = 7",
+                       raw ext_tab_header_get_callback_id(0i64), 7i64));
+    pass(NIL);
+};
+
+// ── T12–T13: ContextMenu ──────────────────────────────────────────────────────
+
+func:test_context_menu = NIL() {
+    drop(log_section("T12-T13: ContextMenu"));
+    drop(ext_context_menu_init());
+
+    PluginAPI:api = raw api_make(3i64);
+
+    // T12: Register a context menu item
+    int64:idx = raw api_register_context_menu_item(api, "copy-path",
+                                                    "Copy Path", "copy-symbolic",
+                                                    "edit", 55i64);
+    drop(t_assert_int("T12 register_context_menu_item returns 0", idx, 0i64));
+    drop(t_assert_str("T12b get_label", raw ext_context_menu_get_label(0i64), "Copy Path"));
+    drop(t_assert_str("T12c get_group", raw ext_context_menu_get_group(0i64), "edit"));
+
+    // T13: Unregister → count = 0
+    drop(api_unregister_context_menu_item(api, "copy-path"));
+    drop(t_assert_int("T13 count after unregister = 0", raw ext_context_menu_count(), 0i64));
+    pass(NIL);
+};
+
+// ── T14–T15: Settings ─────────────────────────────────────────────────────────
+
+func:test_settings = NIL() {
+    drop(log_section("T14-T15: Settings"));
+    drop(ext_settings_init());
+
+    PluginAPI:api = raw api_make(4i64);
+
+    // T14: Register two settings for "my-plugin"
+    drop(api_register_setting(api, "my-plugin", "theme", "Theme", "select", "dark"));
+    drop(api_register_setting(api, "my-plugin", "font_size", "Font Size", "int", "14"));
+    drop(t_assert_int("T14 total_count = 2", raw ext_settings_total_count(), 2i64));
+    drop(t_assert_int("T14b get_count_for my-plugin = 2",
+                       raw ext_settings_get_count_for("my-plugin"), 2i64));
+
+    // T15: Key and default are correct
+    drop(t_assert_str("T15 get_key(0) = theme",
+                       raw ext_settings_get_key("my-plugin", 0i64), "theme"));
+    drop(t_assert_str("T15b get_default(1) = 14",
+                       raw ext_settings_get_default("my-plugin", 1i64), "14"));
+    pass(NIL);
+};
+
+// ── T16–T17: TerminalDecorator ────────────────────────────────────────────────
+
+func:test_terminal = NIL() {
+    drop(log_section("T16-T17: TerminalDecorator"));
+    drop(ext_terminal_init());
+
+    PluginAPI:api = raw api_make(5i64);
+
+    // T16: Register a decorator
+    int64:idx = raw api_register_terminal_decorator(api, 88i64);
+    drop(t_assert_int("T16 register_terminal_decorator returns 0", idx, 0i64));
+    drop(t_assert_int("T16b decorator_count = 1",
+                       raw ext_terminal_decorator_count(), 1i64));
+    drop(t_assert_int("T16c get_callback_id = 88",
+                       raw ext_terminal_decorator_get_callback_id(0i64), 88i64));
+
+    // T17: Unregister → count = 0
+    drop(api_unregister_terminal_decorator(api));
+    drop(t_assert_int("T17 count after unregister = 0",
+                       raw ext_terminal_decorator_count(), 0i64));
+    pass(NIL);
+};
+
+// ── T18–T19: ConnectionProvider ───────────────────────────────────────────────
+
+func:test_connection = NIL() {
+    drop(log_section("T18-T19: ConnectionProvider"));
+    drop(ext_connection_init());
+
+    PluginAPI:api = raw api_make(6i64);
+
+    // T18: Register a connection type
+    int64:idx = raw api_register_connection_provider(api, "aws-ssm",
+                                                      "AWS SSM Session",
+                                                      "aws-logo", 33i64);
+    drop(t_assert_int("T18 register_connection_provider returns 0", idx, 0i64));
+    drop(t_assert_str("T18b get_type_name",
+                       raw ext_connection_get_type_name(0i64), "aws-ssm"));
+
+    // T19: display name correct
+    drop(t_assert_str("T19 get_display_name",
+                       raw ext_connection_get_display_name(0i64), "AWS SSM Session"));
+    pass(NIL);
+};
+
+// ── T20: ConfigProvider ───────────────────────────────────────────────────────
+
+func:test_config = NIL() {
+    drop(log_section("T20: ConfigProvider"));
+    drop(ext_config_init());
+
+    PluginAPI:api = raw api_make(7i64);
+
+    // T20: Register a config watch
+    int64:idx = raw api_on_config_change(api, "plugins.my-plugin.settings.theme", 99i64);
+    drop(t_assert_int("T20 on_config_change returns 0", idx, 0i64));
+    drop(t_assert_int("T20b watch_count = 1", raw ext_config_watch_count(), 1i64));
+    drop(t_assert_str("T20c get_watch_key",
+                       raw ext_config_get_watch_key(0i64),
+                       "plugins.my-plugin.settings.theme"));
+    pass(NIL);
+};
+
+// ── Summary ───────────────────────────────────────────────────────────────────
+
+func:print_summary = NIL() {
+    string:msg = string_concat("\nResults: ",
+        string_concat(string_from_int(g_pass), " passed, "));
+    msg = string_concat(msg, string_concat(string_from_int(g_fail), " failed\n"));
+    int64:l = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, l));
+    pass(NIL);
+};
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+pub func:main = int32() {
+    string:hdr = "test_api — Extension Point API\n";
+    int64:l = string_length(hdr);
+    drop(sys(WRITE, STDOUT, hdr, l));
+
+    drop(test_api_core());
+    drop(test_hotkey());
+    drop(test_toolbar());
+    drop(test_tab_header());
+    drop(test_context_menu());
+    drop(test_settings());
+    drop(test_terminal());
+    drop(test_connection());
+    drop(test_config());
+    drop(print_summary());
+
+    if (g_fail == 0i64) { exit 0i32; }
+    exit 1i32;
+};

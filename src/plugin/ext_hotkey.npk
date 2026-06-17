@@ -1,0 +1,141 @@
+// src/plugin/ext_hotkey.npk — HotkeyProvider extension point
+//
+// v0.10.1: Extension Point API
+//
+// Plugins register custom hotkey bindings via api_register_hotkey().
+// Each binding is namespaced as "plugin.<plugin_name>.<action>".
+// Dispatch integration with hotkey.npk is wired in v0.10.2.
+//
+// Storage: flat parallel arrays, max 64 registrations total.
+//
+// Public API:
+//   api_register_hotkey(api, action, chord, description, callback_id) → int64
+//   api_unregister_hotkey(api, action)                                → NIL
+//   ext_hotkey_init()                                                 → NIL
+//   ext_hotkey_count()                                                → int64
+//   ext_hotkey_get_action(i)                                          → string
+//   ext_hotkey_get_chord(i)                                           → string
+//   ext_hotkey_get_description(i)                                     → string
+//   ext_hotkey_get_plugin_slot(i)                                     → int64
+//   ext_hotkey_get_callback_id(i)                                     → int64
+
+use "./api.npk".*;
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+pub fixed int64:EXT_HOTKEY_MAX = 64i64;
+
+int64[64]:g_hk_plugin_slot;
+string[64]:g_hk_action;
+string[64]:g_hk_chord;
+string[64]:g_hk_description;
+int64[64]:g_hk_callback_id;
+int64:g_hk_count = 0i64;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+pub func:ext_hotkey_init = NIL() {
+    int64:i = 0i64;
+    while (i < EXT_HOTKEY_MAX) {
+        g_hk_plugin_slot[i]  = -1i64;
+        g_hk_action[i]       = "";
+        g_hk_chord[i]        = "";
+        g_hk_description[i]  = "";
+        g_hk_callback_id[i]  = -1i64;
+        i = i + 1i64;
+    }
+    g_hk_count = 0i64;
+    pass(NIL);
+};
+
+// ── Internal lookup ───────────────────────────────────────────────────────────
+
+func:_hk_find = int64(string:action) {
+    int64:i = 0i64;
+    while (i < g_hk_count) {
+        if (g_hk_action[i] == action) { pass(i); }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+// ── Registration ──────────────────────────────────────────────────────────────
+
+// Register a hotkey binding for the given plugin.
+// action   — namespaced action string, e.g. "plugin.myplugin.search"
+// chord    — key chord string, e.g. "Ctrl+Shift+F"
+// description — human-readable description
+// callback_id — plugin-assigned integer for dispatch identification
+// Returns registration index (>= 0) on success, -1 if full or duplicate action.
+pub func:api_register_hotkey = int64(PluginAPI:api, string:action,
+                                     string:chord, string:description,
+                                     int64:callback_id) {
+    // Reject duplicates
+    int64:existing = raw _hk_find(action);
+    if (existing >= 0i64) { pass(-1i64); }
+
+    if (g_hk_count >= EXT_HOTKEY_MAX) { pass(-1i64); }
+
+    int64:idx            = g_hk_count;
+    g_hk_plugin_slot[idx] = api.slot;
+    g_hk_action[idx]      = action;
+    g_hk_chord[idx]       = chord;
+    g_hk_description[idx] = description;
+    g_hk_callback_id[idx] = callback_id;
+    g_hk_count            = g_hk_count + 1i64;
+    pass(idx);
+};
+
+// Remove a hotkey registration by action name.
+// Shifts subsequent entries down to fill the gap.
+pub func:api_unregister_hotkey = NIL(PluginAPI:api, string:action) {
+    int64:idx = raw _hk_find(action);
+    if (idx < 0i64) { pass(NIL); }
+
+    // Shift entries down
+    int64:i = idx;
+    while (i < g_hk_count - 1i64) {
+        g_hk_plugin_slot[i]  = g_hk_plugin_slot[i + 1i64];
+        g_hk_action[i]       = g_hk_action[i + 1i64];
+        g_hk_chord[i]        = g_hk_chord[i + 1i64];
+        g_hk_description[i]  = g_hk_description[i + 1i64];
+        g_hk_callback_id[i]  = g_hk_callback_id[i + 1i64];
+        i = i + 1i64;
+    }
+    g_hk_count = g_hk_count - 1i64;
+    pass(NIL);
+};
+
+// ── Accessors ─────────────────────────────────────────────────────────────────
+
+pub func:ext_hotkey_count = int64() { pass(g_hk_count); };
+
+pub func:ext_hotkey_get_action = string(int64:i) {
+    if (i < 0i64)            { pass(""); }
+    if (i >= g_hk_count)     { pass(""); }
+    pass(g_hk_action[i]);
+};
+
+pub func:ext_hotkey_get_chord = string(int64:i) {
+    if (i < 0i64)            { pass(""); }
+    if (i >= g_hk_count)     { pass(""); }
+    pass(g_hk_chord[i]);
+};
+
+pub func:ext_hotkey_get_description = string(int64:i) {
+    if (i < 0i64)            { pass(""); }
+    if (i >= g_hk_count)     { pass(""); }
+    pass(g_hk_description[i]);
+};
+
+pub func:ext_hotkey_get_plugin_slot = int64(int64:i) {
+    if (i < 0i64)            { pass(-1i64); }
+    if (i >= g_hk_count)     { pass(-1i64); }
+    pass(g_hk_plugin_slot[i]);
+};
+
+pub func:ext_hotkey_get_callback_id = int64(int64:i) {
+    if (i < 0i64)            { pass(-1i64); }
+    if (i >= g_hk_count)     { pass(-1i64); }
+    pass(g_hk_callback_id[i]);
+};

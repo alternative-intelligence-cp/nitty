@@ -1,0 +1,102 @@
+// src/plugin/api.npk — Plugin API core
+//
+// v0.10.1: Extension Point API
+//
+// The PluginAPI struct is the single handle passed to every plugin's
+// plugin_init callback. It carries the registry slot of the calling plugin
+// and a reserved context handle for app state access (v0.10.2).
+//
+// All api_* accessor functions take PluginAPI as their first argument.
+//
+// Public API:
+//   api_make(slot)                          → PluginAPI
+//   api_get_slot(api)                       → int64
+//   api_get_config(api, key)                → string
+//   api_get_active_pane(api)                → int64  (stub: 0)
+//   api_write_to_terminal(api, pane, data)  → NIL    (stub: logs)
+//   api_show_notification(api, title, body) → NIL    (stub: logs)
+//   api_log(api, level, message)            → NIL    (writes to stdout)
+
+
+// ── PluginAPI struct ──────────────────────────────────────────────────────────
+
+pub struct:PluginAPI = {
+    int64:slot;     // registry slot of the calling plugin
+    int64:context;  // reserved for app context handle (v0.10.2)
+};
+
+// ── Internal ──────────────────────────────────────────────────────────────────
+
+int64:API_STDOUT = 1i64;
+
+func:_api_write = NIL(string:msg) {
+    int64:l = string_length(msg);
+    drop(sys(WRITE, API_STDOUT, msg, l));
+    pass(NIL);
+};
+
+// ── Construction ──────────────────────────────────────────────────────────────
+
+// Construct a PluginAPI handle for the given registry slot.
+pub func:api_make = PluginAPI(int64:slot) {
+    PluginAPI:api;
+    api.slot    = slot;
+    api.context = 0i64;
+    pass(api);
+};
+
+// ── Slot accessor ─────────────────────────────────────────────────────────────
+
+pub func:api_get_slot = int64(PluginAPI:api) {
+    pass(api.slot);
+};
+
+// ── Config accessor (stub) ───────────────────────────────────────────────────
+
+// Read a config value by key. Stub returns ""; real impl delegates to
+// cfg_get_string() from config.npk (wired in v0.10.2 when schema.npk is stable).
+pub func:api_get_config = string(PluginAPI:api, string:key) {
+    pass("");
+};
+
+// ── Pane accessor (stub) ─────────────────────────────────────────────────────
+
+// Returns the active pane id. Stub returns 0 until GUI integration in v0.10.2.
+pub func:api_get_active_pane = int64(PluginAPI:api) {
+    pass(0i64);
+};
+
+// ── Terminal write (stub) ─────────────────────────────────────────────────────
+
+// Write data to a terminal pane. Stub logs intent; real PTY write in v0.10.2.
+pub func:api_write_to_terminal = NIL(PluginAPI:api, int64:pane, string:data) {
+    string:msg = string_concat("[plugin api] write_to_terminal pane=",
+        string_concat(string_from_int(pane),
+        string_concat(" len=", string_concat(string_from_int(string_length(data)), "\n"))));
+    drop(_api_write(msg));
+    pass(NIL);
+};
+
+// ── Notification (stub) ───────────────────────────────────────────────────────
+
+// Show a desktop notification. Stub logs; real notification in v0.10.2.
+pub func:api_show_notification = NIL(PluginAPI:api, string:title, string:body) {
+    string:msg = string_concat("[plugin api] notification: ",
+        string_concat(title, string_concat(": ", string_concat(body, "\n"))));
+    drop(_api_write(msg));
+    pass(NIL);
+};
+
+// ── Logging ───────────────────────────────────────────────────────────────────
+
+// Structured plugin log entry written to stdout.
+// level: "info" | "warn" | "error"
+pub func:api_log = NIL(PluginAPI:api, string:level, string:message) {
+    string:slot_str = string_from_int(api.slot);
+    string:msg = string_concat("[plugin:",
+        string_concat(slot_str,
+        string_concat("] [", string_concat(level,
+        string_concat("] ", string_concat(message, "\n"))))));
+    drop(_api_write(msg));
+    pass(NIL);
+};

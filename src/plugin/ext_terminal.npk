@@ -1,0 +1,120 @@
+// src/plugin/ext_terminal.npk — TerminalDecorator extension point
+//
+// v0.10.1: Extension Point API
+//
+// Plugins register as terminal decorators to intercept and react to
+// terminal events: data received, data sent, line added, pane created/destroyed.
+//
+// Since Nitpick cannot store function pointers in arrays, decorators are
+// identified by plugin_slot + callback_id (plugin-assigned integer).
+// The actual per-event dispatch chain is implemented in v0.10.2.
+//
+// Storage: flat parallel arrays, max 16 decorator registrations.
+//
+// Public API:
+//   api_register_terminal_decorator(api, callback_id) → int64
+//   api_unregister_terminal_decorator(api)            → NIL
+//   ext_terminal_init()                               → NIL
+//   ext_terminal_decorator_count()                    → int64
+//   ext_terminal_decorator_get_plugin_slot(i)         → int64
+//   ext_terminal_decorator_get_callback_id(i)         → int64
+//   ext_terminal_dispatch_data(pane, data)            → NIL  (stub)
+
+use "./api.npk".*;
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+pub fixed int64:EXT_TERMINAL_MAX = 16i64;
+
+int64[16]:g_td_plugin_slot;
+int64[16]:g_td_callback_id;
+int64:g_td_count = 0i64;
+
+int64:TD_STDOUT = 1i64;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+pub func:ext_terminal_init = NIL() {
+    int64:i = 0i64;
+    while (i < EXT_TERMINAL_MAX) {
+        g_td_plugin_slot[i] = -1i64;
+        g_td_callback_id[i] = -1i64;
+        i = i + 1i64;
+    }
+    g_td_count = 0i64;
+    pass(NIL);
+};
+
+// ── Internal lookup ───────────────────────────────────────────────────────────
+
+func:_td_find_slot = int64(int64:plugin_slot) {
+    int64:i = 0i64;
+    while (i < g_td_count) {
+        if (g_td_plugin_slot[i] == plugin_slot) { pass(i); }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+// ── Registration ──────────────────────────────────────────────────────────────
+
+// Register a terminal decorator for the calling plugin.
+// Each plugin may register one decorator entry (identified by plugin slot).
+// callback_id: plugin-assigned integer for dispatch identification.
+// Returns registration index (>= 0) on success, -1 if full or already registered.
+pub func:api_register_terminal_decorator = int64(PluginAPI:api, int64:callback_id) {
+    // One registration per plugin
+    if (raw _td_find_slot(api.slot) >= 0i64)  { pass(-1i64); }
+    if (g_td_count >= EXT_TERMINAL_MAX)   { pass(-1i64); }
+
+    int64:idx            = g_td_count;
+    g_td_plugin_slot[idx] = api.slot;
+    g_td_callback_id[idx] = callback_id;
+    g_td_count            = g_td_count + 1i64;
+    pass(idx);
+};
+
+// Remove the terminal decorator registered by this plugin.
+pub func:api_unregister_terminal_decorator = NIL(PluginAPI:api) {
+    int64:idx = raw _td_find_slot(api.slot);
+    if (idx < 0i64) { pass(NIL); }
+
+    int64:i = idx;
+    while (i < g_td_count - 1i64) {
+        g_td_plugin_slot[i] = g_td_plugin_slot[i + 1i64];
+        g_td_callback_id[i] = g_td_callback_id[i + 1i64];
+        i = i + 1i64;
+    }
+    g_td_count = g_td_count - 1i64;
+    pass(NIL);
+};
+
+// ── Dispatch stub ─────────────────────────────────────────────────────────────
+
+// Stub dispatcher — logs how many decorators would receive the event.
+// Real per-decorator dispatch is wired in v0.10.2.
+pub func:ext_terminal_dispatch_data = NIL(int64:pane, string:data) {
+    if (g_td_count == 0i64) { pass(NIL); }
+    string:count_str = string_from_int(g_td_count);
+    string:msg = string_concat("[terminal] dispatch data to ",
+        string_concat(count_str, " decorator(s)\n"));
+    int64:l = string_length(msg);
+    drop(sys(WRITE, TD_STDOUT, msg, l));
+    pass(NIL);
+};
+
+// ── Accessors ─────────────────────────────────────────────────────────────────
+
+pub func:ext_terminal_decorator_count = int64() { pass(g_td_count); };
+
+pub func:ext_terminal_decorator_get_plugin_slot = int64(int64:i) {
+    if (i < 0i64)          { pass(-1i64); }
+    if (i >= g_td_count)   { pass(-1i64); }
+    pass(g_td_plugin_slot[i]);
+};
+
+pub func:ext_terminal_decorator_get_callback_id = int64(int64:i) {
+    if (i < 0i64)          { pass(-1i64); }
+    if (i >= g_td_count)   { pass(-1i64); }
+    pass(g_td_callback_id[i]);
+};

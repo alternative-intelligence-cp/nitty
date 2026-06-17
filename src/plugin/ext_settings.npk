@@ -1,0 +1,151 @@
+// src/plugin/ext_settings.npk — SettingsPanel extension point
+//
+// v0.10.1: Extension Point API
+//
+// Plugins register settings definitions that appear as a settings panel
+// in the Nitty settings UI (rendered in v0.10.2).
+//
+// Since Nitpick has no varargs, settings are registered one at a time via
+// api_register_setting() or in batch via api_register_settings_n().
+//
+// Storage: flat parallel arrays.
+//   - Up to 8 plugin namespaces
+//   - Up to 8 settings per plugin (64 total)
+//
+// SettingDefinition fields:
+//   key          — config key (under plugins.<name>.settings.<key>)
+//   label        — human-readable label for the settings UI
+//   type_name    — "string" | "bool" | "int" | "select"
+//   default_value — serialised default (e.g. "true", "80", "dark")
+//
+// Public API:
+//   api_register_setting(api, plugin_name, key, label, type_name, default_value) → int64
+//   ext_settings_init()                                                           → NIL
+//   ext_settings_total_count()                                                    → int64
+//   ext_settings_get_count_for(plugin_name)                                       → int64
+//   ext_settings_get_key(plugin_name, i)                                          → string
+//   ext_settings_get_label(plugin_name, i)                                        → string
+//   ext_settings_get_type(plugin_name, i)                                         → string
+//   ext_settings_get_default(plugin_name, i)                                      → string
+
+use "./api.npk".*;
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+pub fixed int64:EXT_SETTINGS_MAX      = 64i64;  // total definitions
+pub fixed int64:EXT_SETTINGS_PLUGINS  = 8i64;   // max distinct plugin namespaces
+
+// Flat definition storage
+string[64]:g_sd_plugin_name;   // which plugin owns this setting
+string[64]:g_sd_key;
+string[64]:g_sd_label;
+string[64]:g_sd_type;
+string[64]:g_sd_default;
+int64:g_sd_count = 0i64;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+pub func:ext_settings_init = NIL() {
+    int64:i = 0i64;
+    while (i < EXT_SETTINGS_MAX) {
+        g_sd_plugin_name[i] = "";
+        g_sd_key[i]         = "";
+        g_sd_label[i]       = "";
+        g_sd_type[i]        = "string";
+        g_sd_default[i]     = "";
+        i = i + 1i64;
+    }
+    g_sd_count = 0i64;
+    pass(NIL);
+};
+
+// ── Registration ──────────────────────────────────────────────────────────────
+
+// Register a single setting definition for a plugin.
+// plugin_name — the plugin's manifest name (used as namespace)
+// type_name   — "string" | "bool" | "int" | "select"
+// Returns definition index (>= 0) on success, -1 if full.
+pub func:api_register_setting = int64(PluginAPI:api, string:plugin_name,
+                                       string:key, string:label,
+                                       string:type_name, string:default_value) {
+    if (g_sd_count >= EXT_SETTINGS_MAX) { pass(-1i64); }
+
+    int64:idx             = g_sd_count;
+    g_sd_plugin_name[idx] = plugin_name;
+    g_sd_key[idx]         = key;
+    g_sd_label[idx]       = label;
+    g_sd_type[idx]        = type_name;
+    g_sd_default[idx]     = default_value;
+    g_sd_count            = g_sd_count + 1i64;
+    pass(idx);
+};
+
+// ── Accessors ─────────────────────────────────────────────────────────────────
+
+pub func:ext_settings_total_count = int64() { pass(g_sd_count); };
+
+// Count of settings registered for a specific plugin.
+pub func:ext_settings_get_count_for = int64(string:plugin_name) {
+    int64:count = 0i64;
+    int64:i     = 0i64;
+    while (i < g_sd_count) {
+        if (g_sd_plugin_name[i] == plugin_name) {
+            count = count + 1i64;
+        }
+        i = i + 1i64;
+    }
+    pass(count);
+};
+
+// Get the j-th setting key for the given plugin (0-indexed among that plugin's defs).
+pub func:ext_settings_get_key = string(string:plugin_name, int64:j) {
+    int64:idx   = 0i64;
+    int64:i     = 0i64;
+    while (i < g_sd_count) {
+        if (g_sd_plugin_name[i] == plugin_name) {
+            if (idx == j) { pass(g_sd_key[i]); }
+            idx = idx + 1i64;
+        }
+        i = i + 1i64;
+    }
+    pass("");
+};
+
+pub func:ext_settings_get_label = string(string:plugin_name, int64:j) {
+    int64:idx = 0i64;
+    int64:i   = 0i64;
+    while (i < g_sd_count) {
+        if (g_sd_plugin_name[i] == plugin_name) {
+            if (idx == j) { pass(g_sd_label[i]); }
+            idx = idx + 1i64;
+        }
+        i = i + 1i64;
+    }
+    pass("");
+};
+
+pub func:ext_settings_get_type = string(string:plugin_name, int64:j) {
+    int64:idx = 0i64;
+    int64:i   = 0i64;
+    while (i < g_sd_count) {
+        if (g_sd_plugin_name[i] == plugin_name) {
+            if (idx == j) { pass(g_sd_type[i]); }
+            idx = idx + 1i64;
+        }
+        i = i + 1i64;
+    }
+    pass("string");
+};
+
+pub func:ext_settings_get_default = string(string:plugin_name, int64:j) {
+    int64:idx = 0i64;
+    int64:i   = 0i64;
+    while (i < g_sd_count) {
+        if (g_sd_plugin_name[i] == plugin_name) {
+            if (idx == j) { pass(g_sd_default[i]); }
+            idx = idx + 1i64;
+        }
+        i = i + 1i64;
+    }
+    pass("");
+};

@@ -731,4 +731,11 @@ flags = []
 link_libraries = ["nitpick_yaml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_semver"]
 link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib"]
 
-
+# v0.10.1: Extension Point API tests (PluginAPI + 8 ext_*.npk modules)
+[target.test_api]
+type = "binary"
+sources = ["tests/plugin/test_api.npk"]
+deps = []
+flags = []
+link_libraries = ["nitpick_yaml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_semver"]
+link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib"]
