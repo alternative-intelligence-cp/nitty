@@ -1,0 +1,234 @@
+// tests/plugin/test_loader.npk — Plugin registry and loader tests
+//
+// v0.10.0: Tests for plugin_registry.npk, loader.npk, and plugin_manager.npk.
+//
+// Test groups:
+//   T01–T03: Registry init, register, find by name
+//   T04–T06: plugin_load state transitions
+//   T07–T09: plugin_init_one: LOADED → ACTIVE
+//   T10–T12: Error isolation: error count, auto-disable
+//   T13–T15: Full manager API: active count, get_state, disable
+
+use "../../src/plugin/plugin_registry.npk".*;
+use "../../src/plugin/manifest.npk".*;
+use "../../src/plugin/dependency.npk".*;
+use "../../src/plugin/loader.npk".*;
+use "../../src/plugin/plugin_manager.npk".*;
+
+int64:STDOUT = 1i64;
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:t_ok = NIL(string:name) {
+    g_pass = g_pass + 1i64;
+    string:msg = string_concat("  PASS: ", string_concat(name, "\n"));
+    int64:l = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, l));
+    pass(NIL);
+};
+
+func:t_fail = NIL(string:name, string:reason) {
+    g_fail = g_fail + 1i64;
+    string:msg = string_concat("  FAIL: ", string_concat(name,
+        string_concat(" — ", string_concat(reason, "\n"))));
+    int64:l = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, l));
+    pass(NIL);
+};
+
+func:t_assert_int = NIL(string:name, int64:got, int64:expected) {
+    if (got == expected) { drop(t_ok(name)); }
+    if (got != expected) {
+        drop(t_fail(name, string_concat("got ", string_concat(string_from_int(got),
+            string_concat(" expected ", string_from_int(expected))))));
+    }
+    pass(NIL);
+};
+
+func:t_assert_str = NIL(string:name, string:got, string:expected) {
+    if (got == expected) { drop(t_ok(name)); }
+    if (string_equals(got, expected) == 0) {
+        drop(t_fail(name, string_concat("got '", string_concat(got,
+            string_concat("' expected '", string_concat(expected, "'"))))));
+    }
+    pass(NIL);
+};
+
+func:log_section = NIL(string:s) {
+    string:msg = string_concat("\n[", string_concat(s, "]\n"));
+    int64:l = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, l));
+    pass(NIL);
+};
+
+// ── T01–T03: Registry init, register, find ────────────────────────────────────
+
+func:test_registry = NIL() {
+    drop(log_section("T01-T03: Registry init, register, find"));
+    drop(plugin_registry_init());
+
+    // T01: Init → count = 0
+    drop(t_assert_int("T01 registry_count after init = 0", raw plugin_registry_count(), 0i64));
+
+    // T02: Register a plugin → returns slot 0
+    int64:slot = raw plugin_register("test-plugin-a");
+    drop(t_assert_int("T02 plugin_register returns slot 0", slot, 0i64));
+
+    // T03: Find by name returns the same slot
+    int64:found = raw plugin_registry_find("test-plugin-a");
+    drop(t_assert_int("T03 plugin_registry_find returns slot 0", found, 0i64));
+    pass(NIL);
+};
+
+// ── T04–T06: plugin_load state transitions ────────────────────────────────────
+
+func:test_load = NIL() {
+    drop(log_section("T04-T06: plugin_load state transitions"));
+    drop(plugin_registry_init());
+    drop(manifest_init());
+
+    // Register "test-plugin-a" in the registry
+    int64:reg = raw plugin_register("test-plugin-a");
+
+    // Parse a fixture manifest into slot 0 and override name via manifest_find
+    // Since we can't set manifest name directly, we need a manifest.
+    // We'll parse the hello-plugin fixture and then re-register with its name.
+    drop(plugin_registry_init());
+    drop(manifest_init());
+
+    // Parse hello-plugin
+    int64:rc = raw manifest_parse(0i64, "tests/plugin/fixtures/hello-plugin/plugin.yaml");
+    int64:v  = raw manifest_validate(0i64);
+
+    // Register "hello-plugin" in registry (simulates plugin being compiled in)
+    int64:reg2 = raw plugin_register("hello-plugin");
+    drop(t_assert_int("T04 hello-plugin registered at slot 0", reg2, 0i64));
+
+    // T05: plugin_load finds registry slot and sets LOADED
+    int64:load_ok = raw plugin_load(0i64);
+    drop(t_assert_int("T05 plugin_load returns 0", load_ok, 0i64));
+    int64:state = raw plugin_get_state(0i64);
+    drop(t_assert_int("T05b state = PLUGIN_STATE_LOADED", state, PLUGIN_STATE_LOADED));
+
+    // T06: plugin_load for unknown plugin (not in registry) returns -1
+    drop(plugin_registry_init());
+    drop(manifest_init());
+    int64:rc2 = raw manifest_parse(0i64, "tests/plugin/fixtures/hello-plugin/plugin.yaml");
+    // Don't register — simulate not compiled in
+    int64:load_fail = raw plugin_load(0i64);
+    drop(t_assert_int("T06 plugin_load for unregistered plugin returns -1", load_fail, -1i64));
+    pass(NIL);
+};
+
+// ── T07–T09: plugin_init_one: LOADED → ACTIVE ────────────────────────────────
+
+func:test_init_one = NIL() {
+    drop(log_section("T07-T09: plugin_init_one transitions"));
+    drop(plugin_registry_init());
+    drop(manifest_init());
+
+    int64:rc = raw manifest_parse(0i64, "tests/plugin/fixtures/hello-plugin/plugin.yaml");
+    int64:v  = raw manifest_validate(0i64);
+
+    // Register and load
+    int64:reg = raw plugin_register("hello-plugin");
+    int64:ld  = raw plugin_load(0i64);
+
+    // T07: plugin_init_one transitions to ACTIVE
+    int64:init_ok = raw plugin_init_one(0i64);
+    drop(t_assert_int("T07 plugin_init_one returns 0", init_ok, 0i64));
+
+    // T08: State = ACTIVE after init
+    int64:state = raw plugin_get_state(reg);
+    drop(t_assert_int("T08 state = PLUGIN_STATE_ACTIVE", state, PLUGIN_STATE_ACTIVE));
+
+    // T09: plugin_init_one on already-ACTIVE plugin: still returns 0 (idempotent)
+    int64:init2 = raw plugin_init_one(0i64);
+    drop(t_assert_int("T09 plugin_init_one again returns 0", init2, 0i64));
+    pass(NIL);
+};
+
+// ── T10–T12: Error isolation ──────────────────────────────────────────────────
+
+func:test_errors = NIL() {
+    drop(log_section("T10-T12: Error isolation"));
+    drop(plugin_registry_init());
+    drop(manifest_init());
+
+    int64:rc = raw manifest_parse(0i64, "tests/plugin/fixtures/hello-plugin/plugin.yaml");
+    int64:v  = raw manifest_validate(0i64);
+    int64:reg = raw plugin_register("hello-plugin");
+
+    // T10: plugin_mark_error sets ERROR state and sets error message
+    drop(plugin_mark_error(0i64, "init failed: null ptr"));
+    int64:state = raw plugin_get_state(reg);
+    drop(t_assert_int("T10 state = PLUGIN_STATE_ERROR after mark_error", state, PLUGIN_STATE_ERROR));
+
+    // T11: error count = 1 after one error
+    int64:errc = raw plugin_get_error_count(reg);
+    drop(t_assert_int("T11 error_count = 1 after one mark_error", errc, 1i64));
+
+    // T12: auto-disable after 3 errors
+    drop(plugin_mark_error(0i64, "second error"));
+    drop(plugin_mark_error(0i64, "third error"));
+    int64:state2 = raw plugin_get_state(reg);
+    drop(t_assert_int("T12 state = PLUGIN_STATE_DISABLED after 3 errors", state2, PLUGIN_STATE_DISABLED));
+    pass(NIL);
+};
+
+// ── T13–T15: Manager API ──────────────────────────────────────────────────────
+
+func:test_manager_api = NIL() {
+    drop(log_section("T13-T15: Manager query API"));
+    drop(plugin_registry_init());
+    drop(manifest_init());
+
+    // Register two plugins manually
+    int64:ra = raw plugin_register("plugin-a");
+    int64:rb = raw plugin_register("plugin-b");
+    drop(plugin_set_state(ra, PLUGIN_STATE_ACTIVE));
+    drop(plugin_set_state(rb, PLUGIN_STATE_ACTIVE));
+
+    // T13: plugin_manager_active_count = 2
+    int64:ac = raw plugin_manager_active_count();
+    drop(t_assert_int("T13 active_count = 2 with two ACTIVE plugins", ac, 2i64));
+
+    // T14: plugin_manager_get_state returns ACTIVE for "plugin-a"
+    int64:st = raw plugin_manager_get_state("plugin-a");
+    drop(t_assert_int("T14 get_state(plugin-a) = ACTIVE", st, PLUGIN_STATE_ACTIVE));
+
+    // T15: plugin_manager_disable sets state to DISABLED
+    drop(plugin_manager_disable("plugin-b"));
+    int64:st2 = raw plugin_manager_get_state("plugin-b");
+    drop(t_assert_int("T15 plugin-b disabled → state = DISABLED", st2, PLUGIN_STATE_DISABLED));
+    pass(NIL);
+};
+
+// ── Summary ───────────────────────────────────────────────────────────────────
+
+func:print_summary = NIL() {
+    string:msg = string_concat("\nResults: ",
+        string_concat(string_from_int(g_pass), " passed, "));
+    msg = string_concat(msg, string_concat(string_from_int(g_fail), " failed\n"));
+    int64:l = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, l));
+    pass(NIL);
+};
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+pub func:main = int32() {
+    string:hdr = "test_loader — Plugin registry/loader/manager\n";
+    int64:l = string_length(hdr);
+    drop(sys(WRITE, STDOUT, hdr, l));
+
+    drop(test_registry());
+    drop(test_load());
+    drop(test_init_one());
+    drop(test_errors());
+    drop(test_manager_api());
+    drop(print_summary());
+
+    if (g_fail == 0i64) { pass(0i32); }
+    pass(1i32);
+};

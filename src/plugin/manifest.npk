@@ -1,0 +1,264 @@
+// src/plugin/manifest.npk — Plugin manifest parser
+//
+// v0.10.0: Plugin Architecture — parse and validate plugin.yaml manifests.
+//
+// Each plugin directory contains a plugin.yaml manifest declaring:
+//   name, version, api_version, entry_module, author, description, dependencies
+//
+// Parsed manifests are stored in flat parallel arrays (max 64 plugins).
+// Dependencies are stored as pipe-separated strings and retrieved by index.
+//
+// Usage:
+//   drop(manifest_init());
+//   int64:ok = raw manifest_parse(slot, "/path/to/plugin.yaml");
+//   int64:err = raw manifest_validate(slot);
+//   string:name = raw manifest_get_name(slot);
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/src/nitpick_yaml.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/src/nitpick_semver.npk".*;
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+pub fixed int64:MANIFEST_MAX_SLOTS = 64i64;
+pub fixed int64:MANIFEST_MAX_DEPS  = 8i64;
+pub fixed string:MANIFEST_FILENAME = "plugin.yaml";
+
+// ── State — flat parallel arrays ─────────────────────────────────────────────
+
+string[64]:g_pm_name;
+string[64]:g_pm_version;
+string[64]:g_pm_api_version;
+string[64]:g_pm_entry_module;
+string[64]:g_pm_author;
+string[64]:g_pm_description;
+string[64]:g_pm_dir;
+int64[64]:g_pm_valid;
+int64[64]:g_pm_dep_count;
+string[64]:g_pm_dep_names;      // pipe-separated: "dep-a|dep-b|dep-c"
+string[64]:g_pm_dep_versions;   // pipe-separated: ">=1.0.0|^2.0|*"
+int64:g_pm_count = 0i64;
+int64:g_pm_initialized = 0i64;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+pub func:manifest_init = NIL() {
+    int64:i = 0i64;
+    while (i < MANIFEST_MAX_SLOTS) {
+        g_pm_name[i]         = "";
+        g_pm_version[i]      = "";
+        g_pm_api_version[i]  = "";
+        g_pm_entry_module[i] = "";
+        g_pm_author[i]       = "";
+        g_pm_description[i]  = "";
+        g_pm_dir[i]          = "";
+        g_pm_valid[i]        = 0i64;
+        g_pm_dep_count[i]    = 0i64;
+        g_pm_dep_names[i]    = "";
+        g_pm_dep_versions[i] = "";
+        i = i + 1i64;
+    }
+    g_pm_count       = 0i64;
+    g_pm_initialized = 1i64;
+    pass(NIL);
+};
+
+// ── Dependency string helpers ─────────────────────────────────────────────────
+
+// Extract the Nth pipe-separated token from a pipe-separated string.
+func:_pipe_token = string(string:s, int64:idx) {
+    string:result = "";
+    int64:cur = 0i64;
+    int64:pos = 0i64;
+    int64:len = string_length(s);
+    while (pos <= len) {
+        int64:is_end = is (pos == len) : 1i64 : 0i64;
+        string:ch = is (pos < len) : string_substring(s, pos, pos + 1i64) : "|";
+        int64:is_sep = is (ch == "|") : 1i64 : 0i64;
+        if (is_sep == 1i64) {
+            if (cur == idx) { pass(result); }
+            result = "";
+            cur = cur + 1i64;
+        }
+        if (is_sep == 0i64) { result = string_concat(result, ch); }
+        pos = pos + 1i64;
+    }
+    if (cur == idx) { pass(result); }
+    pass("");
+};
+
+// ── Parse ─────────────────────────────────────────────────────────────────────
+
+// Parse a plugin.yaml file into the given manifest slot.
+// Returns 0 on success, -1 on parse error or slot out of range.
+pub func:manifest_parse = int64(int64:slot, string:yaml_path) {
+    if (slot < 0i64)                  { pass(-1i64); }
+    if (slot >= MANIFEST_MAX_SLOTS)    { pass(-1i64); }
+
+    drop(YAML.clear());
+    int32:parsed = raw YAML.parse_file(yaml_path);
+    if (parsed < 0i32) { pass(-1i64); }
+
+    // Required fields
+    int32:has_name = raw YAML.has_key("name");
+    if (has_name == 1i32) {
+        g_pm_name[slot] = raw YAML.get_string("name");
+    }
+    int32:has_ver = raw YAML.has_key("version");
+    if (has_ver == 1i32) {
+        g_pm_version[slot] = raw YAML.get_string("version");
+    }
+    int32:has_api = raw YAML.has_key("api_version");
+    if (has_api == 1i32) {
+        g_pm_api_version[slot] = raw YAML.get_string("api_version");
+    }
+    int32:has_entry = raw YAML.has_key("entry_module");
+    if (has_entry == 1i32) {
+        g_pm_entry_module[slot] = raw YAML.get_string("entry_module");
+    }
+
+    // Optional fields
+    int32:has_author = raw YAML.has_key("author");
+    if (has_author == 1i32) {
+        g_pm_author[slot] = raw YAML.get_string("author");
+    }
+    int32:has_desc = raw YAML.has_key("description");
+    if (has_desc == 1i32) {
+        g_pm_description[slot] = raw YAML.get_string("description");
+    }
+
+    // Store directory (caller must set separately via manifest_set_dir)
+    // Extract dir from yaml_path by stripping trailing /plugin.yaml
+    int64:path_len  = string_length(yaml_path);
+    int64:fname_len = string_length(MANIFEST_FILENAME);
+    // yaml_path = "/some/dir/plugin.yaml"
+    // dir       = "/some/dir"
+    int64:dir_len = path_len - fname_len - 1i64;  // subtract "/" separator
+    if (dir_len > 0i64) {
+        g_pm_dir[slot] = string_substring(yaml_path, 0i64, dir_len);
+    }
+
+    // Dependencies: read deps_names (pipe-separated), deps_versions (pipe-separated), deps_count
+    // Format in plugin.yaml:
+    //   deps_count: 2
+    //   deps_names: "dep-alpha|dep-beta"
+    //   deps_versions: ">=0.5.0|^2.0.0"
+    string:dep_names    = "";
+    string:dep_versions = "";
+    int64:dep_count     = 0i64;
+    int32:has_dcount = raw YAML.has_key("deps_count");
+    if (has_dcount == 1i32) {
+        dep_count = raw YAML.get_int("deps_count");
+    }
+    int32:has_dnames = raw YAML.has_key("deps_names");
+    if (has_dnames == 1i32) {
+        dep_names = raw YAML.get_string("deps_names");
+    }
+    int32:has_dvers = raw YAML.has_key("deps_versions");
+    if (has_dvers == 1i32) {
+        dep_versions = raw YAML.get_string("deps_versions");
+    }
+
+
+    g_pm_dep_count[slot]    = dep_count;
+    g_pm_dep_names[slot]    = dep_names;
+    g_pm_dep_versions[slot] = dep_versions;
+
+    // Update global slot count if this is a new slot
+    if (slot >= g_pm_count) {
+        g_pm_count = slot + 1i64;
+    }
+
+    pass(0i64);
+};
+
+// ── Validate ─────────────────────────────────────────────────────────────────
+
+// Validate a parsed manifest slot. Returns 0 if valid, count of errors.
+// Sets g_pm_valid[slot] = 1 on success, 0 on any validation failure.
+pub func:manifest_validate = int64(int64:slot) {
+    if (slot < 0i64)               { pass(1i64); }
+    if (slot >= MANIFEST_MAX_SLOTS) { pass(1i64); }
+
+    int64:errors = 0i64;
+
+    // name must be non-empty
+    int64:name_len = string_length(g_pm_name[slot]);
+    if (name_len == 0i64) { errors = errors + 1i64; }
+
+    // version must be non-empty and parseable semver
+    int64:ver_len = string_length(g_pm_version[slot]);
+    if (ver_len == 0i64) { errors = errors + 1i64; }
+    if (ver_len > 0i64) {
+        // NOTE: must copy array element to local var before passing to extern
+        string:ver_str = g_pm_version[slot];
+        int32:semver_p = nitpick_semver_parse(ver_str);
+        if (semver_p == 0i32) { errors = errors + 1i64; }
+    }
+
+    // api_version must be present
+    int64:api_len = string_length(g_pm_api_version[slot]);
+    if (api_len == 0i64) { errors = errors + 1i64; }
+
+    // entry_module must be present
+    int64:entry_len = string_length(g_pm_entry_module[slot]);
+    if (entry_len == 0i64) { errors = errors + 1i64; }
+
+    if (errors == 0i64) {
+        g_pm_valid[slot] = 1i64;
+    }
+    if (errors > 0i64) {
+        g_pm_valid[slot] = 0i64;
+    }
+
+    pass(errors);
+};
+
+// ── Dir setter (used by discovery.npk) ───────────────────────────────────────
+
+pub func:manifest_set_dir = NIL(int64:slot, string:dir) {
+    if (slot >= 0i64) {
+        if (slot < MANIFEST_MAX_SLOTS) {
+            g_pm_dir[slot] = dir;
+        }
+    }
+    pass(NIL);
+};
+
+// Allocate the next available slot and return its index. -1 if full.
+pub func:manifest_alloc_slot = int64() {
+    if (g_pm_count >= MANIFEST_MAX_SLOTS) { pass(-1i64); }
+    int64:slot = g_pm_count;
+    g_pm_count = g_pm_count + 1i64;
+    pass(slot);
+};
+
+// ── Getters ───────────────────────────────────────────────────────────────────
+
+pub func:manifest_count           = int64()              { pass(g_pm_count); };
+pub func:manifest_get_name        = string(int64:slot)   { pass(g_pm_name[slot]); };
+pub func:manifest_get_version     = string(int64:slot)   { pass(g_pm_version[slot]); };
+pub func:manifest_get_api_version = string(int64:slot)   { pass(g_pm_api_version[slot]); };
+pub func:manifest_get_entry       = string(int64:slot)   { pass(g_pm_entry_module[slot]); };
+pub func:manifest_get_author      = string(int64:slot)   { pass(g_pm_author[slot]); };
+pub func:manifest_get_description = string(int64:slot)   { pass(g_pm_description[slot]); };
+pub func:manifest_get_dir         = string(int64:slot)   { pass(g_pm_dir[slot]); };
+pub func:manifest_is_valid        = int64(int64:slot)    { pass(g_pm_valid[slot]); };
+pub func:manifest_get_dep_count   = int64(int64:slot)    { pass(g_pm_dep_count[slot]); };
+
+pub func:manifest_get_dep_name = string(int64:slot, int64:dep_idx) {
+    pass(_pipe_token(g_pm_dep_names[slot], dep_idx));
+};
+
+pub func:manifest_get_dep_version = string(int64:slot, int64:dep_idx) {
+    pass(_pipe_token(g_pm_dep_versions[slot], dep_idx));
+};
+
+// Find manifest slot by plugin name. Returns -1 if not found.
+pub func:manifest_find_by_name = int64(string:name) {
+    int64:i = 0i64;
+    while (i < g_pm_count) {
+        if (g_pm_name[i] == name) { pass(i); }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};

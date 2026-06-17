@@ -1,0 +1,5 @@
+# This manifest is intentionally invalid — missing required 'name' field.
+# Used by test_manifest T06 to verify validation error counting.
+version: "0.1.0"
+api_version: "0.10"
+entry_module: "main.npk"

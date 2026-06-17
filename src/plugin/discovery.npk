@@ -1,0 +1,148 @@
+// src/plugin/discovery.npk — Plugin directory scanner
+//
+// v0.10.0: Plugin Architecture — scan search dirs for plugin.yaml manifests.
+//
+// Scans 3 default directories (in priority order):
+//   1. ~/.config/nitty/plugins/  — user plugins (highest priority)
+//   2. /usr/share/nitty/plugins/ — system plugins
+//   3. ./plugins/                — development plugins (CWD-relative)
+//
+// Each subdirectory of a search dir that contains a plugin.yaml is treated
+// as a plugin. The manifest is parsed and validated; invalid manifests are
+// silently skipped with a warning logged to stdout.
+//
+// User-dir plugins take precedence over system-dir plugins with the same name.
+
+use "./manifest.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
+
+// fd 1 = stdout
+int64:DISC_STDOUT = 1i64;
+
+func:_disc_log = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, DISC_STDOUT, msg, len));
+    pass(NIL);
+};
+
+// ── Default search paths ──────────────────────────────────────────────────────
+
+pub fixed string:PLUGIN_SYSTEM_DIR = "/usr/share/nitty/plugins";
+pub fixed string:PLUGIN_DEV_DIR    = "./plugins";
+
+func:_user_plugin_dir = string() {
+    string:h = raw home();
+    pass(string_concat(h, "/.config/nitty/plugins"));
+};
+
+// ── Scan one directory ────────────────────────────────────────────────────────
+
+// Scan a single search directory. Parse each subdirectory that contains
+// plugin.yaml. Returns count of valid plugins added to manifest table.
+// Skips entries already registered (duplicate name — first registration wins).
+pub func:discovery_scan = int64(string:search_dir) {
+    int64:found = 0i64;
+
+    // Does the search dir even exist?
+    int32:dir_ok = raw fs_is_dir(search_dir);
+    if (dir_ok == 0i32) { pass(0i64); }
+
+    // List entries (newline-separated filenames)
+    string:entries = raw fs_list_dir(search_dir);
+    int64:elen = string_length(entries);
+    if (elen == 0i64) { pass(0i64); }
+
+    // Walk each newline-separated entry
+    int64:pos   = 0i64;
+    string:entry = "";
+    while (pos <= elen) {
+        // Read one character (or signal end)
+        string:ch = "";
+        int64:at_end = is (pos == elen) : 1i64 : 0i64;
+        if (at_end == 0i64) {
+            ch = string_substring(entries, pos, pos + 1i64);
+        }
+        int64:is_sep = is (ch == "\n" || at_end == 1i64) : 1i64 : 0i64;
+
+        if (is_sep == 1i64) {
+            // Process accumulated entry name
+            if (string_length(entry) > 0i64) {
+                // Build full path to potential plugin dir
+                string:plugin_dir  = string_concat(search_dir, string_concat("/", entry));
+                string:manifest_path = string_concat(plugin_dir, "/plugin.yaml");
+
+                int32:is_d = raw fs_is_dir(plugin_dir);
+                int32:has_m = raw fs_exists(manifest_path);
+
+                if (is_d == 1i32) {
+                    if (has_m == 1i32) {
+                        // Allocate a manifest slot
+                        int64:slot = raw manifest_alloc_slot();
+                        if (slot >= 0i64) {
+                            int64:parse_ok = raw manifest_parse(slot, manifest_path);
+                            if (parse_ok == 0i64) {
+                                // Set dir explicitly (parse derives it from path)
+                                drop(manifest_set_dir(slot, plugin_dir));
+                                int64:val_err = raw manifest_validate(slot);
+                                if (val_err == 0i64) {
+                                    // Check for duplicate name
+                                    string:pname = raw manifest_get_name(slot);
+                                    int64:existing = raw manifest_find_by_name(pname);
+                                    // existing == slot means this is the slot we just wrote
+                                    // existing < slot means a prior scan already has this name
+                                    if (existing < slot) {
+                                        // Duplicate — clear this slot's name to mark as skip
+                                        // We can't shrink the slot count, so mark invalid
+                                        // by leaving valid=0 (manifest_validate left it 0 would
+                                        // be wrong; just revert count)
+                                        // Simplest: find_by_name returned an earlier slot
+                                        // so this slot is redundant — unset its name
+                                        drop(manifest_set_dir(slot, ""));
+                                        // The slot is wasted but bounded at 64 total
+                                    }
+                                    if (existing == slot) {
+                                        found = found + 1i64;
+                                    }
+                                }
+                                if (val_err > 0i64) {
+                                    drop(_disc_log(string_concat("[plugin] invalid manifest: ",
+                                        string_concat(manifest_path, "\n"))));
+                                }
+                            }
+                            if (parse_ok < 0i64) {
+                                drop(_disc_log(string_concat("[plugin] parse error: ",
+                                    string_concat(manifest_path, "\n"))));
+                            }
+                        }
+                    }
+                }
+            }
+            entry = "";
+        }
+        if (is_sep == 0i64) {
+            entry = string_concat(entry, ch);
+        }
+        pos = pos + 1i64;
+    }
+
+    pass(found);
+};
+
+// ── Scan all default directories ──────────────────────────────────────────────
+
+// Scan all 3 default directories in priority order (user > system > dev).
+// Returns total count of valid unique plugins discovered.
+pub func:discovery_scan_all = int64() {
+    int64:total = 0i64;
+    string:user_dir = raw _user_plugin_dir();
+    total = total + raw discovery_scan(user_dir);
+    total = total + raw discovery_scan(PLUGIN_SYSTEM_DIR);
+    total = total + raw discovery_scan(PLUGIN_DEV_DIR);
+    pass(total);
+};
+
+// Find manifest slot by plugin name. Delegates to manifest_find_by_name.
+pub func:discovery_get_slot_for_name = int64(string:name) {
+    pass(raw manifest_find_by_name(name));
+};

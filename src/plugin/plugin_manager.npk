@@ -1,0 +1,175 @@
+// src/plugin/plugin_manager.npk — Plugin lifecycle orchestrator
+//
+// v0.10.0: Plugin Architecture — coordinates discovery, validation,
+// dependency resolution, loading, and initialization of all plugins.
+//
+// Call plugin_manager_init() from app_init() after config_load().
+// Call plugin_manager_shutdown() from app_shutdown() before session teardown.
+//
+// Startup sequence:
+//   1. plugin_registry_init()  — prepare registry arrays
+//   2. manifest_init()         — prepare manifest arrays
+//   3. discovery_scan_all()    — find plugin.yaml files on disk
+//   4. dep_check_api_compat()  — skip API-incompatible plugins
+//   5. dep_resolve_load_order() — topological sort (detect cycles)
+//   6. plugin_load()           — match to registry slots
+//   7. dep_check_dep_versions() — verify version constraints
+//   8. plugin_init_one()       — transition to ACTIVE
+//   9. log summary
+
+use "./manifest.npk".*;
+use "./discovery.npk".*;
+use "./dependency.npk".*;
+use "./plugin_registry.npk".*;
+use "./loader.npk".*;
+
+// fd 1 = stdout
+int64:PM_STDOUT = 1i64;
+
+func:_pm_log = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, PM_STDOUT, msg, len));
+    pass(NIL);
+};
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+pub func:plugin_manager_init = NIL() {
+    // 1. Init subsystems
+    drop(plugin_registry_init());
+    drop(manifest_init());
+
+    // 2. Discover plugins on disk
+    int64:discovered = raw discovery_scan_all();
+
+    int64:total    = raw manifest_count();
+    int64:active   = 0i64;
+    int64:skipped  = 0i64;
+    int64:errored  = 0i64;
+    int64:no_reg   = 0i64;
+
+    // 3. API version compatibility check — skip incompatible plugins
+    int64:si = 0i64;
+    while (si < total) {
+        if (raw manifest_is_valid(si) == 1i64) {
+            int64:compat = raw dep_check_api_compat(si);
+            if (compat == 0i64) {
+                string:pname = raw manifest_get_name(si);
+                string:papi  = raw manifest_get_api_version(si);
+                drop(_pm_log(string_concat("[plugin] API version mismatch, skipping: ",
+                    string_concat(pname, string_concat(" (api_version=",
+                    string_concat(papi, ")\n"))))));
+                // Mark invalid so load order ignores it
+                // We reuse the valid flag as our skip flag
+                // (dep_resolve only considers manifest_count() slots, not valid flag)
+                skipped = skipped + 1i64;
+            }
+        }
+        si = si + 1i64;
+    }
+
+    // 4. Topological sort
+    int64:sort_ok = raw dep_resolve_load_order();
+    if (sort_ok < 0i64) {
+        string:cycle_name = raw dep_get_cycle_name();
+        drop(_pm_log(string_concat("[plugin] circular dependency detected involving: ",
+            string_concat(cycle_name, "\n"))));
+        // Continue with the partial order that was resolved
+    }
+
+    int64:order_count = raw dep_get_order_count();
+
+    // 5-8. Load and init each plugin in dependency order
+    int64:oi = 0i64;
+    while (oi < order_count) {
+        int64:mslot = raw dep_get_load_order(oi);
+        if (mslot >= 0i64) {
+            if (raw manifest_is_valid(mslot) == 1i64) {
+                // Skip API-incompatible (already logged above)
+                int64:compat2 = raw dep_check_api_compat(mslot);
+                if (compat2 == 1i64) {
+                    // Check dep versions
+                    int64:dep_ok = raw dep_check_dep_versions(mslot);
+                    if (dep_ok > 0i64) {
+                        string:pname2 = raw manifest_get_name(mslot);
+                        drop(_pm_log(string_concat("[plugin] unmet dependencies, skipping: ",
+                            string_concat(pname2, "\n"))));
+                        drop(plugin_mark_error(mslot, "unmet dependencies"));
+                        errored = errored + 1i64;
+                    }
+                    if (dep_ok == 0i64) {
+                        // Try to load (match registry)
+                        int64:load_ok = raw plugin_load(mslot);
+                        if (load_ok < 0i64) {
+                            no_reg = no_reg + 1i64;
+                        }
+                        if (load_ok == 0i64) {
+                            // Init
+                            int64:init_ok = raw plugin_init_one(mslot);
+                            if (init_ok == 0i64) {
+                                active = active + 1i64;
+                            }
+                            if (init_ok < 0i64) {
+                                errored = errored + 1i64;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        oi = oi + 1i64;
+    }
+
+    // 9. Summary
+    drop(_pm_log(string_concat("[plugin] system ready: ",
+        string_concat(string_from_int(active), " active, "))));
+    drop(_pm_log(string_concat(string_from_int(errored), " error(s), ")));
+    drop(_pm_log(string_concat(string_from_int(no_reg), " not compiled in\n")));
+
+    pass(NIL);
+};
+
+// ── Shutdown ──────────────────────────────────────────────────────────────────
+
+pub func:plugin_manager_shutdown = NIL() {
+    drop(plugin_destroy_all_reverse());
+    drop(_pm_log("[plugin] system shutdown\n"));
+    pass(NIL);
+};
+
+// ── Query API ─────────────────────────────────────────────────────────────────
+
+// Total number of discovered manifests.
+pub func:plugin_manager_plugin_count = int64() {
+    pass(raw manifest_count());
+};
+
+// Number of plugins currently in ACTIVE or INITIALIZED state.
+pub func:plugin_manager_active_count = int64() {
+    int64:count = raw plugin_registry_count();
+    int64:active = 0i64;
+    int64:i = 0i64;
+    while (i < count) {
+        int64:st = raw plugin_get_state(i);
+        if (st == PLUGIN_STATE_ACTIVE)      { active = active + 1i64; }
+        if (st == PLUGIN_STATE_INITIALIZED) { active = active + 1i64; }
+        i = i + 1i64;
+    }
+    pass(active);
+};
+
+// Get state of a plugin by name.
+pub func:plugin_manager_get_state = int64(string:name) {
+    int64:reg_slot = raw plugin_registry_find(name);
+    if (reg_slot < 0i64) { pass(PLUGIN_STATE_UNLOADED); }
+    pass(raw plugin_get_state(reg_slot));
+};
+
+// Disable a plugin by name (without destroying it).
+pub func:plugin_manager_disable = NIL(string:name) {
+    int64:reg_slot = raw plugin_registry_find(name);
+    if (reg_slot >= 0i64) {
+        drop(plugin_set_state(reg_slot, PLUGIN_STATE_DISABLED));
+    }
+    pass(NIL);
+};

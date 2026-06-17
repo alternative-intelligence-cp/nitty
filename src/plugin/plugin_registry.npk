@@ -1,0 +1,139 @@
+// src/plugin/plugin_registry.npk — Static plugin registration table
+//
+// v0.10.0: Plugin Architecture — flat-array registry of known plugins.
+//
+// Plugins that are compiled into Nitty call plugin_register(name) at startup
+// to claim a registry slot. The loader then matches manifest entries to
+// registry slots by name to wire up lifecycle calls.
+//
+// Registry slot lifecycle:
+//   UNLOADED → LOADED → ACTIVE
+//                     ↘ ERROR → DISABLED (after 3 errors)
+//
+// All arrays are bounded at 64 slots (same as manifest slots).
+
+// ── Plugin state constants ────────────────────────────────────────────────────
+
+pub fixed int64:PLUGIN_STATE_UNLOADED    = 0i64;
+pub fixed int64:PLUGIN_STATE_LOADED      = 1i64;
+pub fixed int64:PLUGIN_STATE_INITIALIZED = 2i64;
+pub fixed int64:PLUGIN_STATE_ACTIVE      = 3i64;
+pub fixed int64:PLUGIN_STATE_ERROR       = 4i64;
+pub fixed int64:PLUGIN_STATE_DISABLED    = 5i64;
+
+pub fixed int64:PLUGIN_MAX_SLOTS       = 64i64;
+pub fixed int64:PLUGIN_MAX_ERROR_COUNT = 3i64;
+
+// ── Registry state ────────────────────────────────────────────────────────────
+
+string[64]:g_reg_name;
+int64[64]:g_reg_state;
+string[64]:g_reg_error_msg;
+int64[64]:g_reg_error_count;
+int64:g_reg_count       = 0i64;
+int64:g_reg_initialized = 0i64;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+pub func:plugin_registry_init = NIL() {
+    if (g_reg_initialized == 1i64) { pass(NIL); }
+    int64:i = 0i64;
+    while (i < PLUGIN_MAX_SLOTS) {
+        g_reg_name[i]        = "";
+        g_reg_state[i]       = PLUGIN_STATE_UNLOADED;
+        g_reg_error_msg[i]   = "";
+        g_reg_error_count[i] = 0i64;
+        i = i + 1i64;
+    }
+    g_reg_count       = 0i64;
+    g_reg_initialized = 1i64;
+    pass(NIL);
+};
+
+// ── Registration ──────────────────────────────────────────────────────────────
+
+// Reserve a registry slot for a plugin. Returns slot index, or -1 if full.
+// Called by each plugin's module-level initialization code.
+pub func:plugin_register = int64(string:name) {
+    // Check for duplicate registration
+    int64:existing = raw plugin_registry_find(name);
+    if (existing >= 0i64) { pass(existing); }
+
+    if (g_reg_count >= PLUGIN_MAX_SLOTS) { pass(-1i64); }
+    int64:slot      = g_reg_count;
+    g_reg_name[slot]  = name;
+    g_reg_state[slot] = PLUGIN_STATE_UNLOADED;
+    g_reg_count       = g_reg_count + 1i64;
+    pass(slot);
+};
+
+// ── Lookup ────────────────────────────────────────────────────────────────────
+
+// Find registry slot by plugin name. Returns -1 if not found.
+pub func:plugin_registry_find = int64(string:name) {
+    int64:i = 0i64;
+    while (i < g_reg_count) {
+        if (g_reg_name[i] == name) { pass(i); }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+// ── State management ──────────────────────────────────────────────────────────
+
+pub func:plugin_set_state = NIL(int64:slot, int64:state) {
+    if (slot >= 0i64) {
+        if (slot < PLUGIN_MAX_SLOTS) {
+            g_reg_state[slot] = state;
+        }
+    }
+    pass(NIL);
+};
+
+pub func:plugin_get_state = int64(int64:slot) {
+    if (slot < 0i64)              { pass(PLUGIN_STATE_UNLOADED); }
+    if (slot >= PLUGIN_MAX_SLOTS) { pass(PLUGIN_STATE_UNLOADED); }
+    pass(g_reg_state[slot]);
+};
+
+pub func:plugin_set_error = NIL(int64:slot, string:msg) {
+    if (slot >= 0i64) {
+        if (slot < PLUGIN_MAX_SLOTS) {
+            g_reg_error_msg[slot] = msg;
+            g_reg_state[slot]     = PLUGIN_STATE_ERROR;
+        }
+    }
+    pass(NIL);
+};
+
+pub func:plugin_get_error = string(int64:slot) {
+    if (slot < 0i64)              { pass(""); }
+    if (slot >= PLUGIN_MAX_SLOTS) { pass(""); }
+    pass(g_reg_error_msg[slot]);
+};
+
+// Increment error count and return the new count.
+// Caller should disable the plugin if count >= PLUGIN_MAX_ERROR_COUNT.
+pub func:plugin_incr_error_count = int64(int64:slot) {
+    if (slot < 0i64)              { pass(0i64); }
+    if (slot >= PLUGIN_MAX_SLOTS) { pass(0i64); }
+    g_reg_error_count[slot] = g_reg_error_count[slot] + 1i64;
+    int64:count = g_reg_error_count[slot];
+    if (count >= PLUGIN_MAX_ERROR_COUNT) {
+        g_reg_state[slot] = PLUGIN_STATE_DISABLED;
+    }
+    pass(count);
+};
+
+pub func:plugin_get_error_count = int64(int64:slot) {
+    if (slot < 0i64)              { pass(0i64); }
+    if (slot >= PLUGIN_MAX_SLOTS) { pass(0i64); }
+    pass(g_reg_error_count[slot]);
+};
+
+pub func:plugin_registry_count = int64() { pass(g_reg_count); };
+pub func:plugin_registry_name  = string(int64:slot) {
+    if (slot < 0i64)              { pass(""); }
+    if (slot >= PLUGIN_MAX_SLOTS) { pass(""); }
+    pass(g_reg_name[slot]);
+};

@@ -1,0 +1,112 @@
+// src/plugin/loader.npk — Plugin module loader
+//
+// v0.10.0: Plugin Architecture — bridges manifest slots to registry slots
+// and drives plugin init/destroy lifecycle calls.
+//
+// In v0.10.0, plugin_init and plugin_destroy take no arguments.
+// The PluginAPI handle for registering providers is defined in v0.10.1.
+//
+// Lifecycle:
+//   plugin_load(manifest_slot)      → finds registry slot, sets LOADED
+//   plugin_init_one(manifest_slot)  → calls plugin's init fn, sets ACTIVE/ERROR
+//   plugin_destroy_one(slot)        → calls plugin's destroy fn, sets UNLOADED
+//   plugin_destroy_all_reverse()    → destroys all in reverse dep order
+
+use "./manifest.npk".*;
+use "./plugin_registry.npk".*;
+use "./dependency.npk".*;
+
+// fd 1 = stdout
+int64:LDR_STDOUT = 1i64;
+
+func:_ldr_log = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, LDR_STDOUT, msg, len));
+    pass(NIL);
+};
+
+// ── Load ──────────────────────────────────────────────────────────────────────
+
+// Associate a manifest slot with a registry slot (by name match).
+// Sets registry state to LOADED.
+// Returns 0 on success, -1 if plugin is not registered (not compiled in).
+pub func:plugin_load = int64(int64:manifest_slot) {
+    string:name     = raw manifest_get_name(manifest_slot);
+    int64:reg_slot  = raw plugin_registry_find(name);
+    if (reg_slot < 0i64) {
+        drop(_ldr_log(string_concat("[plugin] not compiled in: ",
+            string_concat(name, "\n"))));
+        pass(-1i64);
+    }
+    drop(plugin_set_state(reg_slot, PLUGIN_STATE_LOADED));
+    pass(0i64);
+};
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+// Initialise a single plugin. In v0.10.0, plugins have no init arguments.
+// The plugin's module-level code (called at binary startup) is the init.
+// Here we simply transition state: LOADED → ACTIVE (or ERROR on failure).
+//
+// Since Nitpick has no try/catch and there is no dlopen, "calling plugin_init"
+// means: the plugin's Nitpick module was already run at startup (module-level
+// globals). We check if the plugin is properly registered (it called
+// plugin_register() at module init) and mark it ACTIVE.
+//
+// Returns 0 on success, -1 if plugin is not in registry or already errored.
+pub func:plugin_init_one = int64(int64:manifest_slot) {
+    string:name    = raw manifest_get_name(manifest_slot);
+    int64:reg_slot = raw plugin_registry_find(name);
+    if (reg_slot < 0i64) { pass(-1i64); }
+
+    int64:state = raw plugin_get_state(reg_slot);
+    if (state == PLUGIN_STATE_DISABLED) { pass(-1i64); }
+    if (state == PLUGIN_STATE_ERROR)    { pass(-1i64); }
+
+    // Transition to ACTIVE — plugin successfully initialized
+    drop(plugin_set_state(reg_slot, PLUGIN_STATE_ACTIVE));
+    drop(_ldr_log(string_concat("[plugin] active: ", string_concat(name, "\n"))));
+    pass(0i64);
+};
+
+// Mark a plugin as having encountered an init error.
+// Increments error count and may auto-disable if threshold reached.
+pub func:plugin_mark_error = NIL(int64:manifest_slot, string:msg) {
+    string:name    = raw manifest_get_name(manifest_slot);
+    int64:reg_slot = raw plugin_registry_find(name);
+    if (reg_slot < 0i64) { pass(NIL); }
+
+    drop(plugin_set_error(reg_slot, msg));
+    int64:count = raw plugin_incr_error_count(reg_slot);
+    if (count >= PLUGIN_MAX_ERROR_COUNT) {
+        drop(_ldr_log(string_concat("[plugin] auto-disabled after errors: ",
+            string_concat(name, "\n"))));
+    }
+    pass(NIL);
+};
+
+// ── Destroy ───────────────────────────────────────────────────────────────────
+
+// Mark a plugin as unloaded (cleanup). In v0.10.0, no teardown fn to call.
+pub func:plugin_destroy_one = NIL(int64:manifest_slot) {
+    string:name    = raw manifest_get_name(manifest_slot);
+    int64:reg_slot = raw plugin_registry_find(name);
+    if (reg_slot >= 0i64) {
+        drop(plugin_set_state(reg_slot, PLUGIN_STATE_UNLOADED));
+    }
+    pass(NIL);
+};
+
+// Destroy all plugins in reverse dependency order.
+pub func:plugin_destroy_all_reverse = NIL() {
+    int64:count = raw dep_get_order_count();
+    int64:i     = count - 1i64;
+    while (i >= 0i64) {
+        int64:slot = raw dep_get_load_order(i);
+        if (slot >= 0i64) {
+            drop(plugin_destroy_one(slot));
+        }
+        i = i - 1i64;
+    }
+    pass(NIL);
+};

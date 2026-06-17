@@ -1,0 +1,214 @@
+// src/plugin/dependency.npk — Plugin dependency resolution
+//
+// v0.10.0: Plugin Architecture — topological sort and version checking.
+//
+// Provides:
+//   - API version compatibility checking (major.minor matching)
+//   - Dependency version satisfaction (semver constraint checking)
+//   - Topological sort of manifests by dependency graph (Kahn's algorithm)
+//
+// Kahn's algorithm overview:
+//   1. Build adjacency: for each manifest, record which slots it depends on
+//   2. Build in-degree: count how many unresolved deps each slot has
+//   3. Enqueue all slots with in-degree 0 (no deps)
+//   4. While queue not empty: dequeue slot, add to output, decrement
+//      in-degree of slots that depend on it; enqueue newly-zero slots
+//   5. If output count < manifest count → cycle detected
+
+use "./manifest.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/src/nitpick_semver.npk".*;
+
+// ── Nitty API version ─────────────────────────────────────────────────────────
+
+pub fixed string:NITTY_API_VERSION = "0.10.0";
+
+// ── Internal sort state ───────────────────────────────────────────────────────
+
+int64[64]:g_dep_indegree;
+int64[64]:g_dep_queue;
+int64:g_dep_queue_head = 0i64;
+int64:g_dep_queue_tail = 0i64;
+
+int64[64]:g_dep_order;       // output: sorted slot indices
+int64:g_dep_order_count = 0i64;
+
+string:g_dep_cycle_name = "";  // set on cycle detection
+
+// ── API version compatibility ─────────────────────────────────────────────────
+
+// Returns 1 if plugin's api_version is compatible with NITTY_API_VERSION.
+// Compatibility rule: major must match exactly, minor must be <= current minor.
+// api_version in manifests may be "0.10" (no patch) — semver_parse handles this.
+pub func:dep_check_api_compat = int64(int64:slot) {
+    string:plugin_api = raw manifest_get_api_version(slot);
+    if (string_length(plugin_api) == 0i64) { pass(0i64); }
+
+    // Parse plugin api version (nitpick_semver_parse handles "major.minor" without patch)
+    int32:p_ok = nitpick_semver_parse(plugin_api);
+    if (p_ok == 0i32) { pass(0i64); }
+    int32:plugin_major = nitpick_semver_get_major();
+    int32:plugin_minor = nitpick_semver_get_minor();
+
+    // Parse Nitty API version
+    int32:n_ok = nitpick_semver_parse(NITTY_API_VERSION);
+    if (n_ok == 0i32) { pass(0i64); }
+    int32:nitty_major = nitpick_semver_get_major();
+    int32:nitty_minor = nitpick_semver_get_minor();
+
+    // Major must match exactly
+    if (plugin_major != nitty_major) { pass(0i64); }
+
+    // Plugin minor must be <= Nitty's minor (we can run older-API plugins)
+    if (plugin_minor > nitty_minor) { pass(0i64); }
+
+    pass(1i64);
+};
+
+
+// ── Dependency version checking ───────────────────────────────────────────────
+
+// Check that all dependencies of manifest[slot] are satisfied by loaded manifests.
+// Returns 0 if all satisfied, positive count of unsatisfied dependencies.
+pub func:dep_check_dep_versions = int64(int64:slot) {
+    int64:dep_count   = raw manifest_get_dep_count(slot);
+    int64:unsatisfied = 0i64;
+    int64:di          = 0i64;
+    while (di < dep_count) {
+        string:dep_name       = raw manifest_get_dep_name(slot, di);
+        string:dep_constraint = raw manifest_get_dep_version(slot, di);
+
+        // Find the dependency in loaded manifests
+        int64:dep_slot = raw manifest_find_by_name(dep_name);
+        if (dep_slot < 0i64) {
+            // Dependency not found at all
+            unsatisfied = unsatisfied + 1i64;
+        }
+        if (dep_slot >= 0i64) {
+            string:dep_version = raw manifest_get_version(dep_slot);
+            // Use semver satisfies to check constraint
+            int32:sat = nitpick_semver_satisfies(dep_version, dep_constraint);
+            if (sat == 0i32) {
+                unsatisfied = unsatisfied + 1i64;
+            }
+        }
+        di = di + 1i64;
+    }
+    pass(unsatisfied);
+};
+
+// ── Topological sort (Kahn's algorithm) ──────────────────────────────────────
+
+// Resolve load order of all valid manifests by topological sort.
+// Writes sorted slot indices into g_dep_order[].
+// Returns 0 on success, -1 if a circular dependency is detected.
+// On cycle, g_dep_cycle_name is set to the name of a plugin in the cycle.
+pub func:dep_resolve_load_order = int64() {
+    int64:n = raw manifest_count();
+    g_dep_order_count = 0i64;
+    g_dep_cycle_name  = "";
+
+    // Initialise in-degree array
+    int64:i = 0i64;
+    while (i < n) {
+        g_dep_indegree[i] = 0i64;
+        i = i + 1i64;
+    }
+
+    // Compute in-degrees: for each manifest, for each of its deps,
+    // increment the dep's... wait — Kahn works on "A depends on B means
+    // edge A→B, and B must come before A". So B's in-degree from A is +1
+    // for each A that depends on B? No — standard Kahn: in-degree of a node
+    // = number of nodes that must come BEFORE it = number of its deps that
+    // are in the graph. We model "A depends on B" as edge B→A in the
+    // dependency graph (B must be processed before A). In-degree of A =
+    // count of its dependencies that exist.
+    i = 0i64;
+    while (i < n) {
+        int64:dc = raw manifest_get_dep_count(i);
+        int64:di = 0i64;
+        while (di < dc) {
+            string:dep_name = raw manifest_get_dep_name(i, di);
+            int64:dep_slot  = raw manifest_find_by_name(dep_name);
+            if (dep_slot >= 0i64) {
+                // A depends on dep_slot → A's in-degree +1
+                g_dep_indegree[i] = g_dep_indegree[i] + 1i64;
+            }
+            di = di + 1i64;
+        }
+        i = i + 1i64;
+    }
+
+    // Enqueue all slots with in-degree 0
+    g_dep_queue_head = 0i64;
+    g_dep_queue_tail = 0i64;
+    i = 0i64;
+    while (i < n) {
+        if (g_dep_indegree[i] == 0i64) {
+            g_dep_queue[g_dep_queue_tail] = i;
+            g_dep_queue_tail = g_dep_queue_tail + 1i64;
+        }
+        i = i + 1i64;
+    }
+
+    // Process queue
+    while (g_dep_queue_head < g_dep_queue_tail) {
+        int64:cur = g_dep_queue[g_dep_queue_head];
+        g_dep_queue_head = g_dep_queue_head + 1i64;
+
+        // Add cur to output
+        g_dep_order[g_dep_order_count] = cur;
+        g_dep_order_count              = g_dep_order_count + 1i64;
+
+        // For every other manifest that depends on cur, decrement their in-degree
+        int64:j = 0i64;
+        while (j < n) {
+            if (j != cur) {
+                int64:jdc = raw manifest_get_dep_count(j);
+                int64:jdi = 0i64;
+                while (jdi < jdc) {
+                    string:jdep_name = raw manifest_get_dep_name(j, jdi);
+                    int64:jdep_slot  = raw manifest_find_by_name(jdep_name);
+                    if (jdep_slot == cur) {
+                        g_dep_indegree[j] = g_dep_indegree[j] - 1i64;
+                        if (g_dep_indegree[j] == 0i64) {
+                            g_dep_queue[g_dep_queue_tail] = j;
+                            g_dep_queue_tail              = g_dep_queue_tail + 1i64;
+                        }
+                    }
+                    jdi = jdi + 1i64;
+                }
+            }
+            j = j + 1i64;
+        }
+    }
+
+    // If output count < n → cycle detected
+    if (g_dep_order_count < n) {
+        // Find a node still with in-degree > 0 to name the cycle
+        int64:k = 0i64;
+        while (k < n) {
+            if (g_dep_indegree[k] > 0i64) {
+                g_dep_cycle_name = raw manifest_get_name(k);
+                k = n; // break
+            }
+            k = k + 1i64;
+        }
+        pass(-1i64);
+    }
+
+    pass(0i64);
+};
+
+// ── Order accessors ───────────────────────────────────────────────────────────
+
+// Return the manifest slot at position pos in the resolved load order.
+pub func:dep_get_load_order = int64(int64:pos) {
+    if (pos < 0i64)                   { pass(-1i64); }
+    if (pos >= g_dep_order_count)      { pass(-1i64); }
+    pass(g_dep_order[pos]);
+};
+
+pub func:dep_get_order_count = int64() { pass(g_dep_order_count); };
+
+// Returns the plugin name involved in the detected cycle (empty if none).
+pub func:dep_get_cycle_name = string() { pass(g_dep_cycle_name); };

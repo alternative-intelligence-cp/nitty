@@ -1,0 +1,9 @@
+name: hello-plugin
+version: "1.0.0"
+api_version: "0.10"
+author: "Test Author"
+entry_module: "main.npk"
+description: "A valid test plugin for fixture T01"
+deps_count: 2
+deps_names: "dep-alpha|dep-beta"
+deps_versions: ">=0.5.0|^2.0.0"

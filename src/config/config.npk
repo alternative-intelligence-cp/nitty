@@ -476,6 +476,8 @@ pub func:config_load = NIL() {
             ki = ki + 1i32;
         }
         drop(hk_detect_conflicts());
+        drop(_config_load_plugins());  // v0.10.0: plugins.* section
+
     }
     if (parsed < 0i32) {
         drop(profiles_init());       // parse failed: seed built-in default
@@ -627,3 +629,112 @@ pub func:cfg_process_min_duration             = int64()  { pass(g_cfg_process_mi
 // v0.8.7: Zmodem config getters
 pub func:cfg_zmodem_auto_detect   = int64()  { pass(g_cfg_zmodem_auto_detect); };
 pub func:cfg_zmodem_download_dir  = string() { pass(g_cfg_zmodem_download_dir); };
+
+// v0.10.0: Plugin configuration
+// Plugins enabled/disabled lists stored as indexed TOML keys:
+//   plugins.enabled.0 = "my-plugin"
+//   plugins.enabled.1 = "other-plugin"
+//   plugins.disabled.0 = "broken-plugin"
+//   plugins.search_dirs.0 = "~/my-plugins"
+// Max 16 enabled, 16 disabled, 4 extra search dirs.
+// Absent keys = all plugins enabled (default).
+
+string[16]:g_cfg_plugins_enabled;
+int64:g_cfg_plugins_enabled_count  = 0i64;
+string[16]:g_cfg_plugins_disabled;
+int64:g_cfg_plugins_disabled_count = 0i64;
+string[4]:g_cfg_plugins_search_dirs;
+int64:g_cfg_plugins_search_dirs_count = 0i64;
+
+// Load plugins config section — called internally by config_load()
+// Must be called after Toml.parse_file() in the main config load.
+pub func:_config_load_plugins = NIL() {
+    g_cfg_plugins_enabled_count      = 0i64;
+    g_cfg_plugins_disabled_count     = 0i64;
+    g_cfg_plugins_search_dirs_count  = 0i64;
+
+    // Read up to 16 enabled entries
+    int64:ei = 0i64;
+    while (ei < 16i64) {
+        string:ek  = string_concat("plugins.enabled.", string_from_int(ei));
+        int32:hek  = raw Toml.has_key(ek);
+        if (hek == 1i32) {
+            g_cfg_plugins_enabled[ei]   = raw Toml.get_string(ek);
+            g_cfg_plugins_enabled_count = g_cfg_plugins_enabled_count + 1i64;
+            ei = ei + 1i64;
+        }
+        if (hek == 0i32) { ei = 16i64; }  // break
+    }
+
+    // Read up to 16 disabled entries
+    int64:di = 0i64;
+    while (di < 16i64) {
+        string:dk  = string_concat("plugins.disabled.", string_from_int(di));
+        int32:hdk  = raw Toml.has_key(dk);
+        if (hdk == 1i32) {
+            g_cfg_plugins_disabled[di]   = raw Toml.get_string(dk);
+            g_cfg_plugins_disabled_count = g_cfg_plugins_disabled_count + 1i64;
+            di = di + 1i64;
+        }
+        if (hdk == 0i32) { di = 16i64; }  // break
+    }
+
+    // Read up to 4 extra search dirs
+    int64:si = 0i64;
+    while (si < 4i64) {
+        string:sk  = string_concat("plugins.search_dirs.", string_from_int(si));
+        int32:hsk  = raw Toml.has_key(sk);
+        if (hsk == 1i32) {
+            g_cfg_plugins_search_dirs[si]   = raw Toml.get_string(sk);
+            g_cfg_plugins_search_dirs_count = g_cfg_plugins_search_dirs_count + 1i64;
+            si = si + 1i64;
+        }
+        if (hsk == 0i32) { si = 4i64; }  // break
+    }
+
+    pass(NIL);
+};
+
+pub func:cfg_plugins_enabled_count  = int64() { pass(g_cfg_plugins_enabled_count); };
+pub func:cfg_plugins_disabled_count = int64() { pass(g_cfg_plugins_disabled_count); };
+pub func:cfg_plugins_search_dirs_count = int64() { pass(g_cfg_plugins_search_dirs_count); };
+
+pub func:cfg_plugins_enabled_at = string(int64:i) {
+    if (i < 0i64)                       { pass(""); }
+    if (i >= g_cfg_plugins_enabled_count) { pass(""); }
+    pass(g_cfg_plugins_enabled[i]);
+};
+
+pub func:cfg_plugins_disabled_at = string(int64:i) {
+    if (i < 0i64)                        { pass(""); }
+    if (i >= g_cfg_plugins_disabled_count) { pass(""); }
+    pass(g_cfg_plugins_disabled[i]);
+};
+
+pub func:cfg_plugins_search_dir_at = string(int64:i) {
+    if (i < 0i64)                             { pass(""); }
+    if (i >= g_cfg_plugins_search_dirs_count) { pass(""); }
+    pass(g_cfg_plugins_search_dirs[i]);
+};
+
+// Returns 1 if plugin is enabled (not in disabled list, or no filter set).
+// If enabled list is empty → all plugins enabled.
+// If enabled list is non-empty → only listed plugins enabled.
+// Disabled list always takes precedence.
+pub func:cfg_plugins_is_enabled = int64(string:name) {
+    // Check disabled list first
+    int64:dci = 0i64;
+    while (dci < g_cfg_plugins_disabled_count) {
+        if (g_cfg_plugins_disabled[dci] == name) { pass(0i64); }
+        dci = dci + 1i64;
+    }
+    // No enabled filter → all enabled
+    if (g_cfg_plugins_enabled_count == 0i64) { pass(1i64); }
+    // Check enabled list
+    int64:eci = 0i64;
+    while (eci < g_cfg_plugins_enabled_count) {
+        if (g_cfg_plugins_enabled[eci] == name) { pass(1i64); }
+        eci = eci + 1i64;
+    }
+    pass(0i64);
+};

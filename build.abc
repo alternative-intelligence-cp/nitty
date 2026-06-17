@@ -54,8 +54,8 @@ type = "binary"
 sources = ["src/main.npk"]
 deps = ["gtk4_shim", "pty_shim", "serial_shim", "telnet_shim"]
 flags = ["-O2"]
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib"]
 
 # ── Test suite ────────────────────────────────────────────────────────────────
 
@@ -712,3 +712,23 @@ deps = ["serial_shim"]
 flags = []
 link_libraries = ["nitty_serial_shim", "nitpick_fs_shim", "nitpick_env_shim"]
 link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+
+# v0.10.0: Plugin manifest parser, discovery, and dependency resolution tests
+[target.test_manifest]
+type = "binary"
+sources = ["tests/plugin/test_manifest.npk"]
+deps = []
+flags = []
+link_libraries = ["nitpick_yaml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_semver"]
+link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib"]
+
+# v0.10.0: Plugin registry, loader, and manager lifecycle tests
+[target.test_loader]
+type = "binary"
+sources = ["tests/plugin/test_loader.npk"]
+deps = []
+flags = []
+link_libraries = ["nitpick_yaml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_semver_shim"]
+link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib"]
+
+
