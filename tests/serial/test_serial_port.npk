@@ -152,7 +152,8 @@ func:test_serial_port = NIL() {
         data_bits:    scfg.data_bits,
         stop_bits:    scfg.stop_bits,
         parity:       scfg.parity,
-        flow_control: scfg.flow_control
+        flow_control: scfg.flow_control,
+        newline_mode: scfg.newline_mode
     };
     int64:bad_fd = raw serial_open(bad_cfg);
     drop(assert_eq_i64("T08-serial-open-nonexistent", bad_fd, -1i64));
