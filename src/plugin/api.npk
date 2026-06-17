@@ -1,28 +1,37 @@
 // src/plugin/api.npk — Plugin API core
 //
-// v0.10.1: Extension Point API
+// v0.10.1: Extension Point API — PluginAPI struct, accessor functions
+// v0.10.2: Event bus integration (api_subscribe, api_emit)
+//          Data directory accessors (api_get_data_dir, api_get_cache_dir, stubs)
 //
 // The PluginAPI struct is the single handle passed to every plugin's
 // plugin_init callback. It carries the registry slot of the calling plugin
-// and a reserved context handle for app state access (v0.10.2).
+// and a reserved context handle for app state access.
 //
-// All api_* accessor functions take PluginAPI as their first argument.
+// All api_* functions take PluginAPI as their first argument.
 //
-// Public API:
+// Public API (v0.10.1):
 //   api_make(slot)                          → PluginAPI
 //   api_get_slot(api)                       → int64
-//   api_get_config(api, key)                → string
-//   api_get_active_pane(api)                → int64  (stub: 0)
-//   api_write_to_terminal(api, pane, data)  → NIL    (stub: logs)
-//   api_show_notification(api, title, body) → NIL    (stub: logs)
-//   api_log(api, level, message)            → NIL    (writes to stdout)
+//   api_get_config(api, key)                → string  (stub)
+//   api_get_active_pane(api)                → int64   (stub: 0)
+//   api_write_to_terminal(api, pane, data)  → NIL     (stub: logs)
+//   api_show_notification(api, title, body) → NIL     (stub: logs)
+//   api_log(api, level, message)            → NIL
+//
+// Public API (v0.10.2):
+//   api_subscribe(api, event_type, callback_id) → int64
+//   api_emit(api, event_type, data)             → NIL
+//   api_get_data_dir(api)                        → string (stub: "")
+//   api_get_cache_dir(api)                       → string (stub: "")
 
+use "./event_bus.npk".*;
 
 // ── PluginAPI struct ──────────────────────────────────────────────────────────
 
 pub struct:PluginAPI = {
     int64:slot;     // registry slot of the calling plugin
-    int64:context;  // reserved for app context handle (v0.10.2)
+    int64:context;  // reserved for app context handle
 };
 
 // ── Internal ──────────────────────────────────────────────────────────────────
@@ -53,22 +62,21 @@ pub func:api_get_slot = int64(PluginAPI:api) {
 
 // ── Config accessor (stub) ───────────────────────────────────────────────────
 
-// Read a config value by key. Stub returns ""; real impl delegates to
-// cfg_get_string() from config.npk (wired in v0.10.2 when schema.npk is stable).
+// Read a config value by key. Stub returns ""; real impl when schema.npk is stable.
 pub func:api_get_config = string(PluginAPI:api, string:key) {
     pass("");
 };
 
 // ── Pane accessor (stub) ─────────────────────────────────────────────────────
 
-// Returns the active pane id. Stub returns 0 until GUI integration in v0.10.2.
+// Returns the active pane id. Stub returns 0 until GUI integration.
 pub func:api_get_active_pane = int64(PluginAPI:api) {
     pass(0i64);
 };
 
 // ── Terminal write (stub) ─────────────────────────────────────────────────────
 
-// Write data to a terminal pane. Stub logs intent; real PTY write in v0.10.2.
+// Write data to a terminal pane. Stub logs; real PTY write in future release.
 pub func:api_write_to_terminal = NIL(PluginAPI:api, int64:pane, string:data) {
     string:msg = string_concat("[plugin api] write_to_terminal pane=",
         string_concat(string_from_int(pane),
@@ -79,7 +87,7 @@ pub func:api_write_to_terminal = NIL(PluginAPI:api, int64:pane, string:data) {
 
 // ── Notification (stub) ───────────────────────────────────────────────────────
 
-// Show a desktop notification. Stub logs; real notification in v0.10.2.
+// Show a desktop notification. Stub logs; real notification in future release.
 pub func:api_show_notification = NIL(PluginAPI:api, string:title, string:body) {
     string:msg = string_concat("[plugin api] notification: ",
         string_concat(title, string_concat(": ", string_concat(body, "\n"))));
@@ -99,4 +107,36 @@ pub func:api_log = NIL(PluginAPI:api, string:level, string:message) {
         string_concat("] ", string_concat(message, "\n"))))));
     drop(_api_write(msg));
     pass(NIL);
+};
+
+// ── Event bus (v0.10.2) ───────────────────────────────────────────────────────
+
+// Subscribe to a named event type.
+// callback_id: plugin-assigned integer for dispatch identification.
+// Returns subscription index (>= 0) on success, -1 if full or duplicate.
+pub func:api_subscribe = int64(PluginAPI:api, string:event_type, int64:callback_id) {
+    int64:idx = raw event_bus_subscribe(event_type, api.slot, callback_id);
+    pass(idx);
+};
+
+// Emit an event to all subscribers of event_type.
+// Stub: logs delivery; real dispatch in v0.10.3.
+pub func:api_emit = NIL(PluginAPI:api, string:event_type, string:data) {
+    string:source = string_from_int(api.slot);
+    drop(event_bus_emit_named(source, event_type, data));
+    pass(NIL);
+};
+
+// ── Data directories (v0.10.2 stubs) ─────────────────────────────────────────
+
+// Returns the plugin's persistent data directory.
+// Stub: returns "". Real path (~/.config/nitty/plugins/<name>/data/) in v0.10.3.
+pub func:api_get_data_dir = string(PluginAPI:api) {
+    pass("");
+};
+
+// Returns the plugin's cache directory.
+// Stub: returns "". Real path (~/.cache/nitty/plugins/<name>/) in v0.10.3.
+pub func:api_get_cache_dir = string(PluginAPI:api) {
+    pass("");
 };

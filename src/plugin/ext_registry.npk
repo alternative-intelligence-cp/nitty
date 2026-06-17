@@ -1,0 +1,145 @@
+// src/plugin/ext_registry.npk — Extension point registration tracker
+//
+// v0.10.2: Plugin Lifecycle & Management
+//
+// Tracks every extension point registration made by each plugin so that
+// plugin_manager_disable() can atomically unregister all of them.
+//
+// Each track entry stores: (plugin_slot, ext_type, id_string)
+// where ext_type is one of the EXT_REG_* constants below.
+//
+// On disable, ext_reg_untrack_all(slot) is called; the caller (plugin_manager)
+// then iterates ext_reg_get_type/id to call the right ext_*_unregister fn.
+//
+// Storage: flat parallel arrays, max 256 registration records total.
+//
+// Public API:
+//   ext_reg_init()                          → NIL
+//   ext_reg_track(plugin_slot, type, id)    → NIL
+//   ext_reg_untrack_all(plugin_slot)        → NIL
+//   ext_reg_count_for(plugin_slot)          → int64
+//   ext_reg_get_type_for(plugin_slot, i)    → int64
+//   ext_reg_get_id_for(plugin_slot, i)      → string
+//   ext_reg_total_count()                   → int64
+
+// ── Extension point type codes ────────────────────────────────────────────────
+
+pub fixed int64:EXT_REG_HOTKEY       = 0i64;
+pub fixed int64:EXT_REG_TOOLBAR      = 1i64;
+pub fixed int64:EXT_REG_TAB_HEADER   = 2i64;
+pub fixed int64:EXT_REG_CONTEXT_MENU = 3i64;
+pub fixed int64:EXT_REG_SETTING      = 4i64;
+pub fixed int64:EXT_REG_TERMINAL     = 5i64;
+pub fixed int64:EXT_REG_CONNECTION   = 6i64;
+pub fixed int64:EXT_REG_CONFIG_WATCH = 7i64;
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+pub fixed int64:EXT_REG_MAX = 256i64;
+
+int64[256]:g_er_plugin_slot;
+int64[256]:g_er_type;
+string[256]:g_er_id;
+int64:g_er_count = 0i64;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+pub func:ext_reg_init = NIL() {
+    int64:i = 0i64;
+    while (i < EXT_REG_MAX) {
+        g_er_plugin_slot[i] = -1i64;
+        g_er_type[i]        = -1i64;
+        g_er_id[i]          = "";
+        i = i + 1i64;
+    }
+    g_er_count = 0i64;
+    pass(NIL);
+};
+
+// ── Track ─────────────────────────────────────────────────────────────────────
+
+// Record a new registration. Silently ignores if table is full.
+pub func:ext_reg_track = NIL(int64:plugin_slot, int64:ext_type, string:id) {
+    if (g_er_count >= EXT_REG_MAX) { pass(NIL); }
+    int64:idx             = g_er_count;
+    g_er_plugin_slot[idx] = plugin_slot;
+    g_er_type[idx]        = ext_type;
+    g_er_id[idx]          = id;
+    g_er_count            = g_er_count + 1i64;
+    pass(NIL);
+};
+
+// ── Untrack all for a plugin ──────────────────────────────────────────────────
+
+// Remove all registration records for the given plugin_slot.
+// Uses a compaction pass (shift-down) to keep the table dense.
+// NOTE: callers should call ext_reg_get_type/id BEFORE calling this.
+// This is called AFTER the cleanup loop, so callers iterate first.
+pub func:ext_reg_untrack_all = NIL(int64:plugin_slot) {
+    int64:write = 0i64;
+    int64:read  = 0i64;
+    while (read < g_er_count) {
+        if (g_er_plugin_slot[read] != plugin_slot) {
+            g_er_plugin_slot[write] = g_er_plugin_slot[read];
+            g_er_type[write]        = g_er_type[read];
+            g_er_id[write]          = g_er_id[read];
+            write = write + 1i64;
+        }
+        read = read + 1i64;
+    }
+    // Clear trailing slots
+    int64:i = write;
+    while (i < g_er_count) {
+        g_er_plugin_slot[i] = -1i64;
+        g_er_type[i]        = -1i64;
+        g_er_id[i]          = "";
+        i = i + 1i64;
+    }
+    g_er_count = write;
+    pass(NIL);
+};
+
+// ── Accessors ─────────────────────────────────────────────────────────────────
+
+pub func:ext_reg_total_count = int64() { pass(g_er_count); };
+
+// Count of registrations owned by the given plugin_slot.
+pub func:ext_reg_count_for = int64(int64:plugin_slot) {
+    int64:count = 0i64;
+    int64:i     = 0i64;
+    while (i < g_er_count) {
+        if (g_er_plugin_slot[i] == plugin_slot) {
+            count = count + 1i64;
+        }
+        i = i + 1i64;
+    }
+    pass(count);
+};
+
+// Get the ext_type of the j-th registration for the given plugin (0-indexed).
+pub func:ext_reg_get_type_for = int64(int64:plugin_slot, int64:j) {
+    int64:idx = 0i64;
+    int64:i   = 0i64;
+    while (i < g_er_count) {
+        if (g_er_plugin_slot[i] == plugin_slot) {
+            if (idx == j) { pass(g_er_type[i]); }
+            idx = idx + 1i64;
+        }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+// Get the id of the j-th registration for the given plugin (0-indexed).
+pub func:ext_reg_get_id_for = string(int64:plugin_slot, int64:j) {
+    int64:idx = 0i64;
+    int64:i   = 0i64;
+    while (i < g_er_count) {
+        if (g_er_plugin_slot[i] == plugin_slot) {
+            if (idx == j) { pass(g_er_id[i]); }
+            idx = idx + 1i64;
+        }
+        i = i + 1i64;
+    }
+    pass("");
+};

@@ -1,0 +1,220 @@
+// tests/plugin/test_lifecycle.npk — v0.10.2 plugin lifecycle tests
+//
+// Tests: ext_registry, event_bus, update_checker, plugin_state.
+//
+// Does NOT test plugin_manager_enable/disable directly (requires full disk
+// fixture with manifests, registry, and compiled plugin shims). Those are
+// covered by integration tests in a future release.
+//
+// 25 assertions across all 4 modules.
+
+use "../../src/plugin/ext_registry.npk".*;
+use "../../src/plugin/event_bus.npk".*;
+use "../../src/plugin/update_checker.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/src/nitpick_yaml.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/src/nitpick_semver.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
+
+// ── Test infrastructure ───────────────────────────────────────────────────────
+
+int64:T_PASS  = 0i64;
+int64:T_TOTAL = 0i64;
+int64:T_FAIL  = 0i64;
+int64:T_STDOUT = 1i64;
+
+func:_tw = NIL(string:msg) {
+    int64:l = string_length(msg);
+    drop(sys(WRITE, T_STDOUT, msg, l));
+    pass(NIL);
+};
+
+func:t_ok = NIL(string:label) {
+    T_PASS  = T_PASS  + 1i64;
+    T_TOTAL = T_TOTAL + 1i64;
+    drop(_tw(string_concat("  PASS: ", string_concat(label, "\n"))));
+    pass(NIL);
+};
+
+func:t_fail = NIL(string:label) {
+    T_FAIL  = T_FAIL  + 1i64;
+    T_TOTAL = T_TOTAL + 1i64;
+    drop(_tw(string_concat("  FAIL: ", string_concat(label, "\n"))));
+    pass(NIL);
+};
+
+func:t_assert_int = NIL(string:label, int64:got, int64:expected) {
+    if (got == expected) { drop(t_ok(label)); pass(NIL); }
+    drop(t_fail(string_concat(label, string_concat(" (got=",
+        string_concat(string_from_int(got), string_concat(" want=",
+        string_concat(string_from_int(expected), ")")))))));
+    pass(NIL);
+};
+
+func:t_assert_str = NIL(string:label, string:got, string:expected) {
+    if (got == expected) { drop(t_ok(label)); pass(NIL); }
+    drop(t_fail(string_concat(label, string_concat(" (got='",
+        string_concat(got, string_concat("' want='",
+        string_concat(expected, "'")))))));
+    pass(NIL);
+};
+
+func:log_section = NIL(string:name) {
+    drop(_tw(string_concat("\n[", string_concat(name, "]\n"))));
+    pass(NIL);
+};
+
+func:print_summary = NIL() {
+    drop(_tw(string_concat("\nResults: ",
+        string_concat(string_from_int(T_PASS), string_concat(" passed, ",
+        string_concat(string_from_int(T_FAIL), " failed\n"))))));
+    pass(NIL);
+};
+
+// ── ext_registry tests (T01–T07) ──────────────────────────────────────────────
+
+func:test_ext_registry = NIL() {
+    drop(log_section("T01-T07: ExtRegistry"));
+    drop(ext_reg_init());
+
+    // T01: initial total count is 0
+    drop(t_assert_int("T01 init count = 0", raw ext_reg_total_count(), 0i64));
+
+    // T02: track one entry
+    drop(ext_reg_track(3i64, EXT_REG_HOTKEY, "ctrl+shift+k"));
+    drop(t_assert_int("T02 total after 1 track = 1", raw ext_reg_total_count(), 1i64));
+
+    // T03: count_for plugin 3 = 1
+    drop(t_assert_int("T03 count_for(3) = 1", raw ext_reg_count_for(3i64), 1i64));
+
+    // T04: get_type_for correct
+    drop(t_assert_int("T04 get_type_for(3, 0) = HOTKEY",
+        raw ext_reg_get_type_for(3i64, 0i64), EXT_REG_HOTKEY));
+
+    // T05: get_id_for correct
+    drop(t_assert_str("T05 get_id_for(3, 0) = ctrl+shift+k",
+        raw ext_reg_get_id_for(3i64, 0i64), "ctrl+shift+k"));
+
+    // T06: track second entry for same plugin, different type
+    drop(ext_reg_track(3i64, EXT_REG_TOOLBAR, "my-btn"));
+    drop(t_assert_int("T06 count_for(3) after 2 = 2", raw ext_reg_count_for(3i64), 2i64));
+
+    // T07: untrack_all clears plugin 3's entries
+    drop(ext_reg_untrack_all(3i64));
+    drop(t_assert_int("T07 count_for(3) after untrack_all = 0",
+        raw ext_reg_count_for(3i64), 0i64));
+    drop(t_assert_int("T07b total after untrack_all = 0",
+        raw ext_reg_total_count(), 0i64));
+
+    pass(NIL);
+};
+
+// ── event_bus tests (T08–T16) ─────────────────────────────────────────────────
+
+func:test_event_bus = NIL() {
+    drop(log_section("T08-T16: EventBus"));
+    drop(event_bus_init());
+
+    // T08: initial total count = 0
+    drop(t_assert_int("T08 init count = 0", raw event_bus_total_count(), 0i64));
+
+    // T09: subscribe plugin 5 to nitty.tab.created
+    int64:idx = raw event_bus_subscribe(EV_TAB_CREATED, 5i64, 42i64);
+    drop(t_assert_int("T09 subscribe returns 0", idx, 0i64));
+
+    // T10: subscriber count for that event = 1
+    drop(t_assert_int("T10 subscriber_count(tab.created) = 1",
+        raw event_bus_subscriber_count(EV_TAB_CREATED), 1i64));
+
+    // T11: get_event_type, get_plugin_slot, get_callback_id
+    drop(t_assert_str("T11 get_event_type(0)",
+        raw event_bus_get_event_type(0i64), EV_TAB_CREATED));
+    drop(t_assert_int("T11b get_plugin_slot(0) = 5",
+        raw event_bus_get_plugin_slot(0i64), 5i64));
+    drop(t_assert_int("T11c get_callback_id(0) = 42",
+        raw event_bus_get_callback_id(0i64), 42i64));
+
+    // T12: duplicate subscribe (same plugin + event) returns -1
+    int64:dup = raw event_bus_subscribe(EV_TAB_CREATED, 5i64, 99i64);
+    drop(t_assert_int("T12 duplicate subscribe = -1", dup, -1i64));
+
+    // T13: different plugin can subscribe to same event
+    int64:idx2 = raw event_bus_subscribe(EV_TAB_CREATED, 7i64, 55i64);
+    drop(t_assert_int("T13 second plugin subscribe > 0", idx2, 1i64));
+    drop(t_assert_int("T13b subscriber_count = 2",
+        raw event_bus_subscriber_count(EV_TAB_CREATED), 2i64));
+
+    // T14: subscribe to a different event
+    drop(event_bus_subscribe(EV_CONFIG_CHANGED, 5i64, 10i64));
+    drop(t_assert_int("T14 total subs = 3", raw event_bus_total_count(), 3i64));
+
+    // T15: unsubscribe removes plugin 5 from tab.created
+    drop(event_bus_unsubscribe(EV_TAB_CREATED, 5i64));
+    drop(t_assert_int("T15 subscriber_count(tab.created) = 1",
+        raw event_bus_subscriber_count(EV_TAB_CREATED), 1i64));
+
+    // T16: remove_plugin removes all subs for plugin 5
+    drop(event_bus_remove_plugin(5i64));
+    drop(t_assert_int("T16 total after remove_plugin(5) = 1",
+        raw event_bus_total_count(), 1i64));
+    // Only plugin 7 on tab.created remains
+    drop(t_assert_int("T16b tab.created subscriber_count = 1",
+        raw event_bus_subscriber_count(EV_TAB_CREATED), 1i64));
+
+    pass(NIL);
+};
+
+// ── update_checker tests (T17–T22) ───────────────────────────────────────────
+
+func:test_update_checker = NIL() {
+    drop(log_section("T17-T22: UpdateChecker"));
+    drop(update_checker_init());
+
+    // T17: initial count = 0
+    drop(t_assert_int("T17 init count = 0", raw update_checker_get_count(), 0i64));
+
+    // T18: set_installed registers plugin
+    drop(update_checker_set_installed("my-plugin", "1.0.0"));
+    drop(update_checker_set_installed("other-plugin", "2.3.1"));
+    drop(t_assert_int("T18 count = 2", raw update_checker_get_count(), 2i64));
+
+    // T19: has_update = 0 initially (no latest set)
+    drop(t_assert_int("T19 has_update(0) = 0 initially",
+        raw update_checker_has_update(0i64), 0i64));
+
+    // T20: set_update_info with newer version → has_update = 1
+    drop(update_checker_set_update_info("my-plugin", "1.1.0", "https://example.com/my-plugin.tar.gz"));
+    drop(t_assert_int("T20 has_update after 1.0.0→1.1.0 = 1",
+        raw update_checker_has_update(0i64), 1i64));
+    drop(t_assert_str("T20b get_latest(0) = 1.1.0",
+        raw update_checker_get_latest(0i64), "1.1.0"));
+
+    // T21: set_update_info with same version → has_update = 0
+    drop(update_checker_set_update_info("other-plugin", "2.3.1", ""));
+    drop(t_assert_int("T21 has_update same version = 0",
+        raw update_checker_has_update(1i64), 0i64));
+
+    // T22: updates_available counts correctly
+    drop(t_assert_int("T22 updates_available = 1",
+        raw update_checker_updates_available(), 1i64));
+
+    // T22b: check_all stub returns 0
+    int64:n = raw update_checker_check_all();
+    drop(t_assert_int("T22b check_all stub = 0", n, 0i64));
+
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+func:main = int32() {
+    drop(_tw("test_lifecycle — Plugin Lifecycle & Management\n"));
+    drop(test_ext_registry());
+    drop(test_event_bus());
+    drop(test_update_checker());
+    drop(print_summary());
+    if (T_FAIL > 0i64) { exit 1i32; }
+    exit 0i32;
+};

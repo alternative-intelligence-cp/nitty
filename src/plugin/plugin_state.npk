@@ -1,0 +1,136 @@
+// src/plugin/plugin_state.npk — Plugin state persistence
+//
+// v0.10.2: Plugin Lifecycle & Management
+//
+// Saves and loads plugin enabled/disabled state to a YAML file at:
+//   ~/.config/nitty/plugin_state.yaml  (or $XDG_CONFIG_HOME/nitty/...)
+//
+// YAML format (flat dotted-key store):
+//   plugins.myplugin.enabled: "1"
+//   plugins.myplugin.error: "unmet dependencies"
+//   plugins.myplugin.disabled: "0"
+//
+// Uses manual YAML text building (same approach as window_state.npk) since
+// config.npk / schema.npk has a pre-existing parse error.
+// Reading uses nitpick-yaml for parsing.
+//
+// Public API:
+//   plugin_state_default_path()        → string
+//   plugin_state_save(path)            → NIL
+//   plugin_state_load(path)            → int64  (count of entries loaded)
+
+use "./plugin_registry.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/src/nitpick_yaml.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
+
+int64:PS_STDOUT = 1i64;
+
+func:_ps_log = NIL(string:msg) {
+    int64:l = string_length(msg);
+    drop(sys(WRITE, PS_STDOUT, msg, l));
+    pass(NIL);
+};
+
+// ── Path helpers ──────────────────────────────────────────────────────────────
+
+// Return the default path to plugin_state.yaml.
+// Respects $XDG_CONFIG_HOME, falls back to ~/.config/nitty/plugin_state.yaml.
+pub func:plugin_state_default_path = string() {
+    string:xdg = raw env_get("XDG_CONFIG_HOME");
+    string:base;
+    if (string_length(xdg) > 0i64) {
+        base = xdg;
+    }
+    if (string_length(xdg) == 0i64) {
+        string:home = raw env_get("HOME");
+        base = string_concat(home, "/.config");
+    }
+    pass(string_concat(base, "/nitty/plugin_state.yaml"));
+};
+
+// ── Save ──────────────────────────────────────────────────────────────────────
+
+// Write all plugin states to YAML.
+// Format: flat dotted-key lines.
+pub func:plugin_state_save = NIL(string:path) {
+    int64:count = raw plugin_registry_count();
+    string:yaml = "";
+
+    int64:i = 0i64;
+    while (i < count) {
+        string:name = raw plugin_registry_name(i);
+        if (string_length(name) > 0i64) {
+            int64:state = raw plugin_get_state(i);
+
+            // enabled = 1 if ACTIVE or INITIALIZED, else 0
+            string:enabled = "0";
+            if (state == PLUGIN_STATE_ACTIVE)      { enabled = "1"; }
+            if (state == PLUGIN_STATE_INITIALIZED) { enabled = "1"; }
+
+            // disabled = 1 if explicitly DISABLED
+            string:disabled = "0";
+            if (state == PLUGIN_STATE_DISABLED) { disabled = "1"; }
+
+            // error message
+            string:err = raw plugin_get_error(i);
+
+            // Build YAML lines
+            string:prefix = string_concat("plugins.", string_concat(name, "."));
+            yaml = string_concat(yaml,
+                string_concat(prefix, string_concat("enabled: \"",
+                string_concat(enabled, "\"\n"))));
+            yaml = string_concat(yaml,
+                string_concat(prefix, string_concat("disabled: \"",
+                string_concat(disabled, "\"\n"))));
+            if (string_length(err) > 0i64) {
+                yaml = string_concat(yaml,
+                    string_concat(prefix, string_concat("error: \"",
+                    string_concat(err, "\"\n"))));
+            }
+        }
+        i = i + 1i64;
+    }
+
+    if (string_length(yaml) == 0i64) { pass(NIL); }
+    int64:write_ok = raw fs_write_file(path, yaml);
+    if (write_ok < 0i64) {
+        drop(_ps_log(string_concat("[plugin_state] failed to save: ",
+            string_concat(path, "\n"))));
+    }
+    pass(NIL);
+};
+
+// ── Load ──────────────────────────────────────────────────────────────────────
+
+// Read plugin_state.yaml and apply enabled/disabled to registry slots.
+// Returns count of state entries applied.
+pub func:plugin_state_load = int64(string:path) {
+    string:content = raw fs_read_file(path);
+    if (string_length(content) == 0i64) { pass(0i64); }
+
+    // Parse YAML into flat key store
+    int64:parse_ok = raw yaml_parse(content);
+    if (parse_ok < 0i64) {
+        drop(_ps_log("[plugin_state] failed to parse YAML\n"));
+        pass(0i64);
+    }
+
+    int64:applied = 0i64;
+    int64:count   = raw plugin_registry_count();
+    int64:i       = 0i64;
+    while (i < count) {
+        string:name = raw plugin_registry_name(i);
+        if (string_length(name) > 0i64) {
+            // Check disabled key
+            string:dis_key = string_concat("plugins.", string_concat(name, ".disabled"));
+            string:dis_val = raw yaml_get(dis_key);
+            if (dis_val == "1") {
+                drop(plugin_set_state(i, PLUGIN_STATE_DISABLED));
+                applied = applied + 1i64;
+            }
+        }
+        i = i + 1i64;
+    }
+    pass(applied);
+};

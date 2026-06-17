@@ -3,6 +3,9 @@
 // v0.10.0: Plugin Architecture — coordinates discovery, validation,
 // dependency resolution, loading, and initialization of all plugins.
 //
+// v0.10.2: Runtime enable/disable with dependent cascade and extension point
+// cleanup via ext_registry. Event bus subscriptions removed on disable.
+//
 // Call plugin_manager_init() from app_init() after config_load().
 // Call plugin_manager_shutdown() from app_shutdown() before session teardown.
 //
@@ -22,6 +25,15 @@ use "./discovery.npk".*;
 use "./dependency.npk".*;
 use "./plugin_registry.npk".*;
 use "./loader.npk".*;
+use "./ext_registry.npk".*;
+use "./ext_hotkey.npk".*;
+use "./ext_toolbar.npk".*;
+use "./ext_tab_header.npk".*;
+use "./ext_context_menu.npk".*;
+use "./ext_terminal.npk".*;
+use "./ext_connection.npk".*;
+use "./event_bus.npk".*;
+use "./api.npk".*;
 
 // fd 1 = stdout
 int64:PM_STDOUT = 1i64;
@@ -165,11 +177,135 @@ pub func:plugin_manager_get_state = int64(string:name) {
     pass(raw plugin_get_state(reg_slot));
 };
 
-// Disable a plugin by name (without destroying it).
-pub func:plugin_manager_disable = NIL(string:name) {
+// ── Runtime enable/disable (v0.10.2) ─────────────────────────────────────────
+
+// Enable a plugin by name.
+// Verifies the plugin is in registry and transitions DISABLED → ACTIVE.
+// Returns 0 on success, -1 if not found, -2 if already active.
+pub func:plugin_manager_enable = int64(string:name) {
     int64:reg_slot = raw plugin_registry_find(name);
-    if (reg_slot >= 0i64) {
-        drop(plugin_set_state(reg_slot, PLUGIN_STATE_DISABLED));
+    if (reg_slot < 0i64) { pass(-1i64); }
+    int64:state = raw plugin_get_state(reg_slot);
+    if (state == PLUGIN_STATE_ACTIVE) { pass(-2i64); }
+    // Transition: DISABLED → LOADED → ACTIVE
+    drop(plugin_set_state(reg_slot, PLUGIN_STATE_LOADED));
+    // Find the manifest slot to call plugin_init_one
+    int64:total = raw manifest_count();
+    int64:mi = 0i64;
+    while (mi < total) {
+        if (raw manifest_is_valid(mi) == 1i64) {
+            string:mname = raw manifest_get_name(mi);
+            if (mname == name) {
+                drop(plugin_init_one(mi));
+                drop(_pm_log(string_concat("[plugin] enabled: ",
+                    string_concat(name, "\n"))));
+                pass(0i64);
+            }
+        }
+        mi = mi + 1i64;
     }
-    pass(NIL);
+    // No manifest slot found — activate directly
+    drop(plugin_set_state(reg_slot, PLUGIN_STATE_ACTIVE));
+    drop(_pm_log(string_concat("[plugin] enabled (no manifest): ",
+        string_concat(name, "\n"))));
+    pass(0i64);
+};
+
+// Disable a plugin by name with full cleanup.
+// 1. Find dependents (plugins that depend on this one) and disable them first.
+// 2. Unregister all extension points via ext_registry.
+// 3. Remove event bus subscriptions.
+// 4. Set state to DISABLED.
+// Returns 0 on success, -1 if not found.
+pub func:plugin_manager_disable = int64(string:name) {
+    int64:reg_slot = raw plugin_registry_find(name);
+    if (reg_slot < 0i64) { pass(-1i64); }
+
+    // 1. Disable dependents first (plugins whose deps include this one)
+    int64:reg_count = raw plugin_registry_count();
+    int64:di = 0i64;
+    while (di < reg_count) {
+        if (di != reg_slot) {
+            int64:dstate = raw plugin_get_state(di);
+            if (dstate == PLUGIN_STATE_ACTIVE) {
+                string:dname = raw plugin_registry_name(di);
+                // Check if dependent has this plugin as a dep
+                // We find its manifest slot and check deps
+                int64:total2 = raw manifest_count();
+                int64:mj = 0i64;
+                while (mj < total2) {
+                    if (raw manifest_is_valid(mj) == 1i64) {
+                        string:mn = raw manifest_get_name(mj);
+                        if (mn == dname) {
+                            // Check dep list for 'name'
+                            int64:dep_n = raw manifest_get_dep_count(mj);
+                            int64:dk = 0i64;
+                            while (dk < dep_n) {
+                                string:depname = raw manifest_get_dep_name(mj, dk);
+                                if (depname == name) {
+                                    // Recursively disable dependent
+                                    drop(_pm_log(string_concat("[plugin] disabling dependent: ",
+                                        string_concat(dname, "\n"))));
+                                    drop(plugin_manager_disable(dname));
+                                }
+                                dk = dk + 1i64;
+                            }
+                        }
+                    }
+                    mj = mj + 1i64;
+                }
+            }
+        }
+        di = di + 1i64;
+    }
+
+    // 2. Unregister extension points owned by this plugin
+    int64:n_regs = raw ext_reg_count_for(reg_slot);
+    int64:ri = 0i64;
+    while (ri < n_regs) {
+        int64:rtype = raw ext_reg_get_type_for(reg_slot, ri);
+        string:rid   = raw ext_reg_get_id_for(reg_slot, ri);
+        PluginAPI:dummy_api = raw api_make(reg_slot);
+        if (rtype == EXT_REG_HOTKEY) {
+            drop(api_unregister_hotkey(dummy_api, rid));
+        }
+        if (rtype == EXT_REG_TOOLBAR) {
+            drop(api_unregister_toolbar_button(dummy_api, rid));
+        }
+        if (rtype == EXT_REG_TAB_HEADER) {
+            drop(api_unregister_tab_header(dummy_api, rid));
+        }
+        if (rtype == EXT_REG_CONTEXT_MENU) {
+            drop(api_unregister_context_menu_item(dummy_api, rid));
+        }
+        if (rtype == EXT_REG_TERMINAL) {
+            drop(api_unregister_terminal_decorator(dummy_api));
+        }
+        if (rtype == EXT_REG_CONNECTION) {
+            drop(api_unregister_connection_provider(dummy_api, rid));
+        }
+        ri = ri + 1i64;
+    }
+    drop(ext_reg_untrack_all(reg_slot));
+
+    // 3. Remove event bus subscriptions
+    drop(event_bus_remove_plugin(reg_slot));
+
+    // 4. Set DISABLED state and call destroy
+    drop(plugin_set_state(reg_slot, PLUGIN_STATE_DISABLED));
+    // Find manifest slot to call plugin_destroy_one
+    string:tgt_name = raw plugin_registry_name(reg_slot);
+    int64:total3 = raw manifest_count();
+    int64:mi3 = 0i64;
+    while (mi3 < total3) {
+        if (raw manifest_is_valid(mi3) == 1i64) {
+            string:mn3 = raw manifest_get_name(mi3);
+            if (mn3 == tgt_name) {
+                drop(plugin_destroy_one(mi3));
+            }
+        }
+        mi3 = mi3 + 1i64;
+    }
+    drop(_pm_log(string_concat("[plugin] disabled: ", string_concat(tgt_name, "\n"))));
+    pass(0i64);
 };

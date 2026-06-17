@@ -1,0 +1,177 @@
+// src/plugin/update_checker.npk — Plugin update checking
+//
+// v0.10.2: Plugin Lifecycle & Management
+//
+// Implements version comparison logic for detecting available plugin updates.
+// HTTP fetch is stubbed (returns -1 = not available); real network fetch
+// is deferred to a future release when an HTTP C shim is available.
+//
+// Workflow:
+//   1. update_checker_init()
+//   2. update_checker_set_installed(name, version)  — for each loaded plugin
+//   3. update_checker_check_all()                   — stub: returns 0 (no network)
+//   4. update_checker_updates_available()           — count with has_update = 1
+//
+// Storage: flat parallel arrays, max 16 plugin entries.
+//
+// Public API:
+//   update_checker_init()                                    → NIL
+//   update_checker_set_installed(name, version)              → NIL
+//   update_checker_check_all()                               → int64 (stub: 0)
+//   update_checker_set_update_info(name, latest, url)        → NIL
+//   update_checker_updates_available()                        → int64
+//   update_checker_get_count()                               → int64
+//   update_checker_get_name(i)                               → string
+//   update_checker_get_installed(i)                          → string
+//   update_checker_get_latest(i)                             → string
+//   update_checker_get_url(i)                                → string
+//   update_checker_has_update(i)                             → int64
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/src/nitpick_semver.npk".*;
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+pub fixed int64:UPDATE_CHECKER_MAX = 16i64;
+
+string[16]:g_uvc_name;
+string[16]:g_uvc_installed;
+string[16]:g_uvc_latest;
+string[16]:g_uvc_url;
+int64[16]:g_uvc_has_update;
+int64:g_uvc_count = 0i64;
+
+int64:UVC_STDOUT = 1i64;
+
+func:_uvc_log = NIL(string:msg) {
+    int64:l = string_length(msg);
+    drop(sys(WRITE, UVC_STDOUT, msg, l));
+    pass(NIL);
+};
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+pub func:update_checker_init = NIL() {
+    int64:i = 0i64;
+    while (i < UPDATE_CHECKER_MAX) {
+        g_uvc_name[i]       = "";
+        g_uvc_installed[i]  = "";
+        g_uvc_latest[i]     = "";
+        g_uvc_url[i]        = "";
+        g_uvc_has_update[i] = 0i64;
+        i = i + 1i64;
+    }
+    g_uvc_count = 0i64;
+    pass(NIL);
+};
+
+// ── Internal lookup ───────────────────────────────────────────────────────────
+
+func:_uvc_find = int64(string:name) {
+    int64:i = 0i64;
+    while (i < g_uvc_count) {
+        if (g_uvc_name[i] == name) { pass(i); }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
+// ── Registration ──────────────────────────────────────────────────────────────
+
+// Register an installed plugin for update tracking.
+// Idempotent: if name already exists, updates installed version.
+pub func:update_checker_set_installed = NIL(string:name, string:version) {
+    int64:idx = raw _uvc_find(name);
+    if (idx >= 0i64) {
+        g_uvc_installed[idx] = version;
+        pass(NIL);
+    }
+    if (g_uvc_count >= UPDATE_CHECKER_MAX) { pass(NIL); }
+    int64:slot             = g_uvc_count;
+    g_uvc_name[slot]       = name;
+    g_uvc_installed[slot]  = version;
+    g_uvc_latest[slot]     = "";
+    g_uvc_url[slot]        = "";
+    g_uvc_has_update[slot] = 0i64;
+    g_uvc_count            = g_uvc_count + 1i64;
+    pass(NIL);
+};
+
+// Set update info from registry response (called by real HTTP fetch layer).
+// Compares installed vs latest using nitpick-semver.
+pub func:update_checker_set_update_info = NIL(string:name, string:latest, string:url) {
+    int64:idx = raw _uvc_find(name);
+    if (idx < 0i64) { pass(NIL); }
+
+    g_uvc_latest[idx] = latest;
+    g_uvc_url[idx]    = url;
+
+    // Compare versions: nitpick_semver_compare(a, b) returns int32
+    //   < 0  → a < b  (installed < latest → update available)
+    //   = 0  → equal  (no update)
+    //   > 0  → a > b  (installed newer, no update)
+    // NOTE: copy array element to local before extern call (Nitpick language rule)
+    string:inst_ver = g_uvc_installed[idx];
+    int32:cmp = nitpick_semver_compare(inst_ver, latest);
+    if (cmp < 0i32) {
+        g_uvc_has_update[idx] = 1i64;
+    }
+    if (cmp >= 0i32) {
+        g_uvc_has_update[idx] = 0i64;
+    }
+    pass(NIL);
+};
+
+// ── Update check (stub) ───────────────────────────────────────────────────────
+
+// Attempt to fetch update info from registry.
+// Stub: HTTP is not available in v0.10.2. Returns 0 (nothing checked).
+// When nitty_http_get shim is available, this will fetch each plugin's
+// registry entry and call update_checker_set_update_info().
+pub func:update_checker_check_all = int64() {
+    drop(_uvc_log("[update_checker] HTTP fetch stub — no network in v0.10.2\n"));
+    pass(0i64);
+};
+
+// ── Accessors ─────────────────────────────────────────────────────────────────
+
+pub func:update_checker_get_count = int64() { pass(g_uvc_count); };
+
+pub func:update_checker_updates_available = int64() {
+    int64:count = 0i64;
+    int64:i     = 0i64;
+    while (i < g_uvc_count) {
+        if (g_uvc_has_update[i] == 1i64) { count = count + 1i64; }
+        i = i + 1i64;
+    }
+    pass(count);
+};
+
+pub func:update_checker_get_name = string(int64:i) {
+    if (i < 0i64)           { pass(""); }
+    if (i >= g_uvc_count)   { pass(""); }
+    pass(g_uvc_name[i]);
+};
+
+pub func:update_checker_get_installed = string(int64:i) {
+    if (i < 0i64)           { pass(""); }
+    if (i >= g_uvc_count)   { pass(""); }
+    pass(g_uvc_installed[i]);
+};
+
+pub func:update_checker_get_latest = string(int64:i) {
+    if (i < 0i64)           { pass(""); }
+    if (i >= g_uvc_count)   { pass(""); }
+    pass(g_uvc_latest[i]);
+};
+
+pub func:update_checker_get_url = string(int64:i) {
+    if (i < 0i64)           { pass(""); }
+    if (i >= g_uvc_count)   { pass(""); }
+    pass(g_uvc_url[i]);
+};
+
+pub func:update_checker_has_update = int64(int64:i) {
+    if (i < 0i64)           { pass(0i64); }
+    if (i >= g_uvc_count)   { pass(0i64); }
+    pass(g_uvc_has_update[i]);
+};

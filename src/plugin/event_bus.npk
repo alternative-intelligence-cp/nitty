@@ -1,0 +1,209 @@
+// src/plugin/event_bus.npk — Inter-plugin event bus
+//
+// v0.10.2: Plugin Lifecycle & Management
+//
+// Plugins subscribe to named event types and receive notifications when
+// those events are emitted by other plugins or by Nitty's core.
+//
+// Since Nitpick cannot store or call function pointers dynamically, delivery
+// to subscriber callbacks is tracked by (plugin_slot, callback_id). Actual
+// per-subscriber dispatch requires a C shim dispatch table (v0.10.3).
+// In v0.10.2, event_bus_emit logs the delivery that would occur.
+//
+// Built-in event type constants are provided for standard Nitty events.
+//
+// Storage: flat parallel arrays, max 64 subscriptions.
+//
+// Public API:
+//   event_bus_init()
+//   event_bus_subscribe(event_type, plugin_slot, callback_id) → int64
+//   event_bus_unsubscribe(event_type, plugin_slot)            → NIL
+//   event_bus_remove_plugin(plugin_slot)                      → NIL
+//   event_bus_emit_named(source, event_type, data)            → NIL (stub)
+//   event_bus_subscriber_count(event_type)                    → int64
+//   event_bus_total_count()                                   → int64
+//   event_bus_get_event_type(i)                               → string
+//   event_bus_get_plugin_slot(i)                              → int64
+//   event_bus_get_callback_id(i)                              → int64
+
+// ── Built-in event type constants ─────────────────────────────────────────────
+
+pub fixed string:EV_TAB_CREATED        = "nitty.tab.created";
+pub fixed string:EV_TAB_CLOSED         = "nitty.tab.closed";
+pub fixed string:EV_TAB_ACTIVATED      = "nitty.tab.activated";
+pub fixed string:EV_PANE_CREATED       = "nitty.pane.created";
+pub fixed string:EV_PANE_CLOSED        = "nitty.pane.closed";
+pub fixed string:EV_PANE_FOCUSED       = "nitty.pane.focused";
+pub fixed string:EV_CONNECTION_OPENED  = "nitty.connection.opened";
+pub fixed string:EV_CONNECTION_CLOSED  = "nitty.connection.closed";
+pub fixed string:EV_CONFIG_CHANGED     = "nitty.config.changed";
+
+// ── PluginEvent struct ────────────────────────────────────────────────────────
+
+pub struct:PluginEvent = {
+    string:source;      // emitting plugin name (or "nitty" for core events)
+    string:event_type;  // e.g. "nitty.tab.created"
+    string:data;        // free-form payload string
+};
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+pub fixed int64:EVENT_BUS_MAX = 64i64;
+
+string[64]:g_eb_event_type;
+int64[64]:g_eb_plugin_slot;
+int64[64]:g_eb_callback_id;
+int64:g_eb_count = 0i64;
+
+int64:EB_STDOUT = 1i64;
+
+func:_eb_log = NIL(string:msg) {
+    int64:l = string_length(msg);
+    drop(sys(WRITE, EB_STDOUT, msg, l));
+    pass(NIL);
+};
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+pub func:event_bus_init = NIL() {
+    int64:i = 0i64;
+    while (i < EVENT_BUS_MAX) {
+        g_eb_event_type[i]  = "";
+        g_eb_plugin_slot[i] = -1i64;
+        g_eb_callback_id[i] = -1i64;
+        i = i + 1i64;
+    }
+    g_eb_count = 0i64;
+    pass(NIL);
+};
+
+// ── Subscribe ─────────────────────────────────────────────────────────────────
+
+// Subscribe a plugin to an event type.
+// Returns subscription index (>= 0) on success, -1 if full or already subscribed.
+pub func:event_bus_subscribe = int64(string:event_type, int64:plugin_slot, int64:callback_id) {
+    // Check for duplicate (same plugin + event_type)
+    int64:i = 0i64;
+    while (i < g_eb_count) {
+        if (g_eb_event_type[i] == event_type) {
+            if (g_eb_plugin_slot[i] == plugin_slot) { pass(-1i64); }
+        }
+        i = i + 1i64;
+    }
+
+    if (g_eb_count >= EVENT_BUS_MAX) { pass(-1i64); }
+
+    int64:idx             = g_eb_count;
+    g_eb_event_type[idx]  = event_type;
+    g_eb_plugin_slot[idx] = plugin_slot;
+    g_eb_callback_id[idx] = callback_id;
+    g_eb_count            = g_eb_count + 1i64;
+    pass(idx);
+};
+
+// ── Unsubscribe ───────────────────────────────────────────────────────────────
+
+// Remove a specific plugin's subscription to an event type.
+pub func:event_bus_unsubscribe = NIL(string:event_type, int64:plugin_slot) {
+    int64:write = 0i64;
+    int64:read  = 0i64;
+    while (read < g_eb_count) {
+        int64:skip = 0i64;
+        if (g_eb_event_type[read] == event_type) {
+            if (g_eb_plugin_slot[read] == plugin_slot) {
+                skip = 1i64;
+            }
+        }
+        if (skip == 0i64) {
+            g_eb_event_type[write]  = g_eb_event_type[read];
+            g_eb_plugin_slot[write] = g_eb_plugin_slot[read];
+            g_eb_callback_id[write] = g_eb_callback_id[read];
+            write = write + 1i64;
+        }
+        read = read + 1i64;
+    }
+    // Clear trailing
+    int64:j = write;
+    while (j < g_eb_count) {
+        g_eb_event_type[j]  = "";
+        g_eb_plugin_slot[j] = -1i64;
+        g_eb_callback_id[j] = -1i64;
+        j = j + 1i64;
+    }
+    g_eb_count = write;
+    pass(NIL);
+};
+
+// Remove ALL subscriptions for a given plugin (called on plugin disable).
+pub func:event_bus_remove_plugin = NIL(int64:plugin_slot) {
+    int64:write = 0i64;
+    int64:read  = 0i64;
+    while (read < g_eb_count) {
+        if (g_eb_plugin_slot[read] != plugin_slot) {
+            g_eb_event_type[write]  = g_eb_event_type[read];
+            g_eb_plugin_slot[write] = g_eb_plugin_slot[read];
+            g_eb_callback_id[write] = g_eb_callback_id[read];
+            write = write + 1i64;
+        }
+        read = read + 1i64;
+    }
+    int64:j = write;
+    while (j < g_eb_count) {
+        g_eb_event_type[j]  = "";
+        g_eb_plugin_slot[j] = -1i64;
+        g_eb_callback_id[j] = -1i64;
+        j = j + 1i64;
+    }
+    g_eb_count = write;
+    pass(NIL);
+};
+
+// ── Emit ──────────────────────────────────────────────────────────────────────
+
+// Emit a named event. Stub: logs which subscribers would be notified.
+// Real per-subscriber callback dispatch requires a C shim (v0.10.3).
+pub func:event_bus_emit_named = NIL(string:source, string:event_type, string:data) {
+    int64:n = raw event_bus_subscriber_count(event_type);
+    if (n == 0i64) { pass(NIL); }
+    string:msg = string_concat("[event_bus] emit '",
+        string_concat(event_type,
+        string_concat("' from '", string_concat(source,
+        string_concat("' → ", string_concat(string_from_int(n),
+        " subscriber(s)\n"))))));
+    drop(_eb_log(msg));
+    pass(NIL);
+};
+
+// ── Accessors ─────────────────────────────────────────────────────────────────
+
+pub func:event_bus_total_count = int64() { pass(g_eb_count); };
+
+pub func:event_bus_subscriber_count = int64(string:event_type) {
+    int64:count = 0i64;
+    int64:i     = 0i64;
+    while (i < g_eb_count) {
+        if (g_eb_event_type[i] == event_type) {
+            count = count + 1i64;
+        }
+        i = i + 1i64;
+    }
+    pass(count);
+};
+
+pub func:event_bus_get_event_type = string(int64:i) {
+    if (i < 0i64)         { pass(""); }
+    if (i >= g_eb_count)  { pass(""); }
+    pass(g_eb_event_type[i]);
+};
+
+pub func:event_bus_get_plugin_slot = int64(int64:i) {
+    if (i < 0i64)         { pass(-1i64); }
+    if (i >= g_eb_count)  { pass(-1i64); }
+    pass(g_eb_plugin_slot[i]);
+};
+
+pub func:event_bus_get_callback_id = int64(int64:i) {
+    if (i < 0i64)         { pass(-1i64); }
+    if (i >= g_eb_count)  { pass(-1i64); }
+    pass(g_eb_callback_id[i]);
+};
