@@ -42,11 +42,9 @@ pub fixed int64:SERIAL_INPUT_READLINE = 2i64;
 pub fixed int64:SERIAL_OUTPUT_TEXT    = 0i64;
 pub fixed int64:SERIAL_OUTPUT_HEXDUMP = 1i64;
 
-// NOTE: Special key escape sequences are inlined as string literals in comparisons
-// below (e.g. key == "\r" for Enter) to avoid npkbld zeroing pub fixed string data.
 
 // ── Per-pane readline line buffer ─────────────────────────────────────────────
-// 64 slots (one per pane). Uninitialized (will be lazily set to "" at first use).
+// 64 slots (one per pane). Default-initialized to "" by the compiler.
 
 string[64]:g_rl_line;
 int64[64]:g_rl_cursor = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
@@ -69,25 +67,6 @@ int64[64]:g_rl_hist_nav    = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,
 // Saved "draft" line while navigating history (so we can restore it on Next).
 string[64]:g_rl_hist_draft;
 
-// Initialization tracker (set to 1 after first call to serial_modes_init)
-int64:g_modes_initialized = 0i64;
-
-// ── Runtime initialization ────────────────────────────────────────────────────
-// Called lazily at the start of any public function that uses string arrays.
-// Ensures all string arrays are set to "" (not NULL) even after npkbld zeroing.
-
-func:_ensure_init = NIL() {
-    if (g_modes_initialized != 0i64) { pass(NIL); }
-    g_modes_initialized = 1i64;
-    int64:i = 0i64;
-    while (i < 64i64) {
-        g_rl_line[i]       = "";
-        g_rl_hist_draft[i] = "";
-        i = i + 1i64;
-    }
-    pass(NIL);
-};
-
 // ── History helpers ───────────────────────────────────────────────────────────
 
 /// Lazily initialize the ahash for a slot (100-entry capacity for history ring buffer).
@@ -100,7 +79,6 @@ func:_hist_ensure = NIL(int64:slot) {
 
 /// Add a non-empty line to history for the given pane slot (ring buffer).
 pub func:serial_history_add = NIL(int64:slot, string:line) {
-    drop(_ensure_init());
     if (slot < 0i64 || slot >= 64i64) { pass(NIL); }
     if (string_is_empty(line)) { pass(NIL); }
     drop(_hist_ensure(slot));
@@ -118,7 +96,6 @@ pub func:serial_history_add = NIL(int64:slot, string:line) {
 
 /// Navigate one step back in history. Returns the previous line, or "" if at start.
 pub func:serial_history_prev = string(int64:slot) {
-    drop(_ensure_init());
     if (slot < 0i64 || slot >= 64i64) { pass(""); }
     int64:cnt = g_rl_hist_count[slot];
     if (cnt == 0i64) { pass(""); }
@@ -140,7 +117,6 @@ pub func:serial_history_prev = string(int64:slot) {
 
 /// Navigate one step forward in history. Returns the next line, or "" (draft) if at current.
 pub func:serial_history_next = string(int64:slot) {
-    drop(_ensure_init());
     if (slot < 0i64 || slot >= 64i64) { pass(""); }
     int64:nav = g_rl_hist_nav[slot];
     if (nav == 0i64) { pass(""); }  // already at current line
@@ -161,7 +137,6 @@ pub func:serial_history_next = string(int64:slot) {
 
 /// Clear the history and reset navigation for the given pane slot.
 pub func:serial_history_clear = NIL(int64:slot) {
-    drop(_ensure_init());
     if (slot < 0i64 || slot >= 64i64) { pass(NIL); }
     drop(_hist_ensure(slot));
     int64:h = g_rl_hist_handle[slot];
@@ -342,7 +317,6 @@ func:_handle_readline = string(int64:slot, string:key) {
 /// Returns the data string to send to the serial port (may be empty).
 /// In readline mode, also updates the per-slot line buffer.
 pub func:serial_input_handle_key = string(int64:slot, string:key, int64:mode) {
-    drop(_ensure_init());
     if (slot < 0i64 || slot >= 64i64) { pass(""); }
     if (string_is_empty(key)) { pass(""); }
 
@@ -383,7 +357,6 @@ pub func:serial_input_handle_key = string(int64:slot, string:key, int64:mode) {
 /// In RAW mode: echo what was typed (the key itself).
 /// In TEXT/READLINE mode: echo printable chars, show cursor movements, etc.
 pub func:serial_input_get_echo = string(int64:slot, string:key, int64:mode) {
-    drop(_ensure_init());
     if (mode == SERIAL_INPUT_RAW) {
         pass(key);  // raw: device echoes; we echo locally too
     }
@@ -406,14 +379,12 @@ pub func:serial_input_get_echo = string(int64:slot, string:key, int64:mode) {
 
 /// Returns the current readline buffer for display (e.g. in a status bar).
 pub func:serial_input_get_line = string(int64:slot) {
-    drop(_ensure_init());
     if (slot < 0i64 || slot >= 64i64) { pass(""); }
     pass(g_rl_line[slot]);
 };
 
 /// Returns the current cursor position within the readline buffer.
 pub func:serial_input_get_cursor = int64(int64:slot) {
-    drop(_ensure_init());
     if (slot < 0i64 || slot >= 64i64) { pass(0i64); }
     pass(g_rl_cursor[slot]);
 };
