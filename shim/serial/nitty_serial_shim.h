@@ -209,14 +209,10 @@ int64_t nitty_serial_modem_ri(int64_t status);  /* 1 if RI (ring indicator) is a
  * Returns 1 on success, -1 on write error. */
 int64_t nitty_serial_write_byte_delayed(int64_t fd, int64_t byte_val, int64_t delay_us);
 
-
 /* ═══════════════════════════════════════════════════════════════════════
- * Byte-level string helpers (v0.9.1)
+ * Hexdump formatter (v0.9.1)
+ * nitty_serial_byte_at() was removed — use the string_byte_at() compiler builtin.
  * ═══════════════════════════════════════════════════════════════════════ */
-
-/* Extract the integer byte value of character at index i in a string.
- * Returns the byte value (0–255), or -1 if i is out of range. */
-int64_t nitty_serial_byte_at(const char *s, int64_t i);
 
 /* Format data as an xxd-style hex dump starting at byte_offset.
  * Output is stored in an internal static 64KB buffer.
@@ -225,9 +221,6 @@ int64_t nitty_serial_byte_at(const char *s, int64_t i);
  * max_bytes: maximum number of bytes from data to format (0 = no limit). */
 const char *nitty_serial_hexdump(const char *data, int64_t len,
                                   int64_t byte_offset, int64_t max_bytes);
-
-/* Returns the length in bytes of the last nitty_serial_hexdump result. */
-int64_t nitty_serial_hexdump_len(void);
 
 #ifdef __cplusplus
 }

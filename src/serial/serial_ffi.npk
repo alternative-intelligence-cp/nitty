@@ -104,11 +104,7 @@ extern "serial_shim" {
     // Returns 1 on success, -1 on write error.
     func:nitty_serial_write_byte_delayed = int64(int64:fd, int64:byte_val, int64:delay_us);
 
-    // ── Byte-level string helpers (v0.9.1) ───────────────────────────────────
-
-    // Extract the integer byte value of character at index i in a string.
-    // Returns 0..255, or -1 if out of range.
-    func:nitty_serial_byte_at = int64(string:s, int64:i);
+    // ── Hexdump formatter (v0.9.1) ───────────────────────────────────────────
 
     // Format data as an xxd-style hex dump.
     // len: number of bytes in data to format (use string_length(data))
@@ -116,7 +112,4 @@ extern "serial_shim" {
     // max_bytes: cap at this many bytes (0 = no limit)
     // Returns a pointer to the formatted string (valid until next call).
     func:nitty_serial_hexdump = string(string:data, int64:len, int64:byte_offset, int64:max_bytes);
-
-    // Returns the byte length of the last nitty_serial_hexdump result.
-    func:nitty_serial_hexdump_len = int64();
 }

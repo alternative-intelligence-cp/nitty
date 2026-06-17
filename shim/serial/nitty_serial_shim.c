@@ -651,26 +651,18 @@ int64_t nitty_serial_write_byte_delayed(int64_t fd, int64_t byte_val, int64_t de
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * Byte-level string helpers (v0.9.1)
+ * Hexdump formatter (v0.9.1)
+ * Note: nitty_serial_byte_at() was removed in v0.9.1 cleanup — the compiler
+ * now has a native string_byte_at(s, i) -> int64 builtin (v0.60.7).
  * ═══════════════════════════════════════════════════════════════════════ */
-
-int64_t nitty_serial_byte_at(const char *s, int64_t i)
-{
-    if (!s || i < 0) return -1;
-    size_t len = strlen(s);
-    if ((size_t)i >= len) return -1;
-    return (int64_t)((unsigned char)s[i]);
-}
 
 /* Internal static hexdump buffer (64 KB). */
 static char s_hexdump_buf[65536];
-static int64_t s_hexdump_len = 0;
 
 const char *nitty_serial_hexdump(const char *data, int64_t len,
                                   int64_t byte_offset, int64_t max_bytes)
 {
     s_hexdump_buf[0] = '\0';
-    s_hexdump_len = 0;
 
     if (!data || len <= 0) return s_hexdump_buf;
 
@@ -711,11 +703,5 @@ const char *nitty_serial_hexdump(const char *data, int64_t len,
         *out++ = '\n';
     }
     *out = '\0';
-    s_hexdump_len = (int64_t)(out - s_hexdump_buf);
     return s_hexdump_buf;
-}
-
-int64_t nitty_serial_hexdump_len(void)
-{
-    return s_hexdump_len;
 }
