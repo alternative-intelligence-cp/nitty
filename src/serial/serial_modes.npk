@@ -30,6 +30,7 @@
 
 use "../../src/serial/serial_ffi.npk".*;
 use "../../src/serial/serial_port.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick/stdlib/string.npk".str_byte_at;
 
 // ── Input mode constants ──────────────────────────────────────────────────────
 
@@ -43,8 +44,25 @@ pub fixed int64:SERIAL_OUTPUT_TEXT    = 0i64;
 pub fixed int64:SERIAL_OUTPUT_HEXDUMP = 1i64;
 
 
+// ── Special key constants (GDK-independent string representation) ─────────────
+// These match the key strings produced by terminal_widget key handler.
+
+pub fixed string:SKEY_ENTER     = "\r";
+pub fixed string:SKEY_BACKSPACE = "\x7f";
+pub fixed string:SKEY_CTRL_C   = "\x03";
+pub fixed string:SKEY_CTRL_D   = "\x04";
+pub fixed string:SKEY_CTRL_U   = "\x15";  // kill line
+pub fixed string:SKEY_UP       = "\x1b[A";
+pub fixed string:SKEY_DOWN     = "\x1b[B";
+pub fixed string:SKEY_LEFT     = "\x1b[D";
+pub fixed string:SKEY_RIGHT    = "\x1b[C";
+pub fixed string:SKEY_HOME     = "\x1b[H";
+pub fixed string:SKEY_END      = "\x1b[F";
+pub fixed string:SKEY_DELETE   = "\x1b[3~";
+
 // ── Per-pane readline line buffer ─────────────────────────────────────────────
-// 64 slots (one per pane). Default-initialized to "" by the compiler.
+// 64 slots (one per pane). string[N] globals are zero-initialized to "" by the
+// compiler (v0.60.7+).
 
 string[64]:g_rl_line;
 int64[64]:g_rl_cursor = [0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64,0i64];
@@ -297,10 +315,10 @@ func:_handle_readline = string(int64:slot, string:key) {
 
     // Printable character: insert at cursor
     int64:klen = string_length(key);
+    int64:byte_val = raw str_byte_at(key, 0i64);
     if (klen == 1i64) {
-        int64:code = nitty_serial_byte_at(key, 0i64);
         // Printable range: 0x20..0x7e
-        bool:printable = code >= 32i64 && code <= 126i64;
+        bool:printable = byte_val >= 32i64 && byte_val <= 126i64;
         if (printable) {
             drop(_rl_insert(slot, key));
             pass("");
@@ -519,12 +537,12 @@ pub func:serial_slow_feed = NIL(int64:fd, string:data, int64:char_delay_ms, int6
     int64:len = string_length(data);
     int64:i   = 0i64;
     while (i < len) {
-        int64:code = nitty_serial_byte_at(data, i);
-        if (code >= 0i64) {
-            int64:delay = char_us;
-            bool:is_nl  = code == 10i64 || code == 13i64;
+        int64:byte_val = raw str_byte_at(data, i);
+        if (byte_val >= 0i64) {
+            int64:delay  = char_us;
+            bool:is_nl   = byte_val == 10i64 || byte_val == 13i64;
             if (is_nl) { delay = delay + line_us; }
-            drop(nitty_serial_write_byte_delayed(fd, code, delay));
+            drop(nitty_serial_write_byte_delayed(fd, byte_val, delay));
         }
         i = i + 1i64;
     }
