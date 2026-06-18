@@ -1,12 +1,13 @@
-// tests/test_scrollback.npk — Scrollback ring buffer unit tests (v0.3.4)
+// tests/test_scrollback.npk — Scrollback ring buffer unit tests (v0.3.4 / v0.12.2)
 //
 // Tests the scrollback.npk ring buffer in isolation:
 //   T01-T04: Basic push and retrieval (get(0) = newest)
-//   T05-T08: Ring-buffer wrap-around (overwrite oldest when full)
+//   T05-T08: Ring-buffer wrap-around
 //   T09-T10: scrollback_clear() resets count
 //   T11-T12: scrollback_set_cols() clears buffer
 //   T13-T15: SB_MAX_LINES / SB_MAX_COLS constant checks
 //   T16-T18: Out-of-bounds access returns safe defaults
+//   T19-T28: v0.12.2 hot/warm tier compression (push > hot_limit rows)
 //
 // All pass → exit 0.
 // Uses a synthetic grid approach: we populate grid cells manually then call
@@ -211,6 +212,64 @@ func:test_oob = NIL() {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// T19-T28: v0.12.2 hot/warm tier compression
+// ─────────────────────────────────────────────────────────────────────────────
+func:test_hot_warm_tier = NIL() {
+    // Use a tiny hot_limit (3 rows) so warm tier fills quickly.
+    // scrollback_set_hot_limit resets both tiers.
+    drop(grid_init(24i64, 8i64));
+    drop(scrollback_init(8i64));
+    drop(scrollback_set_hot_limit(3i64));
+
+    // T19: hot_limit now 3
+    drop(check("T19 hot_limit==3", raw scrollback_get_hot_limit(), 3i64));
+
+    // Push 5 rows: hot fills at 3, rows 4+5 cause compression
+    // Row A (cp=0x41)
+    drop(fill_grid_row(0i64, 0x41i64, 8i64));
+    drop(scrollback_push_row(0i64));
+    // Row B (cp=0x42)
+    drop(fill_grid_row(0i64, 0x42i64, 8i64));
+    drop(scrollback_push_row(0i64));
+    // Row C (cp=0x43)
+    drop(fill_grid_row(0i64, 0x43i64, 8i64));
+    drop(scrollback_push_row(0i64));
+    // Row D (cp=0x44) — triggers compression of oldest hot (row A)
+    drop(fill_grid_row(0i64, 0x44i64, 8i64));
+    drop(scrollback_push_row(0i64));
+    // Row E (cp=0x45) — triggers compression of next oldest (row B)
+    drop(fill_grid_row(0i64, 0x45i64, 8i64));
+    drop(scrollback_push_row(0i64));
+
+    // T20: total len == 5
+    drop(check("T20 len==5 after 5 pushes", raw scrollback_len(), 5i64));
+
+    // T21: hot_count == 3 (hot tier holds newest 3: C, D, E)
+    drop(check("T21 hot_count==3", raw scrollback_hot_count(), 3i64));
+
+    // T22: warm_count == 2 (A and B compressed)
+    drop(check("T22 warm_count==2", raw scrollback_warm_count(), 2i64));
+
+    // T23: warm_bytes > 0
+    int64:wb = raw scrollback_warm_bytes();
+    int64:wb_pass = 0i64;
+    if (wb > 0i64) { wb_pass = 1i64; }
+    drop(check("T23 warm_bytes>0", wb_pass, 1i64));
+
+    // T24: hot rows correct — idx 0 = E (newest), idx 1 = D, idx 2 = C
+    drop(check("T24 hot[0]=E", raw scrollback_get_cp(0i64, 0i64), 0x45i64));
+    drop(check("T25 hot[1]=D", raw scrollback_get_cp(1i64, 0i64), 0x44i64));
+    drop(check("T26 hot[2]=C", raw scrollback_get_cp(2i64, 0i64), 0x43i64));
+
+    // T27: warm rows correct — idx 3 = B (newer warm), idx 4 = A (oldest)
+    // These require decompression from warm tier
+    drop(check("T27 warm[3]=B", raw scrollback_get_cp(3i64, 0i64), 0x42i64));
+    drop(check("T28 warm[4]=A", raw scrollback_get_cp(4i64, 0i64), 0x41i64));
+
+    pass(NIL);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -221,6 +280,7 @@ func:main = int32() {
     drop(test_clear());
     drop(test_set_cols());
     drop(test_oob());
+    drop(test_hot_warm_tier());
 
     if (g_fail > 0i64) {
         drop(write_stdout("FAILED: some scrollback tests failed.\n"));

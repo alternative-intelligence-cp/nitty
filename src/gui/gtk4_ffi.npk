@@ -765,4 +765,34 @@ extern "nitty_gtk4_shim" {
     func:nitty_serial_toolbar_poll_baud        = int64();
     func:nitty_serial_toolbar_poll_input_mode  = int64();
     func:nitty_serial_toolbar_poll_output_mode = int64();
+
+    // ── v0.11.3: Secure memory clearing ──────────────────────────────────────
+    // Zero the backing memory of a string before GC reclaims it.
+    // Nitpick passes string as const char* on the C side; C does explicit_bzero.
+    // Use via ssh_security.npk secure_clear() — do not call directly.
+    func:nitty_shim_memzero = NIL(string:data, int64:len);
+
+    // ── v0.13.0: Accessibility (GtkAccessibleText / AT-SPI) ──────────────────
+    // Architecture: Nitpick pushes a UTF-8 snapshot of the visible terminal grid
+    // each frame; AT-SPI/Orca reads the static C buffer synchronously.
+    // Call sequence per draw frame (managed in accessibility.npk):
+    //   1. nitty_a11y_push_snapshot(text, len, cursor_offset)
+    //   2. nitty_a11y_notify_text_changed()   — if new output was received
+    //   3. nitty_a11y_notify_caret_moved()    — if cursor moved
+    //
+    // nitty_a11y_init_terminal             — create NittyTerminalAccessible GObject
+    // nitty_a11y_push_snapshot             — push UTF-8 screen dump to C buffer
+    // nitty_a11y_set_label                 — update accessible name (tab title)
+    // nitty_a11y_announce                  — gtk_accessible_announce (live region)
+    //   priority: 0=LOW  1=MEDIUM  2=HIGH
+    // nitty_a11y_notify_text_changed       — emit text-changed AT-SPI event
+    // nitty_a11y_notify_caret_moved        — emit caret-moved AT-SPI event
+    // nitty_a11y_system_prefers_high_contrast — 1 if GTK HC system pref active
+    func:nitty_a11y_init_terminal               = NIL();
+    func:nitty_a11y_push_snapshot               = NIL(string:utf8_text, int64:len, int64:cursor_offset);
+    func:nitty_a11y_set_label                   = NIL(string:label);
+    func:nitty_a11y_announce                    = NIL(string:message, int64:priority);
+    func:nitty_a11y_notify_text_changed         = NIL();
+    func:nitty_a11y_notify_caret_moved          = NIL();
+    func:nitty_a11y_system_prefers_high_contrast = int64();
 }

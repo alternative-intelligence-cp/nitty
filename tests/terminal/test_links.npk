@@ -37,16 +37,15 @@ func:print_line = NIL(string:msg) {
     pass(NIL);
 };
 
-func:check = NIL(string:label, int64:expected, int64:got) {
+func:check = NIL(string:name, int64:expected, int64:got) {
     if (expected == got) {
         g_pass = g_pass + 1i64;
-        drop(print_line("[PASS] " + label + "\n"));
+        drop(print_line("[PASS] " + name + "\n"));
         pass(NIL);
     }
     g_fail = g_fail + 1i64;
-    drop(print_line("[FAIL] " + label
-        + " expected=" + string_from_int(expected)
-        + " got=" + string_from_int(got) + "\n"));
+    string:msg = string_concat(string_concat(string_concat(string_concat("[FAIL] ", name), " expected="), string_from_int(expected)), string_concat(" got=", string_concat(string_from_int(got), "\n")));
+    drop(print_line(msg));
     pass(NIL);
 };
 
@@ -57,9 +56,7 @@ func:check_str = NIL(string:label, string:expected, string:got) {
         pass(NIL);
     }
     g_fail = g_fail + 1i64;
-    drop(print_line("[FAIL] " + label
-        + " expected=\"" + expected
-        + "\" got=\"" + got + "\"\n"));
+    drop(print_line(string_concat(string_concat(string_concat(string_concat("[FAIL] ", label), " expected=\""), expected), string_concat("\" got=\"", string_concat(got, "\"\n")))));
     pass(NIL);
 };
 
@@ -251,8 +248,8 @@ func:main = int32() {
     drop(test_11());
 
     drop(print_line("---\n"));
-    drop(print_line("Passed: " + string_from_int(g_pass) + "\n"));
-    drop(print_line("Failed: " + string_from_int(g_fail) + "\n"));
+    drop(print_line(string_concat("Passed: ", string_concat(string_from_int(g_pass), "\n"))));
+    drop(print_line(string_concat("Failed: ", string_concat(string_from_int(g_fail), "\n"))));
 
     if (g_fail == 0i64) {
         drop(print_line("All tests passed.\n"));

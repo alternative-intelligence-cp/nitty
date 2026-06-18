@@ -798,6 +798,24 @@ pub func:profile_set_serial_dev = NIL(int64:slot, string:dev) {
     pass(NIL);
 };
 
+pub func:profile_set_name = NIL(int64:slot, string:name) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(NIL); }
+    g_prof_name[slot] = name;
+    pass(NIL);
+};
+
+pub func:profile_set_group = NIL(int64:slot, string:group) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(NIL); }
+    g_prof_group[slot] = group;
+    pass(NIL);
+};
+
+pub func:profile_set_type = NIL(int64:slot, int64:type) {
+    if (slot < 0i64 || slot >= g_prof_count) { pass(NIL); }
+    g_prof_type[slot] = type;
+    pass(NIL);
+};
+
 /// Get serial baud rate for profile slot.
 pub func:profile_get_serial_baud = int64(int64:slot) {
     if (slot < 0i64 || slot >= g_prof_count) { pass(115200i64); }

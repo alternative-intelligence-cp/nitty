@@ -84,7 +84,7 @@ func:_build_match_info = string() {
 
     // Format: "N / M" (1-indexed current)
     int64:disp = current + 1i64;
-    string:s = string_from_int(disp) + " / " + string_from_int(count);
+    string:s = string_concat(string_concat(string_from_int(disp), " / "), string_from_int(count));
     pass(s);
 };
 

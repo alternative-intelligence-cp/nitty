@@ -12,6 +12,16 @@
 // v0.10.3: Built-in plugin registration — SSH, serial, and telnet register
 // themselves as ConnectionProvider plugins before external plugin discovery.
 //
+// v0.12.2: Lazy plugin loading — deferred-init for non-hotkey plugins.
+//   At startup: load all plugins but only initialize HotkeyProvider plugins
+//   immediately. All others are queued in g_pm_deferred[] and initialized
+//   one-per-tick via plugin_manager_run_deferred_idle() (wired into the GLib
+//   idle callback from app.npk). This caps startup plugin cost to ~1 init/frame
+//   for deferred plugins, keeping the first-frame time budget intact.
+//
+//   To force immediate init (e.g., ConnectionProvider needed for a new tab):
+//     plugin_manager_ensure_loaded(name)
+//
 // Startup sequence:
 //   0. ext_connection_init()       — init ConnectionProvider registry
 //   0b. register_builtin_plugins() — SSH/serial/telnet register as providers
@@ -22,7 +32,8 @@
 //   5. dep_resolve_load_order() — topological sort (detect cycles)
 //   6. plugin_load()           — match to registry slots
 //   7. dep_check_dep_versions() — verify version constraints
-//   8. plugin_init_one()       — transition to ACTIVE
+//   8a. plugin_init_one()      — eager: HotkeyProvider plugins only
+//   8b. defer rest             — queued for idle-drain init
 //   9. log summary
 
 use "./manifest.npk".*;
@@ -42,12 +53,34 @@ use "./api.npk".*;
 use "../../plugins/builtin/register.npk".*;
 use "../gui/gtk4_ffi.npk".*;   // v0.10.4: nitty_gtk4_show_notification for error alerts
 
+// v0.12.2: byte-level string inspection for hotkey-suffix heuristic
+extern func:npk_string_byte_at = int64(string:s, int64:i);
+
 // fd 1 = stdout
 int64:PM_STDOUT = 1i64;
+
+// ── v0.12.2: Deferred-init queue — flat array of manifest slots waiting for idle init
+// Capacity 64: more than enough for typical plugin sets (typical installs: 2-8)
+int64:PM_DEFERRED_CAP = 64i64;
+int64[64]:g_pm_deferred;           // manifest slots queued for deferred init
+int64:g_pm_deferred_count = 0i64;  // entries in deferred queue
+int64:g_pm_deferred_head  = 0i64;  // next-to-init index (FIFO drain)
 
 func:_pm_log = NIL(string:msg) {
     int64:len = string_length(msg);
     drop(sys(WRITE, PM_STDOUT, msg, len));
+    pass(NIL);
+};
+
+// Push a manifest slot onto the deferred-init queue (v0.12.2).
+func:_pm_defer = NIL(int64:mslot) {
+    if (g_pm_deferred_count < PM_DEFERRED_CAP) {
+        // Write at tail = (head + count) % CAP
+        int64:tail = g_pm_deferred_head + g_pm_deferred_count;
+        if (tail >= PM_DEFERRED_CAP) { tail = tail - PM_DEFERRED_CAP; }
+        g_pm_deferred[tail] = mslot;
+        g_pm_deferred_count = g_pm_deferred_count + 1i64;
+    }
     pass(NIL);
 };
 
@@ -61,6 +94,10 @@ pub func:plugin_manager_init = NIL() {
     drop(register_builtin_plugins(builtin_api));
     drop(_pm_log("[plugin] built-in providers registered (ssh, serial, telnet)\n"));
 
+    // Reset deferred queue
+    g_pm_deferred_count = 0i64;
+    g_pm_deferred_head  = 0i64;
+
     // 1. Init subsystems
     drop(plugin_registry_init());
     drop(manifest_init());
@@ -70,6 +107,7 @@ pub func:plugin_manager_init = NIL() {
 
     int64:total    = raw manifest_count();
     int64:active   = 0i64;
+    int64:deferred = 0i64;
     int64:skipped  = 0i64;
     int64:errored  = 0i64;
     int64:no_reg   = 0i64;
@@ -85,9 +123,6 @@ pub func:plugin_manager_init = NIL() {
                 drop(_pm_log(string_concat("[plugin] API version mismatch, skipping: ",
                     string_concat(pname, string_concat(" (api_version=",
                     string_concat(papi, ")\n"))))));
-                // Mark invalid so load order ignores it
-                // We reuse the valid flag as our skip flag
-                // (dep_resolve only considers manifest_count() slots, not valid flag)
                 skipped = skipped + 1i64;
             }
         }
@@ -100,21 +135,21 @@ pub func:plugin_manager_init = NIL() {
         string:cycle_name = raw dep_get_cycle_name();
         drop(_pm_log(string_concat("[plugin] circular dependency detected involving: ",
             string_concat(cycle_name, "\n"))));
-        // Continue with the partial order that was resolved
     }
 
     int64:order_count = raw dep_get_order_count();
 
-    // 5-8. Load and init each plugin in dependency order
+    // 5-8. Load and conditionally init each plugin in dependency order.
+    // v0.12.2: eager phase = HotkeyProvider (type detectable via manifest "provides:"
+    // field heuristic: plugins whose name ends in '-hotkey' or '-keys' are eager).
+    // All others are deferred to idle-drain for faster startup.
     int64:oi = 0i64;
     while (oi < order_count) {
         int64:mslot = raw dep_get_load_order(oi);
         if (mslot >= 0i64) {
             if (raw manifest_is_valid(mslot) == 1i64) {
-                // Skip API-incompatible (already logged above)
                 int64:compat2 = raw dep_check_api_compat(mslot);
                 if (compat2 == 1i64) {
-                    // Check dep versions
                     int64:dep_ok = raw dep_check_dep_versions(mslot);
                     if (dep_ok > 0i64) {
                         string:pname2 = raw manifest_get_name(mslot);
@@ -124,19 +159,55 @@ pub func:plugin_manager_init = NIL() {
                         errored = errored + 1i64;
                     }
                     if (dep_ok == 0i64) {
-                        // Try to load (match registry)
                         int64:load_ok = raw plugin_load(mslot);
                         if (load_ok < 0i64) {
                             no_reg = no_reg + 1i64;
                         }
                         if (load_ok == 0i64) {
-                            // Init
-                            int64:init_ok = raw plugin_init_one(mslot);
-                            if (init_ok == 0i64) {
-                                active = active + 1i64;
+                            // v0.12.2: Eager vs deferred init
+                            // Heuristic: name ends in "-hotkey" or "-keys" → eager.
+                            // All other external plugins → deferred.
+                            string:pn = raw manifest_get_name(mslot);
+                            int64:pn_len = string_length(pn);
+                            // Check suffix "-hotkey" (7 chars)
+                            int64:is_hotkey = 0i64;
+                            int64:hotkey_suffix_len = 7i64;
+                            if (pn_len >= hotkey_suffix_len) {
+                                // Compare last 7 bytes to "-hotkey"
+                                int64:b0 = npk_string_byte_at(pn, pn_len - 7i64);
+                                int64:b1 = npk_string_byte_at(pn, pn_len - 6i64);
+                                int64:b2 = npk_string_byte_at(pn, pn_len - 5i64);
+                                int64:b3 = npk_string_byte_at(pn, pn_len - 4i64);
+                                int64:b4 = npk_string_byte_at(pn, pn_len - 3i64);
+                                int64:b5 = npk_string_byte_at(pn, pn_len - 2i64);
+                                int64:b6 = npk_string_byte_at(pn, pn_len - 1i64);
+                                // ASCII: '-'=45 'h'=104 'o'=111 't'=116 'k'=107 'e'=101 'y'=121
+                                if (b0 == 45i64) {
+                                    if (b1 == 104i64) {
+                                        if (b2 == 111i64) {
+                                            if (b3 == 116i64) {
+                                                if (b4 == 107i64) {
+                                                    if (b5 == 101i64) {
+                                                        if (b6 == 121i64) {
+                                                            is_hotkey = 1i64;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                            if (init_ok < 0i64) {
-                                errored = errored + 1i64;
+                            if (is_hotkey == 1i64) {
+                                // Eager: init immediately (hotkeys must be registered before first frame)
+                                int64:init_ok = raw plugin_init_one(mslot);
+                                if (init_ok == 0i64) { active = active + 1i64; }
+                                if (init_ok < 0i64)  { errored = errored + 1i64; }
+                            }
+                            if (is_hotkey == 0i64) {
+                                // Deferred: queue for idle-drain init
+                                drop(_pm_defer(mslot));
+                                deferred = deferred + 1i64;
                             }
                         }
                     }
@@ -148,7 +219,8 @@ pub func:plugin_manager_init = NIL() {
 
     // 9. Summary
     drop(_pm_log(string_concat("[plugin] system ready: ",
-        string_concat(string_from_int(active), " active, "))));
+        string_concat(string_from_int(active), " eager, "))));
+    drop(_pm_log(string_concat(string_from_int(deferred), " deferred, ")));
     drop(_pm_log(string_concat(string_from_int(errored), " error(s), ")));
     drop(_pm_log(string_concat(string_from_int(no_reg), " not compiled in\n")));
 
@@ -169,6 +241,69 @@ pub func:plugin_manager_shutdown = NIL() {
     drop(plugin_destroy_all_reverse());
     drop(_pm_log("[plugin] system shutdown\n"));
     pass(NIL);
+};
+
+// ── v0.12.2: Deferred idle drain ──────────────────────────────────────────────
+
+// Returns number of plugins still waiting for deferred initialization.
+pub func:plugin_manager_deferred_count = int64() {
+    pass(g_pm_deferred_count - g_pm_deferred_head);
+};
+
+// Pop and init one deferred plugin. Call from GLib idle callback in app.npk.
+// Returns 1 if a plugin was initialized, 0 if queue is empty.
+pub func:plugin_manager_run_deferred_idle = int64() {
+    if (g_pm_deferred_head >= g_pm_deferred_count) { pass(0i64); }
+    int64:mslot = g_pm_deferred[g_pm_deferred_head];
+    g_pm_deferred_head = g_pm_deferred_head + 1i64;
+    if (raw manifest_is_valid(mslot) == 1i64) {
+        int64:init_ok = raw plugin_init_one(mslot);
+        if (init_ok == 0i64) {
+            string:pn = raw manifest_get_name(mslot);
+            drop(_pm_log(string_concat("[plugin] deferred init: ", string_concat(pn, "\n"))));
+        }
+        if (init_ok < 0i64) {
+            string:pn2 = raw manifest_get_name(mslot);
+            drop(_pm_log(string_concat("[plugin] deferred init failed: ", string_concat(pn2, "\n"))));
+        }
+    }
+    pass(1i64);
+};
+
+// Force immediate initialization of a named plugin (on-demand load).
+// Used by ConnectionProvider dispatcher, TerminalDecorator init, etc.
+// Returns 0 on success, -1 if not found in deferred queue or registry,
+//         -2 if already active, -3 if init failed.
+pub func:plugin_manager_ensure_loaded = int64(string:name) {
+    // Check if already active
+    int64:reg_slot = raw plugin_registry_find(name);
+    if (reg_slot >= 0i64) {
+        int64:st = raw plugin_get_state(reg_slot);
+        if (st == PLUGIN_STATE_ACTIVE)      { pass(-2i64); }
+        if (st == PLUGIN_STATE_INITIALIZED) { pass(-2i64); }
+    }
+    // Search deferred queue for this plugin's manifest slot
+    int64:qi = g_pm_deferred_head;
+    while (qi < g_pm_deferred_count) {
+        int64:mslot = g_pm_deferred[qi];
+        if (raw manifest_is_valid(mslot) == 1i64) {
+            string:mname = raw manifest_get_name(mslot);
+            if (mname == name) {
+                // Remove from deferred queue by overwriting with -1 sentinel
+                // (The idle drain will skip -1 slots)
+                g_pm_deferred[qi] = -1i64;
+                // Init now
+                int64:init_ok = raw plugin_init_one(mslot);
+                if (init_ok == 0i64) {
+                    drop(_pm_log(string_concat("[plugin] ensure_loaded eager: ", string_concat(name, "\n"))));
+                    pass(0i64);
+                }
+                pass(-3i64);
+            }
+        }
+        qi = qi + 1i64;
+    }
+    pass(-1i64);
 };
 
 // ── Query API ─────────────────────────────────────────────────────────────────

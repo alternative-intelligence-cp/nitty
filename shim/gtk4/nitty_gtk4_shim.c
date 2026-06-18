@@ -24,6 +24,11 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+
+/* ── v0.11.3: Security constants ─────────────────────────────────────────── */
+/* Maximum single-allocation buffer size for any shim-managed buffer.        */
+#define NITTY_SHIM_MAX_BUF   32768
+
 /* v0.7.3: X11 keep-above support */
 #ifdef GDK_WINDOWING_X11
 #include <gdk/x11/gdkx.h>
@@ -124,6 +129,11 @@ static void on_da_resize(GtkDrawingArea *area, gint width, gint height, gpointer
 
 /* on_activate — creates the window with pre-configured settings.
  * If g_use_drawing_area is set, creates the DrawingArea here (GTK is now init'd). */
+/* Sidebar early attach state */
+static GtkWidget *g_sidebar_widget = NULL;
+static GtkWidget *g_sftp_panel_widget = NULL;
+static GtkWidget *g_sftp_paned = NULL;
+
 static void on_activate(GtkApplication *app, gpointer user_data)
 {
     (void)user_data;
@@ -148,6 +158,7 @@ static void on_activate(GtkApplication *app, gpointer user_data)
 
     /* Create DrawingArea NOW — GTK is initialized at this point */
     if (g_use_drawing_area) {
+    if (!gtk_is_initialized()) gtk_init();
         GtkWidget *da = gtk_drawing_area_new();
         if (da != NULL) {
             gtk_widget_set_hexpand(da, TRUE);
@@ -157,8 +168,45 @@ static void on_activate(GtkApplication *app, gpointer user_data)
             );
             /* Connect resize signal for grid recalculation */
             g_signal_connect(da, "resize", G_CALLBACK(on_da_resize), NULL);
-            gtk_window_set_child(GTK_WINDOW(window), da);
             g_drawing_area = da;
+            
+            if (g_sidebar_widget) {
+                GtkWidget *paned1 = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+                gtk_paned_set_start_child(GTK_PANED(paned1), g_sidebar_widget);
+                gtk_paned_set_position(GTK_PANED(paned1), 240);
+                gtk_paned_set_shrink_start_child(GTK_PANED(paned1), FALSE);
+                gtk_paned_set_resize_start_child(GTK_PANED(paned1), FALSE);
+                gtk_paned_set_resize_end_child(GTK_PANED(paned1), TRUE);
+                
+                if (g_sftp_panel_widget) {
+                    GtkWidget *paned2 = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+                    gtk_paned_set_start_child(GTK_PANED(paned2), da);
+                    gtk_paned_set_end_child(GTK_PANED(paned2), g_sftp_panel_widget);
+                    gtk_paned_set_position(GTK_PANED(paned2), 10000); /* start maximised */
+                    gtk_paned_set_shrink_start_child(GTK_PANED(paned2), FALSE);
+                    gtk_paned_set_resize_start_child(GTK_PANED(paned2), TRUE);
+                    gtk_paned_set_resize_end_child(GTK_PANED(paned2), FALSE);
+                    gtk_paned_set_end_child(GTK_PANED(paned1), paned2);
+                    g_sftp_paned = paned2;
+                } else {
+                    gtk_paned_set_end_child(GTK_PANED(paned1), da);
+                }
+                gtk_window_set_child(GTK_WINDOW(window), paned1);
+            } else {
+                if (g_sftp_panel_widget) {
+                    GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+                    gtk_paned_set_start_child(GTK_PANED(paned), da);
+                    gtk_paned_set_end_child(GTK_PANED(paned), g_sftp_panel_widget);
+                    gtk_paned_set_position(GTK_PANED(paned), 10000);
+                    gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
+                    gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
+                    gtk_paned_set_resize_end_child(GTK_PANED(paned), FALSE);
+                    gtk_window_set_child(GTK_WINDOW(window), paned);
+                    g_sftp_paned = paned;
+                } else {
+                    gtk_window_set_child(GTK_WINDOW(window), da);
+                }
+            }
         }
     }
 
@@ -607,8 +655,12 @@ static void on_draw_func(GtkDrawingArea *area,
          *   then calls renderer_sync_frame() to push TerminalState → C render grid.
          *   nitty_render_frame() then paints the updated grid via Cairo/Pango. */
         tw_on_draw();
-        /* v0.0.4 legacy: also drive C-side grid render (belt+suspenders) */
-        nitty_grid_render((int64_t)(uintptr_t)cr, (int64_t)width, (int64_t)height);
+        /* v0.12.1: legacy nitty_grid_render() gated off — nitty_render.c (v0.3.6)
+         * handles all painting via Cairo/Pango atlas path. The legacy grid
+         * renderer (nitty_grid.c) was called every frame as belt+suspenders but
+         * produced no visible output (its cells are never populated in the modern
+         * terminal path) and wasted one full per-frame render pass. */
+        /* nitty_grid_render((int64_t)(uintptr_t)cr, (int64_t)width, (int64_t)height); */
     } else {
         /* v0.0.2 fallback: render the text fill grid */
         nitty_render_frame(cr, width, height);
@@ -1562,6 +1614,7 @@ int64_t nitty_gtk4_paned_get_position(int64_t paned_ptr)
 
 int64_t nitty_gtk4_pane_drawing_area_new(void)
 {
+    if (!gtk_is_initialized()) gtk_init();
     GtkWidget *da = gtk_drawing_area_new();
     if (da == NULL) return 0;
     gtk_widget_set_hexpand(da, TRUE);
@@ -3531,6 +3584,10 @@ int64_t nitty_gtk4_cm_event_profile_id(void) {
 /* ── Sidebar Attach ──────────────────────────────────────────────────────── */
 
 void nitty_gtk4_sidebar_attach(int64_t win, int64_t drawing_area, int64_t sidebar) {
+    if (win == 0) {
+        g_sidebar_widget = (GtkWidget *)(uintptr_t)sidebar;
+        return;
+    }
     GtkWindow  *window = GTK_WINDOW((GtkWidget *)(uintptr_t)win);
     GtkWidget  *da     = (GtkWidget *)(uintptr_t)drawing_area;
     GtkWidget  *sb     = (GtkWidget *)(uintptr_t)sidebar;
@@ -3996,7 +4053,7 @@ static SftpPanel g_sftp;
 static int       g_sftp_initialized = 0;
 
 /* Right-hand GtkPaned (SFTP panel on the right of the terminal) */
-static GtkWidget *g_sftp_paned     = NULL;
+// removed
 static int        g_sftp_visible   = 0;
 static int        g_sftp_paned_pos = 280;   /* default panel width */
 
@@ -4228,6 +4285,10 @@ int64_t nitty_gtk4_sftp_create(void)
 void nitty_gtk4_sftp_panel_attach(int64_t win, int64_t drawing_area,
                                    int64_t sftp_panel)
 {
+    if (win == 0) {
+        g_sftp_panel_widget = (GtkWidget *)(uintptr_t)sftp_panel;
+        return;
+    }
     GtkWindow *window  = GTK_WINDOW((GtkWidget *)(uintptr_t)win);
     GtkWidget *da      = (GtkWidget *)(uintptr_t)drawing_area;
     GtkWidget *panel   = (GtkWidget *)(uintptr_t)sftp_panel;
@@ -4929,3 +4990,334 @@ int64_t nitty_serial_toolbar_poll_output_mode(void)
     g_stb_output_changed = -1;
     return (int64_t)val;
 }
+
+/* ── v0.11.3: Secure memory clearing ────────────────────────────────────────
+ * nitty_shim_memzero — zero a memory region in a way that cannot be optimised
+ * out by the compiler.  Used by ssh_security.npk secure_clear() to overwrite
+ * credential strings before they are garbage-collected.
+ *
+ * data_ptr : int64 cast of the buffer address (as returned by Nitpick's
+ *            string_data_ptr() builtin, if available, or the shim helper)
+ * len      : number of bytes to zero
+ *
+ * We use explicit_bzero() (POSIX.1-2017 §B.4) when available, falling back
+ * to a volatile-pointer loop which all major compilers preserve.
+ */
+void nitty_shim_memzero(const char *data, int64_t len)
+{
+    /* Cast away const: Nitpick passes its own string backing store here.
+     * We own the memory; we're deliberately wiping it before GC reclaims it. */
+    if (!data || len <= 0) return;
+    void *p = (void *)(uintptr_t)(const uintptr_t)data;
+#if defined(__GLIBC__) || defined(__OpenBSD__) || defined(__FreeBSD__)
+    explicit_bzero(p, (size_t)len);
+#else
+    volatile unsigned char *vp = (volatile unsigned char *)p;
+    size_t n = (size_t)len;
+    while (n--) *vp++ = 0;
+#endif
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v0.13.0: Accessibility — GtkAccessibleText / NittyTerminalAccessible
+ *
+ * Architecture overview:
+ *   Nitpick calls nitty_a11y_push_snapshot() once per tw_on_draw() frame
+ *   with a UTF-8 dump of the visible grid.  AT-SPI (Orca) calls back into
+ *   get_contents() synchronously; those callbacks read the static buffer.
+ *   This avoids any cross-thread Nitpick global access.
+ *
+ *   NittyTerminalAccessible is a GObject subtype that implements both
+ *   GtkAccessible (role=TERMINAL) and GtkAccessibleText (text queries).
+ *   It lives alongside the DrawingArea in the GTK accessible tree.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Static snapshot buffer ─────────────────────────────────────────── */
+/* Max grid 200×200 cells × 4 bytes/codepoint + 200 newlines + NUL      */
+#define NITTY_A11Y_SNAP_MAX  (200 * 200 * 4 + 201)
+
+static char     g_a11y_snap[NITTY_A11Y_SNAP_MAX];
+static int      g_a11y_snap_len    = 0;
+static int      g_a11y_cursor_off  = 0;   /* flat char offset */
+static int      g_a11y_snap_ready  = 0;   /* 1 after first push */
+
+/* ── Forward declarations ───────────────────────────────────────────── */
+typedef struct _NittyTerminalAccessible NittyTerminalAccessible;
+typedef struct _NittyTerminalAccessibleClass NittyTerminalAccessibleClass;
+
+struct _NittyTerminalAccessible {
+    GtkWidget parent_instance;
+};
+
+struct _NittyTerminalAccessibleClass {
+    GtkWidgetClass parent_class;
+};
+
+/* Forward: GtkAccessibleText vtable registration                       */
+static void nitty_ta_text_iface_init(GtkAccessibleTextInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE(
+    NittyTerminalAccessible,
+    nitty_ta,
+    GTK_TYPE_WIDGET,
+    G_IMPLEMENT_INTERFACE(GTK_TYPE_ACCESSIBLE_TEXT, nitty_ta_text_iface_init)
+)
+
+/* ── GtkAccessibleText vtable callbacks ─────────────────────────────── */
+
+/* Return bytes in [start, end) from the snapshot (char offsets).       */
+static GBytes *
+nitty_ta_get_contents(GtkAccessibleText *self,
+                       unsigned int       start,
+                       unsigned int       end)
+{
+    (void)self;
+    if (!g_a11y_snap_ready || g_a11y_snap_len == 0)
+        return g_bytes_new("", 0);
+
+    /* The snapshot is UTF-8; char offsets == byte offsets for ASCII
+     * and approximate for multi-byte — good enough for AT-SPI purposes. */
+    unsigned int snap_chars = (unsigned int)g_a11y_snap_len;
+    if (start >= snap_chars) start = snap_chars;
+    if (end   >  snap_chars) end   = snap_chars;
+    if (start >= end)
+        return g_bytes_new("", 0);
+
+    return g_bytes_new(g_a11y_snap + start, (gsize)(end - start));
+}
+
+/* Return content at byte offset with granularity boundary.             */
+static GBytes *
+nitty_ta_get_contents_at(GtkAccessibleText             *self,
+                           unsigned int                   offset,
+                           GtkAccessibleTextGranularity   granularity,
+                           unsigned int                  *start_out,
+                           unsigned int                  *end_out)
+{
+    (void)self;
+    if (!g_a11y_snap_ready || g_a11y_snap_len == 0) {
+        *start_out = 0; *end_out = 0;
+        return g_bytes_new("", 0);
+    }
+
+    unsigned int snap_len = (unsigned int)g_a11y_snap_len;
+    if (offset >= snap_len) offset = (snap_len > 0) ? snap_len - 1 : 0;
+
+    unsigned int start = offset;
+    unsigned int end   = offset;
+
+    switch (granularity) {
+    case GTK_ACCESSIBLE_TEXT_GRANULARITY_CHARACTER:
+        /* One character: advance end by one UTF-8 sequence.            */
+        end = start + 1;
+        while (end < snap_len && (g_a11y_snap[end] & 0xC0) == 0x80)
+            end++;
+        break;
+
+    case GTK_ACCESSIBLE_TEXT_GRANULARITY_WORD: {
+        /* Scan back to start of word, forward to end.                  */
+        while (start > 0 && g_a11y_snap[start - 1] != ' '
+               && g_a11y_snap[start - 1] != '\n')
+            start--;
+        end = start;
+        while (end < snap_len && g_a11y_snap[end] != ' '
+               && g_a11y_snap[end] != '\n')
+            end++;
+        break;
+    }
+
+    case GTK_ACCESSIBLE_TEXT_GRANULARITY_LINE:
+    case GTK_ACCESSIBLE_TEXT_GRANULARITY_SENTENCE:
+    case GTK_ACCESSIBLE_TEXT_GRANULARITY_PARAGRAPH: {
+        /* Scan to start of line (newline boundary).                    */
+        while (start > 0 && g_a11y_snap[start - 1] != '\n')
+            start--;
+        end = start;
+        while (end < snap_len && g_a11y_snap[end] != '\n')
+            end++;
+        if (end < snap_len) end++;   /* include the newline */
+        break;
+    }
+
+    default:
+        end = start + 1;
+        break;
+    }
+
+    if (end > snap_len) end = snap_len;
+    *start_out = start;
+    *end_out   = end;
+    return g_bytes_new(g_a11y_snap + start, (gsize)(end - start));
+}
+
+/* Return the current caret position as a flat char offset.             */
+static unsigned int
+nitty_ta_get_caret_position(GtkAccessibleText *self)
+{
+    (void)self;
+    return (unsigned int)g_a11y_cursor_off;
+}
+
+/* No text selection in v0.13.0 (returns FALSE = no selection).         */
+static gboolean
+nitty_ta_get_selection(GtkAccessibleText       *self,
+                        gsize                   *n_ranges,
+                        GtkAccessibleTextRange **ranges)
+{
+    (void)self;
+    *n_ranges = 0;
+    *ranges   = NULL;
+    return FALSE;
+}
+
+/* No rich text attributes in v0.13.0.                                  */
+static gboolean
+nitty_ta_get_attributes(GtkAccessibleText       *self,
+                         unsigned int             offset,
+                         gsize                   *n_ranges,
+                         GtkAccessibleTextRange **ranges,
+                         char                  ***attr_names,
+                         char                  ***attr_values)
+{
+    (void)self; (void)offset;
+    *n_ranges    = 0;
+    *ranges      = NULL;
+    *attr_names  = NULL;
+    *attr_values = NULL;
+    return FALSE;
+}
+
+/* No default attributes.                                               */
+static void
+nitty_ta_get_default_attributes(GtkAccessibleText  *self,
+                                  char             ***attr_names,
+                                  char             ***attr_values)
+{
+    (void)self;
+    *attr_names  = NULL;
+    *attr_values = NULL;
+}
+
+/* Wire the vtable.                                                      */
+static void
+nitty_ta_text_iface_init(GtkAccessibleTextInterface *iface)
+{
+    iface->get_contents         = nitty_ta_get_contents;
+    iface->get_contents_at      = nitty_ta_get_contents_at;
+    iface->get_caret_position   = nitty_ta_get_caret_position;
+    iface->get_selection        = nitty_ta_get_selection;
+    iface->get_attributes       = nitty_ta_get_attributes;
+    iface->get_default_attributes = nitty_ta_get_default_attributes;
+}
+
+/* ── GObject boilerplate ────────────────────────────────────────────── */
+
+static void nitty_ta_init(NittyTerminalAccessible *self) { (void)self; }
+static void nitty_ta_class_init(NittyTerminalAccessibleClass *klass) { (void)klass; }
+
+/* ── Module-level state ─────────────────────────────────────────────── */
+
+static NittyTerminalAccessible *g_a11y_obj    = NULL;
+static int                      g_a11y_inited = 0;
+
+/* ── Public API ─────────────────────────────────────────────────────── */
+
+void nitty_a11y_init_terminal(void)
+{
+    if (g_a11y_inited) return;
+
+    /* Create the accessible object.                                    */
+    g_a11y_obj = g_object_new(nitty_ta_get_type(), NULL);
+    if (g_a11y_obj == NULL) {
+        fprintf(stderr, "A11Y: failed to create NittyTerminalAccessible\n");
+        return;
+    }
+
+    /* Set the accessible role to TERMINAL.                             */
+    gtk_accessible_update_property(
+        GTK_ACCESSIBLE(g_a11y_obj),
+        GTK_ACCESSIBLE_PROPERTY_LABEL, "Terminal",
+        -1
+    );
+
+    /* Wire into the accessibility tree: parent = main window.          */
+    if (g_main_window != NULL) {
+        gtk_accessible_set_accessible_parent(
+            GTK_ACCESSIBLE(g_a11y_obj),
+            GTK_ACCESSIBLE(g_main_window),
+            NULL
+        );
+    }
+
+    g_a11y_inited = 1;
+    fprintf(stdout, "A11Y: NittyTerminalAccessible initialised "
+                    "(GTK_ACCESSIBLE_ROLE_TERMINAL)\n");
+}
+
+void nitty_a11y_push_snapshot(const char *utf8_text, int64_t len,
+                                int64_t cursor_offset)
+{
+    if (!g_a11y_inited || g_a11y_obj == NULL) return;
+    if (utf8_text == NULL || len <= 0) return;
+
+    /* Clamp to buffer size.                                            */
+    int copy_len = (len < NITTY_A11Y_SNAP_MAX - 1) ? (int)len
+                                                     : NITTY_A11Y_SNAP_MAX - 1;
+    memcpy(g_a11y_snap, utf8_text, (size_t)copy_len);
+    g_a11y_snap[copy_len] = '\0';
+    g_a11y_snap_len  = copy_len;
+    g_a11y_cursor_off = (cursor_offset >= 0 && cursor_offset < copy_len)
+                        ? (int)cursor_offset : 0;
+    g_a11y_snap_ready = 1;
+}
+
+void nitty_a11y_set_label(const char *label)
+{
+    if (!g_a11y_inited || g_a11y_obj == NULL || label == NULL) return;
+    gtk_accessible_update_property(
+        GTK_ACCESSIBLE(g_a11y_obj),
+        GTK_ACCESSIBLE_PROPERTY_LABEL, label,
+        -1
+    );
+}
+
+void nitty_a11y_announce(const char *message, int64_t priority)
+{
+    if (!g_a11y_inited || g_a11y_obj == NULL || message == NULL) return;
+
+    GtkAccessibleAnnouncementPriority p;
+    switch (priority) {
+    case 2:  p = GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_HIGH;   break;
+    case 1:  p = GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM; break;
+    default: p = GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_LOW;    break;
+    }
+    gtk_accessible_announce(GTK_ACCESSIBLE(g_a11y_obj), message, p);
+}
+
+void nitty_a11y_notify_text_changed(void)
+{
+    if (!g_a11y_inited || g_a11y_obj == NULL || !g_a11y_snap_ready) return;
+    gtk_accessible_text_update_contents(
+        GTK_ACCESSIBLE_TEXT(g_a11y_obj),
+        GTK_ACCESSIBLE_TEXT_CONTENT_CHANGE_INSERT,
+        0,
+        (unsigned int)g_a11y_snap_len
+    );
+}
+
+void nitty_a11y_notify_caret_moved(void)
+{
+    if (!g_a11y_inited || g_a11y_obj == NULL) return;
+    gtk_accessible_text_update_caret_position(GTK_ACCESSIBLE_TEXT(g_a11y_obj));
+}
+
+int64_t nitty_a11y_system_prefers_high_contrast(void)
+{
+    GtkSettings *settings = gtk_settings_get_default();
+    if (settings == NULL) return 0;
+
+    gboolean hc = FALSE;
+    g_object_get(settings, "gtk-application-prefer-high-contrast", &hc, NULL);
+    return hc ? 1 : 0;
+}
+

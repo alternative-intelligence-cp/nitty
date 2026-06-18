@@ -1,71 +1,92 @@
-// src/terminal/scrollback.npk — Scrollback ring buffer (v0.3.4 / v0.6.0)
+// v0.12.2: Two-tier storage — hot (uncompressed) + warm (RLE compressed, text-safe).
 //
 // Stores terminal rows that have scrolled off the top of the active screen.
-// Implemented as three parallel flat int64 ring-buffer arrays (cp, attrs, flags),
-// matching the layout of grid.npk but as a standalone module to avoid IR size
-// issues from combining large arrays.
+// Hot tier: newest g_sb_hot_limit rows in three parallel flat int64 ring-buffer
+//   arrays (sb_cp, sb_attrs, sb_flags), matching the layout of grid.npk.
+// Warm tier: older rows RLE-encoded as space-separated text into a flat string[3000]
+//   pool. Each warm slot holds a text string: "<count> <cp> <attrs> <flags> ...".
+//   No deflate (Nitpick strings are null-terminated; binary compressed data is
+//   not safe to store). RLE alone achieves ~10-15x compression on typical rows.
 //
-// Ring buffer semantics:
-//   - sb_head: next write slot (advances on push, wraps at SB_MAX_LINES)
-//   - sb_count: number of rows currently stored (0..SB_MAX_LINES)
-//   - Index 0 = most recently pushed row
-//   - Index (sb_count-1) = oldest row
+// Hot tier layout:
+//   - sb_head: next write slot (0..g_sb_hot_limit-1)
+//   - sb_hot_count: rows in hot tier (0..g_sb_hot_limit)
 //
-// Index mapping for get(idx):
-//   slot = (sb_head - 1 - idx + SB_MAX_LINES) % SB_MAX_LINES
-//   array index = slot * SB_MAX_COLS + col
+// Warm tier layout:
+//   - sb_warm_head: next write slot (ring, 0..2999)
+//   - sb_warm_count: rows in warm tier
+//   - Warm ring: newest warm row at (warm_head-1), oldest at (warm_head-warm_count)
 //
-// Column layout:
-//   sb_cols: active column count (set by scrollback_init / scrollback_set_cols)
-//   Only [0..sb_cols-1] cells are valid per row; remaining slots are wasted.
+// Row RLE encoding (null-safe text):
+//   "<count> <cp> <attrs> <flags> <count> <cp> <attrs> <flags> ..."
+//   Consecutive cells with identical (cp, attrs, flags) collapse into one run.
+//   Typical 80-col row: ~5 runs → ~150 bytes vs 1920 bytes raw (13:1).
 //
 // Constraints:
-//   SB_MAX_LINES = 3000  (ring buffer capacity)
+//   SB_MAX_LINES = 3000  (total ring buffer capacity)
 //   SB_MAX_COLS  = 200   (matches grid.npk MAX_COLS)
-//   Storage: 3000 * 200 * 3 = 1,800,000 int64s (~14 MB)
+//   Hot tier default: 500 rows (~1.2 MB instead of 14 MB)
+//   Warm tier: 2500 slots × ~150 bytes avg ≈ ~375 KB (vs 12 MB raw)
 //
-// Dependencies: grid.npk (reads grid cells via grid_get_cp/attrs/flags)
+// Dependencies: grid.npk, cell.npk
 
 use "grid.npk".*;
 use "cell.npk".*;
+
+// v0.12.2: npk_string_byte_at for byte-level string parsing in decoder
+extern func:npk_string_byte_at = int64(string:s, int64:i);
 
 // ═══════════════════════════════════════════════════════════════════════
 // Constants
 // ═══════════════════════════════════════════════════════════════════════
 
-pub func:SB_MAX_LINES = int64() { pass(g_sb_max_lines_cfg); };  // v0.6.0: configurable
+// v0.6.0: configurable total cap; v0.12.2: effective hot limit is g_sb_hot_limit
+pub func:SB_MAX_LINES = int64() { pass(g_sb_max_lines_cfg); };
 pub func:SB_MAX_COLS  = int64() { pass(200i64); };
 
 // v0.6.0: Configurable scrollback cap — set by config_load() via scrollback_set_max_lines().
-// The static arrays are sized for 3000 lines; this var can only reduce the effective limit.
 int64:g_sb_max_lines_cfg = 3000i64;
 
+// v0.12.2: Hot tier limit — rows kept uncompressed. Remainder go to warm tier.
+// Configurable via scrollback_set_hot_limit(). Default 500 rows.
+int64:g_sb_hot_limit = 500i64;
+
 // ═══════════════════════════════════════════════════════════════════════
-// Storage — three parallel ring-buffer arrays
+// Hot tier storage — parallel ring-buffer arrays (reduced from 600000)
+// Sized for SB_MAX_LINES to handle edge case where hot_limit = max_lines.
 // ═══════════════════════════════════════════════════════════════════════
 
 int64[600000]:sb_cp;     // codepoints:  [slot * SB_MAX_COLS + col]
 int64[600000]:sb_attrs;  // color attrs: [slot * SB_MAX_COLS + col]
 int64[600000]:sb_flags;  // style flags: [slot * SB_MAX_COLS + col]
 
+// Hot tier ring state
+int64:sb_head      = 0i64;   // next write slot (0..g_sb_hot_limit-1)
+int64:sb_hot_count = 0i64;   // rows in hot tier (0..g_sb_hot_limit)
+int64:sb_cols      = 80i64;  // current display column count
+
 // ═══════════════════════════════════════════════════════════════════════
-// Ring buffer state
+// Warm tier storage — flat parallel arrays of RLE-encoded row strings.
+// NOT a dynamic list (struct[N] arrays are broken in Nitpick IR).
+// Each sb_warm_data[slot] holds an RLE text string (null-safe, no deflate).
+// sb_warm_len not needed (string_length works on text strings).
 // ═══════════════════════════════════════════════════════════════════════
 
-int64:sb_head  = 0i64;   // next write slot (0..SB_MAX_LINES-1)
-int64:sb_count = 0i64;   // rows stored (0..SB_MAX_LINES)
-int64:sb_cols  = 80i64;  // current display column count
+string[3000]:sb_warm_data;    // RLE-encoded row strings for warm tier
+// (no sb_warm_len needed — string_length works on text data)
+// Warm tier ring state
+int64:sb_warm_head  = 0i64;  // next write slot in warm arrays
+int64:sb_warm_count = 0i64;  // rows currently in warm tier
 
 // ═══════════════════════════════════════════════════════════════════════
 // Internal helpers
 // ═══════════════════════════════════════════════════════════════════════
 
-// Map logical scrollback index (0=newest) → ring-buffer slot index.
-func:sb_slot = int64(int64:idx) {
-    int64:max = raw SB_MAX_LINES();
-    int64:slot = sb_head - 1i64 - idx + max;
-    // Modulo: slot % max (slot is always < 2*max so one subtraction suffices)
-    if (slot >= max) { slot = slot - max; }
+// Map hot logical index (0=newest) → ring-buffer slot index.
+func:sb_hot_slot = int64(int64:idx) {
+    int64:hot_lim = g_sb_hot_limit;
+    int64:slot = sb_head - 1i64 - idx + hot_lim;
+    if (slot >= hot_lim) { slot = slot - hot_lim; }
     pass(slot);
 };
 
@@ -74,20 +95,173 @@ func:sb_idx = int64(int64:slot, int64:col) {
     pass(slot * raw SB_MAX_COLS() + col);
 };
 
+// Map warm logical index (0 = newest warm row, warm_count-1 = oldest) → warm slot.
+// Warm rows are pushed FIFO into sb_warm_head ring, so newest is at
+// (sb_warm_head - 1) and oldest is at (sb_warm_head - sb_warm_count).
+func:sb_warm_slot = int64(int64:widx) {
+    int64:warm_max = 3000i64;
+    int64:slot = sb_warm_head - 1i64 - widx + warm_max;
+    if (slot >= warm_max) { slot = slot - warm_max; }
+    pass(slot);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// RLE row encoding/decoding (text format for deflate safety)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Encode a hot-tier ring slot into a space-separated RLE text string.
+// Format: "<count> <cp> <attrs> <flags> ..." per run.
+// Each run is flushed exactly once when any of (cp, attrs, flags) changes.
+func:sb_encode_row = string(int64:slot) {
+    int64:base    = slot * raw SB_MAX_COLS();
+    string:result = "";
+    int64:run_cp  = sb_cp[base];
+    int64:run_att = sb_attrs[base];
+    int64:run_fl  = sb_flags[base];
+    int64:run_cnt = 1i64;
+    int64:c       = 1i64;
+    while (c < sb_cols) {
+        int64:i     = base + c;
+        int64:cp_c  = sb_cp[i];
+        int64:att_c = sb_attrs[i];
+        int64:fl_c  = sb_flags[i];
+        // Check if this cell matches the current run
+        int64:same = 1i64;
+        if (cp_c  != run_cp)  { same = 0i64; }
+        if (att_c != run_att) { same = 0i64; }
+        if (fl_c  != run_fl)  { same = 0i64; }
+        if (same == 1i64) {
+            run_cnt = run_cnt + 1i64;
+        }
+        if (same == 0i64) {
+            // Flush current run
+            result = string_concat(result, string_from_int(run_cnt));
+            result = string_concat(result, " ");
+            result = string_concat(result, string_from_int(run_cp));
+            result = string_concat(result, " ");
+            result = string_concat(result, string_from_int(run_att));
+            result = string_concat(result, " ");
+            result = string_concat(result, string_from_int(run_fl));
+            result = string_concat(result, " ");
+            // Start new run
+            run_cp  = cp_c;
+            run_att = att_c;
+            run_fl  = fl_c;
+            run_cnt = 1i64;
+        }
+        c = c + 1i64;
+    }
+    // Flush last run
+    result = string_concat(result, string_from_int(run_cnt));
+    result = string_concat(result, " ");
+    result = string_concat(result, string_from_int(run_cp));
+    result = string_concat(result, " ");
+    result = string_concat(result, string_from_int(run_att));
+    result = string_concat(result, " ");
+    result = string_concat(result, string_from_int(run_fl));
+    pass(result);
+};
+
+// Parse one token from a string at byte offset g_parse_pos.
+// Reads decimal digits (with optional leading '-') until a space or end.
+// Advances g_parse_pos past the token and trailing space.
+// Returns the parsed int64 value.
+// ASCII constants: '0'=48, '9'=57, ' '=32, '-'=45
+int64:g_parse_pos = 0i64;
+
+func:sb_parse_int = int64(string:s) {
+    int64:val     = 0i64;
+    int64:neg     = 0i64;
+    int64:slen    = string_length(s);
+    // Check for leading minus
+    if (g_parse_pos < slen) {
+        int64:lead = npk_string_byte_at(s, g_parse_pos);
+        if (lead == 45i64) {
+            neg = 1i64;
+            g_parse_pos = g_parse_pos + 1i64;
+        }
+    }
+    // Read digits
+    while (g_parse_pos < slen) {
+        int64:b = npk_string_byte_at(s, g_parse_pos);
+        // Stop at space (32)
+        if (b == 32i64) {
+            g_parse_pos = g_parse_pos + 1i64;  // consume space
+            if (neg == 1i64) { pass(-val); }
+            pass(val);
+        }
+        // Digit range 48..57
+        if (b >= 48i64) {
+            if (b <= 57i64) {
+                val = val * 10i64 + (b - 48i64);
+            }
+        }
+        g_parse_pos = g_parse_pos + 1i64;
+    }
+    if (neg == 1i64) { pass(-val); }
+    pass(val);
+};
+
+// Decode a compressed warm-tier slot into a scratch row in sb_cp/attrs/flags
+// at a designated scratch slot index (SB_MAX_LINES-1, i.e., slot 2999).
+// Returns 1 on success, 0 on failure.
+int64:SB_SCRATCH_SLOT = 2999i64;
+
+func:sb_decode_warm = int64(int64:wslot) {
+    string:decoded = sb_warm_data[wslot];
+    int64:dlen     = string_length(decoded);
+    if (dlen <= 0i64) { pass(0i64); }
+    // Parse RLE runs into scratch slot
+    int64:scratch_base = SB_SCRATCH_SLOT * raw SB_MAX_COLS();
+    g_parse_pos = 0i64;
+    int64:col = 0i64;
+    while (col < sb_cols) {
+        if (g_parse_pos >= dlen) {
+            // fill rest with defaults
+            while (col < sb_cols) {
+                int64:i = scratch_base + col;
+                sb_cp[i]    = raw CELL_DEFAULT_CP();
+                sb_attrs[i] = 0i64;
+                sb_flags[i] = 0i64;
+                col = col + 1i64;
+            }
+            pass(1i64);
+        }
+        int64:cnt  = raw sb_parse_int(decoded);
+        int64:cp   = raw sb_parse_int(decoded);
+        int64:att  = raw sb_parse_int(decoded);
+        int64:fl   = raw sb_parse_int(decoded);
+        int64:ci   = 0i64;
+        while (ci < cnt) {
+            if (col < sb_cols) {
+                int64:i = scratch_base + col;
+                sb_cp[i]    = cp;
+                sb_attrs[i] = att;
+                sb_flags[i] = fl;
+                col = col + 1i64;
+            }
+            ci = ci + 1i64;
+        }
+    }
+    pass(1i64);
+};
+
 // ═══════════════════════════════════════════════════════════════════════
 // Initialization
 // ═══════════════════════════════════════════════════════════════════════
 
 /// Initialize (or re-initialize) the scrollback buffer.
 /// cols: current display column count (must be 1..SB_MAX_COLS).
-/// Clears all stored rows.
+/// Clears all stored rows (both tiers).
 pub func:scrollback_init = NIL(int64:cols) {
     int64:c = cols;
-    if (c < 1i64)                   { c = 1i64; }
-    if (c > raw SB_MAX_COLS())      { c = raw SB_MAX_COLS(); }
-    sb_cols  = c;
-    sb_head  = 0i64;
-    sb_count = 0i64;
+    if (c < 1i64)              { c = 1i64; }
+    if (c > raw SB_MAX_COLS()) { c = raw SB_MAX_COLS(); }
+    sb_cols      = c;
+    sb_head      = 0i64;
+    sb_hot_count = 0i64;
+    sb_warm_head  = 0i64;
+    sb_warm_count = 0i64;
     pass(NIL);
 };
 
@@ -104,9 +278,13 @@ pub func:scrollback_set_max_lines = NIL(int64:n) {
     if (capped > 3000i64) { capped = 3000i64; }
     if (capped < 0i64)    { capped = 0i64; }
     g_sb_max_lines_cfg = capped;
-    // Reset the ring buffer to prevent stale indices beyond the new cap
-    sb_head  = 0i64;
-    sb_count = 0i64;
+    // Also adjust hot limit: hot = min(hot, total_max)
+    if (g_sb_hot_limit > capped) { g_sb_hot_limit = capped; }
+    // Reset both tiers
+    sb_head       = 0i64;
+    sb_hot_count  = 0i64;
+    sb_warm_head  = 0i64;
+    sb_warm_count = 0i64;
     pass(NIL);
 };
 
@@ -115,19 +293,72 @@ pub func:scrollback_get_max_lines = int64() {
     pass(g_sb_max_lines_cfg);
 };
 
+/// v0.12.2: Set the hot-tier size limit (rows kept uncompressed).
+/// Default 500. Clamped to 1..SB_MAX_LINES.
+pub func:scrollback_set_hot_limit = NIL(int64:n) {
+    int64:capped = n;
+    if (capped < 1i64)                   { capped = 1i64; }
+    if (capped > g_sb_max_lines_cfg)     { capped = g_sb_max_lines_cfg; }
+    if (capped > 3000i64)                { capped = 3000i64; }
+    g_sb_hot_limit = capped;
+    // Reset to avoid index inconsistency
+    sb_head       = 0i64;
+    sb_hot_count  = 0i64;
+    sb_warm_head  = 0i64;
+    sb_warm_count = 0i64;
+    pass(NIL);
+};
+
+/// v0.12.2: Return current hot-tier limit.
+pub func:scrollback_get_hot_limit = int64() {
+    pass(g_sb_hot_limit);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Compress oldest hot row into warm tier
+// ═══════════════════════════════════════════════════════════════════════
+
+// Compress the oldest hot-tier row into the warm tier.
+// Called from scrollback_push_row when hot tier is full.
+// The oldest hot row is at logical hot index (sb_hot_count - 1).
+func:sb_compress_oldest = NIL() {
+    // Oldest hot row → ring slot
+    int64:oldest_hot_idx = sb_hot_count - 1i64;
+    int64:slot = raw sb_hot_slot(oldest_hot_idx);
+    // Encode to RLE text and store directly (no deflate — null-safe)
+    string:encoded = raw sb_encode_row(slot);
+    int64:wslot = sb_warm_head;
+    sb_warm_data[wslot] = encoded;
+    sb_warm_head = sb_warm_head + 1i64;
+    if (sb_warm_head >= 3000i64) { sb_warm_head = 0i64; }
+    // Grow warm count (cap at 3000 - hot_limit)
+    int64:warm_max = 3000i64 - g_sb_hot_limit;
+    if (sb_warm_count < warm_max) { sb_warm_count = sb_warm_count + 1i64; }
+    // Shrink hot count by 1
+    sb_hot_count = sb_hot_count - 1i64;
+    pass(NIL);
+};
+
 // ═══════════════════════════════════════════════════════════════════════
 // Push (capture a grid row into scrollback)
 // ═══════════════════════════════════════════════════════════════════════
 
 /// Push grid row `grid_row` into the scrollback ring buffer.
 /// This copies the row's cp/attrs/flags from the active grid.
-/// The pushed row becomes index 0 (most recent).
-/// Oldest row is dropped if buffer is full.
+/// The pushed row becomes index 0 (most recent) in the hot tier.
+/// When hot tier fills, oldest hot row is compressed into warm tier.
 pub func:scrollback_push_row = NIL(int64:grid_row) {
-    int64:max  = raw SB_MAX_LINES();
+    int64:hot_limit = g_sb_hot_limit;
+    int64:total_max = raw SB_MAX_LINES();
+
+    // If hot tier is at its limit, compress oldest hot row to warm tier
+    if (sb_hot_count >= hot_limit) {
+        drop(sb_compress_oldest());
+    }
+
+    // Write new row into hot tier at sb_head
     int64:slot = sb_head;
     int64:base = slot * raw SB_MAX_COLS();
-    // Copy all columns from active grid into the slot
     int64:c = 0i64;
     while (c < sb_cols) {
         int64:i = base + c;
@@ -136,7 +367,7 @@ pub func:scrollback_push_row = NIL(int64:grid_row) {
         sb_flags[i] = raw grid_get_flags(grid_row, c);
         c = c + 1i64;
     }
-    // Fill remainder with defaults (keeps stale data from wider sessions out)
+    // Fill remainder with defaults
     while (c < raw SB_MAX_COLS()) {
         int64:i = base + c;
         sb_cp[i]    = raw CELL_DEFAULT_CP();
@@ -144,11 +375,13 @@ pub func:scrollback_push_row = NIL(int64:grid_row) {
         sb_flags[i] = 0i64;
         c = c + 1i64;
     }
-    // Advance ring buffer head
+    // Advance hot ring head
     sb_head = sb_head + 1i64;
-    if (sb_head >= max) { sb_head = 0i64; }
-    // Grow count (cap at max)
-    if (sb_count < max) { sb_count = sb_count + 1i64; }
+    if (sb_head >= hot_limit) { sb_head = 0i64; }
+    // Grow hot count
+    sb_hot_count = sb_hot_count + 1i64;
+    if (sb_hot_count > hot_limit) { sb_hot_count = hot_limit; }
+
     pass(NIL);
 };
 
@@ -156,42 +389,102 @@ pub func:scrollback_push_row = NIL(int64:grid_row) {
 // Accessors
 // ═══════════════════════════════════════════════════════════════════════
 
-/// Number of rows currently in the scrollback buffer.
-pub func:scrollback_len = int64() { pass(sb_count); };
+/// Total number of rows currently in the scrollback buffer (hot + warm).
+pub func:scrollback_len = int64() {
+    pass(sb_hot_count + sb_warm_count);
+};
+
+/// v0.12.2: Number of rows in hot (uncompressed) tier.
+pub func:scrollback_hot_count = int64() { pass(sb_hot_count); };
+
+/// v0.12.2: Number of rows in warm (compressed) tier.
+pub func:scrollback_warm_count = int64() { pass(sb_warm_count); };
+
+/// v0.12.2: Approximate bytes used by warm tier RLE text storage.
+/// (Sum of RLE string lengths per warm slot.)
+pub func:scrollback_warm_bytes = int64() {
+    int64:total = 0i64;
+    int64:k = 0i64;
+    while (k < sb_warm_count) {
+        int64:wslot = raw sb_warm_slot(k);
+        total = total + string_length(sb_warm_data[wslot]);
+        k = k + 1i64;
+    }
+    pass(total);
+};
+
+// Internal: resolve logical idx → cell from hot or warm tier.
+// Returns cell via scratch slot decode for warm tier.
+// Sets g_sb_last_* globals after decode (avoids per-column decompress).
+
+// Cache for last decoded warm row (avoids re-decompressing per column access)
+int64:g_sb_last_warm_idx = -1i64;  // last decoded warm logical idx
+
+func:sb_ensure_warm = NIL(int64:widx) {
+    if (widx == g_sb_last_warm_idx) { pass(NIL); }
+    int64:wslot = raw sb_warm_slot(widx);
+    drop(sb_decode_warm(wslot));
+    g_sb_last_warm_idx = widx;
+    pass(NIL);
+};
 
 /// Get codepoint at scrollback row `idx`, column `col`.
-/// idx=0 is the most recently pushed row; idx=(len-1) is oldest.
+/// idx=0 is the most recently pushed row (hot[0]); idx=(len-1) is oldest warm row.
 /// Returns CELL_DEFAULT_CP if out of bounds.
 pub func:scrollback_get_cp = int64(int64:idx, int64:col) {
-    if (idx < 0i64)          { pass(raw CELL_DEFAULT_CP()); }
-    if (idx >= sb_count)     { pass(raw CELL_DEFAULT_CP()); }
-    if (col < 0i64)          { pass(raw CELL_DEFAULT_CP()); }
-    if (col >= sb_cols)      { pass(raw CELL_DEFAULT_CP()); }
-    int64:slot = raw sb_slot(idx);
-    int64:i    = raw sb_idx(slot, col);
-    pass(sb_cp[i]);
+    if (idx < 0i64)             { pass(raw CELL_DEFAULT_CP()); }
+    int64:total = sb_hot_count + sb_warm_count;
+    if (idx >= total)           { pass(raw CELL_DEFAULT_CP()); }
+    if (col < 0i64)             { pass(raw CELL_DEFAULT_CP()); }
+    if (col >= sb_cols)         { pass(raw CELL_DEFAULT_CP()); }
+    // Hot tier: idx 0..(sb_hot_count-1)
+    if (idx < sb_hot_count) {
+        int64:slot = raw sb_hot_slot(idx);
+        int64:i    = raw sb_idx(slot, col);
+        pass(sb_cp[i]);
+    }
+    // Warm tier: idx sb_hot_count..(total-1)
+    // widx = 0 is the newest warm row (closest to hot boundary)
+    int64:widx = idx - sb_hot_count;
+    drop(sb_ensure_warm(widx));
+    int64:si = raw sb_idx(SB_SCRATCH_SLOT, col);
+    pass(sb_cp[si]);
 };
 
 /// Get color attrs at scrollback row `idx`, column `col`.
 pub func:scrollback_get_attrs = int64(int64:idx, int64:col) {
-    if (idx < 0i64)     { pass(0i64); }
-    if (idx >= sb_count){ pass(0i64); }
-    if (col < 0i64)     { pass(0i64); }
-    if (col >= sb_cols) { pass(0i64); }
-    int64:slot = raw sb_slot(idx);
-    int64:i    = raw sb_idx(slot, col);
-    pass(sb_attrs[i]);
+    if (idx < 0i64)             { pass(0i64); }
+    int64:total = sb_hot_count + sb_warm_count;
+    if (idx >= total)           { pass(0i64); }
+    if (col < 0i64)             { pass(0i64); }
+    if (col >= sb_cols)         { pass(0i64); }
+    if (idx < sb_hot_count) {
+        int64:slot = raw sb_hot_slot(idx);
+        int64:i    = raw sb_idx(slot, col);
+        pass(sb_attrs[i]);
+    }
+    int64:widx = idx - sb_hot_count;
+    drop(sb_ensure_warm(widx));
+    int64:si = raw sb_idx(SB_SCRATCH_SLOT, col);
+    pass(sb_attrs[si]);
 };
 
 /// Get style flags at scrollback row `idx`, column `col`.
 pub func:scrollback_get_flags = int64(int64:idx, int64:col) {
-    if (idx < 0i64)     { pass(0i64); }
-    if (idx >= sb_count){ pass(0i64); }
-    if (col < 0i64)     { pass(0i64); }
-    if (col >= sb_cols) { pass(0i64); }
-    int64:slot = raw sb_slot(idx);
-    int64:i    = raw sb_idx(slot, col);
-    pass(sb_flags[i]);
+    if (idx < 0i64)             { pass(0i64); }
+    int64:total = sb_hot_count + sb_warm_count;
+    if (idx >= total)           { pass(0i64); }
+    if (col < 0i64)             { pass(0i64); }
+    if (col >= sb_cols)         { pass(0i64); }
+    if (idx < sb_hot_count) {
+        int64:slot = raw sb_hot_slot(idx);
+        int64:i    = raw sb_idx(slot, col);
+        pass(sb_flags[i]);
+    }
+    int64:widx = idx - sb_hot_count;
+    drop(sb_ensure_warm(widx));
+    int64:si = raw sb_idx(SB_SCRATCH_SLOT, col);
+    pass(sb_flags[si]);
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -199,9 +492,12 @@ pub func:scrollback_get_flags = int64(int64:idx, int64:col) {
 // ═══════════════════════════════════════════════════════════════════════
 
 /// Clear the scrollback buffer (ED 3 / DECSET 47 alternate screen switch etc.)
-/// Does not zero the arrays — just resets head and count.
+/// Resets both hot and warm tiers.
 pub func:scrollback_clear = NIL() {
-    sb_head  = 0i64;
-    sb_count = 0i64;
+    sb_head           = 0i64;
+    sb_hot_count      = 0i64;
+    sb_warm_head      = 0i64;
+    sb_warm_count     = 0i64;
+    g_sb_last_warm_idx = -1i64;
     pass(NIL);
 };

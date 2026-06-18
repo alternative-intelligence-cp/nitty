@@ -1,0 +1,16 @@
+// src/ssh/ssh_security.npk — v0.11.3: SSH Security hardening module
+//
+// Provides secure memory clearing for sensitive credential strings.
+
+use "../gui/gtk4_ffi.npk".*;
+
+// Securely zero the backing memory of a string before it is reclaimed by GC.
+// This prevents credentials from lingering in memory where they could be
+// extracted by memory scanning or core dumps.
+pub func:secure_clear = NIL(string:secret) {
+    int64:len = string_length(secret);
+    if (len > 0i64) {
+        drop(nitty_shim_memzero(secret, len));
+    }
+    pass(NIL);
+};

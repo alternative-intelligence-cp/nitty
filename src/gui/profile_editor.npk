@@ -49,14 +49,14 @@ pub func:pf_editor_open = int64(int64:slot) {
     }
 
     // ── Show modal dialog (blocks until OK or Cancel) ─────────────────────
-    int32:ok = nitty_gtk4_profile_editor_open_v2(
+    int32:dlg_result = nitty_gtk4_profile_editor_open_v2(
         init_name, init_group, init_type,
         init_ssh_host, init_ssh_port, init_ssh_user,
         init_ssh_auth, init_ssh_key,
         init_serial_dev, init_serial_baud,
         init_telnet_host, init_telnet_port);
 
-    if (ok == 0i32) { pass(-1i64); }  // cancelled
+    if (dlg_result == 0i32) { pass(-1i64); }  // cancelled
 
     // ── Read results ──────────────────────────────────────────────────────
     string:new_name        = nitty_gtk4_profile_editor_get_name();
@@ -99,9 +99,9 @@ pub func:pf_editor_open = int64(int64:slot) {
     }
 
     // ── Edit existing profile — update in place ───────────────────────────
-    g_prof_name[slot]  = new_name;
-    g_prof_group[slot] = new_group;
-    g_prof_type[slot]  = new_type;
+    drop(profile_set_name(slot, new_name));
+    drop(profile_set_group(slot, new_group));
+    drop(profile_set_type(slot, new_type));
     drop(_pf_set_type_fields(slot, new_type,
         new_ssh_host, new_ssh_port, new_ssh_user, new_ssh_auth, new_ssh_key,
         new_serial_dev, new_serial_baud,

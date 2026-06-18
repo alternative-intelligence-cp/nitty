@@ -37,13 +37,13 @@ func:_ps_log = NIL(string:msg) {
 // Return the default path to plugin_state.yaml.
 // Respects $XDG_CONFIG_HOME, falls back to ~/.config/nitty/plugin_state.yaml.
 pub func:plugin_state_default_path = string() {
-    string:xdg = raw env_get("XDG_CONFIG_HOME");
+    string:xdg = env_get("XDG_CONFIG_HOME");
     string:base;
     if (string_length(xdg) > 0i64) {
         base = xdg;
     }
     if (string_length(xdg) == 0i64) {
-        string:home = raw env_get("HOME");
+        string:home = env_get("HOME");
         base = string_concat(home, "/.config");
     }
     pass(string_concat(base, "/nitty/plugin_state.yaml"));

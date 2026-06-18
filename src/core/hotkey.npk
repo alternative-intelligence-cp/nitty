@@ -343,6 +343,10 @@ pub func:hotkeys_init_defaults = NIL() {
     // Ctrl+Shift+P = plugins.manager  (p=112, mods=3)
     drop(_hk_add("plugins.manager",    112i64, 3i64, 0i64, 0i64, 1i64));
 
+    // v0.13.0: Accessibility — skip navigation (WCAG 2.1 SC 2.4.1)
+    // Ctrl+F6 = a11y.skip_nav  (mods=2=Ctrl, keyval=F6)
+    drop(_hk_add("a11y.skip_nav",      nitty_gdk_key_f6(), 2i64, 0i64, 0i64, 1i64));
+
     pass(NIL);
 };
 

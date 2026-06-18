@@ -19,6 +19,7 @@
 use "../../src/ssh/ssh_vault.npk".*;
 use "../../src/ssh/ssh_x11.npk".{x11_init, x11_request_forwarding};
 use "../../src/ssh/ssh_zmodem.npk".*;
+use "../../src/core/zmodem.npk".*;
 use "../../src/config/profile.npk".*;
 use "../../src/config/config.npk".{cfg_zmodem_auto_detect, cfg_zmodem_download_dir}; // v0.8.7
 use "../../src/gui/gtk4_ffi.npk".*;
@@ -215,8 +216,8 @@ func:test_zlib_roundtrip = NIL() {
     string:original = "Hello, Nitty v0.8.6 SSH compression test! 0123456789ABCDEF";
     int64:orig_len = string_length(original);
 
-    string:compressed = raw nitpick_zlib_compress(original, @cast_unchecked<int32>(orig_len));
-    int64:comp_len = raw nitpick_zlib_last_len();
+    string:compressed = nitpick_zlib_compress(original, @cast_unchecked<int32>(orig_len));
+    int64:comp_len = nitpick_zlib_last_len();
 
     if (comp_len > 0i64) {
         drop(pass_test("T09-zlib-compress-nonempty"));
@@ -226,9 +227,9 @@ func:test_zlib_roundtrip = NIL() {
     }
 
     // Decompress
-    string:decompressed = raw nitpick_zlib_decompress(compressed,
+    string:decompressed = nitpick_zlib_decompress(compressed,
         @cast_unchecked<int32>(comp_len), 4096i32);
-    int64:decomp_len = raw nitpick_zlib_last_len();
+    int64:decomp_len = nitpick_zlib_last_len();
 
     drop(assert_eq_i64("T09-zlib-decompress-len", decomp_len, orig_len));
     drop(assert_eq_str("T09-zlib-roundtrip-content", decompressed, original));
@@ -241,7 +242,7 @@ func:test_vault_crypto = NIL() {
     string:plaintext  = "vault-secret-password-12345";
     string:passphrase = "master-passphrase-test";
 
-    string:blob = raw nitpick_vault_encrypt(passphrase, plaintext);
+    string:blob = nitpick_vault_encrypt(passphrase, plaintext);
     if (string_length(blob) > 0i64) {
         drop(pass_test("T10-vault-encrypt-nonempty"));
     }
@@ -250,11 +251,11 @@ func:test_vault_crypto = NIL() {
         pass(NIL);
     }
 
-    string:recovered = raw nitpick_vault_decrypt(passphrase, blob);
+    string:recovered = nitpick_vault_decrypt(passphrase, blob);
     drop(assert_eq_str("T10-vault-decrypt-roundtrip", recovered, plaintext));
 
     // Wrong passphrase → should return "" or garbage (not the plaintext)
-    string:bad = raw nitpick_vault_decrypt("wrong-pass", blob);
+    string:bad = nitpick_vault_decrypt("wrong-pass", blob);
     if (bad != plaintext) {
         drop(pass_test("T10-vault-wrong-pass-rejected"));
     }
@@ -321,7 +322,7 @@ func:test_v087_compression = NIL() {
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
-pub func:main = int64() {
+pub func:main = int32() {
     string:banner = "=== Nitty v0.8.7 SSH E2E Tests ===\n";
     drop(sys(WRITE, STDOUT, banner, string_length(banner)));
 
@@ -342,6 +343,6 @@ pub func:main = int64() {
         " failed\n"))));
     drop(sys(WRITE, STDOUT, summary, string_length(summary)));
 
-    if (g_fail > 0i64) { pass(1i64); }
-    pass(0i64);
+    if (g_fail > 0i64) { exit 1i32; }
+    exit 0i32;
 };

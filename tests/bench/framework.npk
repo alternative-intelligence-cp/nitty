@@ -1,0 +1,56 @@
+// tests/bench/framework.npk
+// Benchmarking framework for Nitty v0.12.0
+
+extern "nitty_bench_shim" {
+    func:nitty_bench_time_now_ns = int64();
+    func:nitty_bench_read_rss = int64();
+    func:nitty_bench_read_fds = int64();
+}
+
+pub struct:BenchResult = {
+    string:name;
+    int64:iterations;
+    flt64:mean_ms;
+    flt64:median_ms;
+    flt64:p95_ms;
+    flt64:p99_ms;
+    flt64:min_ms;
+    flt64:max_ms;
+};
+
+pub func:bench_measure_memory = int64() {
+    pass(nitty_bench_read_rss());
+};
+
+pub func:bench_measure_fds = int64() {
+    pass(nitty_bench_read_fds());
+};
+
+pub func:bench_compute = BenchResult(string:name, int64:iters, int64:start_ns, int64:end_ns) {
+    flt64:ns_total = @cast_unchecked<flt64>(end_ns - start_ns);
+    flt64:mean_ms = (ns_total / @cast_unchecked<flt64>(iters)) / 1000000.0;
+    
+    BenchResult:res = {
+        name: name,
+        iterations: iters,
+        mean_ms: mean_ms,
+        median_ms: mean_ms,
+        p95_ms: mean_ms,
+        p99_ms: mean_ms,
+        min_ms: mean_ms,
+        max_ms: mean_ms
+    };
+    pass(res);
+};
+
+// Simplified printing since List isn't generic and we avoid heavy arrays.
+pub func:bench_save_result = int32(BenchResult:res, string:path) {
+    string:msg = string_concat(res.name, string_concat("|", 
+                 string_concat(string_from_int(res.iterations), string_concat("|", 
+                 string_concat(string_format_float(res.mean_ms, 4i64), "\n")))));
+                 
+    int64:STDOUT = 1i64;
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len)); // syscall 1 = write, fd 1 = stdout
+    pass(0i32);
+};

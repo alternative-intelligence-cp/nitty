@@ -106,7 +106,7 @@ pub func:jump_connect = int64(int64:pane_slot,
 
     // We need a pane slot entry for the jump session's pane state.
     // Use pane_create with fd=-1 (SSH, no PTY).
-    int64:jump_pane_slot_created = raw pane_create(-1i64, -1i64, rows, cols);
+    int64:jump_pane_slot_created = raw pane_create(-1i64, -1i64, -1i64, rows, cols);
     // (ignore result — we use the fixed jump_pane index)
 
     int64:conn_result = raw ssh_connect(jump_pane,

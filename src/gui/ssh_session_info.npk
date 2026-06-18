@@ -9,9 +9,9 @@
 //   ssi_close()         — currently a no-op; notification auto-dismisses
 
 use "../../src/ssh/ssh_session.npk".{g_ssh_host, ssh_session_is_open};
-use "../../src/ssh/ssh_zmodem.npk".{zmodem_state};
+use "../../src/core/zmodem.npk".*;
 use "../../src/core/pane.npk".{pane_get_type, pane_get_ssh_session};
-use "../../src/gui/gtk4_ffi.npk".{nitty_gtk4_show_notification};
+use "../../src/gui/gtk4_ffi.npk".*;
 
 // ── Internal: format a session info string ────────────────────────────────────
 

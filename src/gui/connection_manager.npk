@@ -138,10 +138,7 @@ pub func:cm_rebuild_list = NIL() {
 
         // v0.9.4: Apply filter — skip profiles that don't match
         int64:ptype_filter = raw profile_get_type(i);
-        if (g_cm_filter != -1i64 && g_cm_filter != ptype_filter) {
-            i = i + 1i64;
-            pass_loop;
-        }
+        if (g_cm_filter == -1i64 || g_cm_filter == ptype_filter) {
 
         // Check if we've emitted this group header already
         int64:found = 0i64;
@@ -184,7 +181,7 @@ pub func:cm_rebuild_list = NIL() {
                             string:th = raw profile_get_telnet_host(j);
                             int64:tp  = raw profile_get_telnet_port(j);
                             if (string_length(th) > 0i64) {
-                                string:tp_str = int_to_string(tp);
+                                string:tp_str = string_from_int(tp);
                                 row_label = string_concat(pname, string_concat(
                                     " — telnet://", string_concat(th, string_concat(":", tp_str))));
                             }
@@ -194,7 +191,7 @@ pub func:cm_rebuild_list = NIL() {
                             string:sd = raw profile_get_serial_dev(j);
                             int64:sb  = raw profile_get_serial_baud(j);
                             if (string_length(sd) > 0i64) {
-                                string:sb_str = int_to_string(sb);
+                                string:sb_str = string_from_int(sb);
                                 row_label = string_concat(pname, string_concat(
                                     " — serial://", string_concat(sd, string_concat(" @", sb_str))));
                             } else {
@@ -206,6 +203,7 @@ pub func:cm_rebuild_list = NIL() {
                 }
                 j = j + 1i64;
             }
+        }
         }
         i = i + 1i64;
     }
@@ -254,7 +252,7 @@ pub func:cm_tick = NIL() {
 
     // CM_EVENT_IMPORT = 5
     if (ev == 5i64) {
-        string:home = raw env_get("HOME");
+        string:home = env_get("HOME");
         string:config_path = string_concat(home, "/.ssh/config");
         int64:n = raw scp_parse(config_path);
         if (n > 0i64) {
@@ -292,7 +290,7 @@ string:g_cm_qc_host = "";
 int64:g_cm_qc_port  = 22i64;
 
 func:_parse_quick_connect = NIL(string:text) {
-    g_cm_qc_user = raw env_get("USER");
+    g_cm_qc_user = env_get("USER");
     g_cm_qc_host = text;
     g_cm_qc_port = 22i64;
 
@@ -485,7 +483,7 @@ func:_cm_do_connect = NIL(int64:slot) {
         string:user = raw profile_get_ssh_user(slot);
         if (string_length(host) == 0i64) { pass(NIL); }
         if (port <= 0i64) { port = 22i64; }
-        if (string_length(user) == 0i64) { user = raw env_get("USER"); }
+        if (string_length(user) == 0i64) { user = env_get("USER"); }
 
         // v0.8.6: Look up stored password from vault
         string:stored_pass = "";

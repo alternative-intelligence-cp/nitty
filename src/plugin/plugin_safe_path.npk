@@ -1,0 +1,32 @@
+// src/plugin/plugin_safe_path.npk
+//
+// Plugin path security utilities.
+
+// Returns resolved path if it is safe under the base directory.
+// Rejects absolute paths and paths containing ".." segments.
+pub func:safe_resolve_path = string(string:base, string:relative) {
+    int64:rel_len = string_length(relative);
+    if (rel_len == 0i64) { pass(""); }
+
+    // Reject absolute paths
+    if (string_substring(relative, 0i64, 1i64) == "/") { pass(""); }
+
+    // Reject any ".." segments
+    int64:pos = 0i64;
+    while (pos < rel_len - 1i64) {
+        string:sub = string_substring(relative, pos, pos + 2i64);
+        if (sub == "..") { pass(""); }
+        pos = pos + 1i64;
+    }
+
+    // Combine base and relative
+    string:base_norm = base;
+    int64:base_len = string_length(base);
+    if (base_len > 0i64) {
+        if (string_substring(base, base_len - 1i64, base_len) == "/") {
+            base_norm = string_substring(base, 0i64, base_len - 1i64);
+        }
+    }
+
+    pass(string_concat(base_norm, string_concat("/", relative)));
+};

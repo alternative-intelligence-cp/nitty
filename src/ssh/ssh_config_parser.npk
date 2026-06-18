@@ -46,7 +46,7 @@ func:_expand_tilde = string(string:path) {
     if (string_length(path) == 0i64) { pass(path); }
     string:first = string_substring(path, 0i64, 1i64);
     if (first != "~") { pass(path); }
-    string:home = raw env_get("HOME");
+    string:home = env_get("HOME");
     if (string_length(home) == 0i64) { pass(path); }
     pass(string_concat(home, string_substring(path, 1i64, string_length(path))));
 };

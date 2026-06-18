@@ -16,6 +16,7 @@
 
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/src/nitpick_yaml.npk".*;
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/src/nitpick_semver.npk".*;
+use "./plugin_safe_path.npk".*;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,9 @@ int64[64]:g_pm_valid;
 int64[64]:g_pm_dep_count;
 string[64]:g_pm_dep_names;      // pipe-separated: "dep-a|dep-b|dep-c"
 string[64]:g_pm_dep_versions;   // pipe-separated: ">=1.0.0|^2.0|*"
+int64[64]:g_pm_perm_network;
+int64[64]:g_pm_perm_filesystem;
+int64[64]:g_pm_perm_shell_exec;
 int64:g_pm_count = 0i64;
 int64:g_pm_initialized = 0i64;
 
@@ -55,6 +59,9 @@ pub func:manifest_init = NIL() {
         g_pm_dep_count[i]    = 0i64;
         g_pm_dep_names[i]    = "";
         g_pm_dep_versions[i] = "";
+        g_pm_perm_network[i] = 0i64;
+        g_pm_perm_filesystem[i] = 0i64;
+        g_pm_perm_shell_exec[i] = 0i64;
         i = i + 1i64;
     }
     g_pm_count       = 0i64;
@@ -163,6 +170,28 @@ pub func:manifest_parse = int64(int64:slot, string:yaml_path) {
     g_pm_dep_names[slot]    = dep_names;
     g_pm_dep_versions[slot] = dep_versions;
 
+    g_pm_perm_network[slot] = 0i64;
+    g_pm_perm_filesystem[slot] = 0i64;
+    g_pm_perm_shell_exec[slot] = 0i64;
+    int32:has_perms = raw YAML.has_key("permissions");
+    if (has_perms == 1i32) {
+        string:perms = raw YAML.get_string("permissions");
+        int64:plen = string_length(perms);
+        if (plen > 0i64) {
+            int64:p_i = 0i64;
+            int64:cur_p = 0i64;
+            while (p_i < 8i64) {
+                string:perm = raw _pipe_token(perms, p_i);
+                if (string_length(perm) > 0i64) {
+                    if (perm == "network") { g_pm_perm_network[slot] = 1i64; }
+                    if (perm == "filesystem") { g_pm_perm_filesystem[slot] = 1i64; }
+                    if (perm == "shell_exec") { g_pm_perm_shell_exec[slot] = 1i64; }
+                }
+                p_i = p_i + 1i64;
+            }
+        }
+    }
+
     // Update global slot count if this is a new slot
     if (slot >= g_pm_count) {
         g_pm_count = slot + 1i64;
@@ -181,9 +210,26 @@ pub func:manifest_validate = int64(int64:slot) {
 
     int64:errors = 0i64;
 
-    // name must be non-empty
+    // name must be non-empty and strictly alphanumeric with dash/underscore
     int64:name_len = string_length(g_pm_name[slot]);
     if (name_len == 0i64) { errors = errors + 1i64; }
+    if (name_len > 0i64) {
+        string:nstr = g_pm_name[slot];
+        int64:npos = 0i64;
+        int64:n_invalid = 0i64;
+        while (npos < name_len) {
+            string:c = string_substring(nstr, npos, npos + 1i64);
+            int64:is_ok = 0i64;
+            if (c >= "a" && c <= "z") { is_ok = 1i64; }
+            if (c >= "A" && c <= "Z") { is_ok = 1i64; }
+            if (c >= "0" && c <= "9") { is_ok = 1i64; }
+            if (c == "-") { is_ok = 1i64; }
+            if (c == "_") { is_ok = 1i64; }
+            if (is_ok == 0i64) { n_invalid = 1i64; }
+            npos = npos + 1i64;
+        }
+        if (n_invalid == 1i64) { errors = errors + 1i64; }
+    }
 
     // version must be non-empty and parseable semver
     int64:ver_len = string_length(g_pm_version[slot]);
@@ -199,9 +245,13 @@ pub func:manifest_validate = int64(int64:slot) {
     int64:api_len = string_length(g_pm_api_version[slot]);
     if (api_len == 0i64) { errors = errors + 1i64; }
 
-    // entry_module must be present
+    // entry_module must be present and safe
     int64:entry_len = string_length(g_pm_entry_module[slot]);
     if (entry_len == 0i64) { errors = errors + 1i64; }
+    if (entry_len > 0i64) {
+        string:safe_path = raw safe_resolve_path(g_pm_dir[slot], g_pm_entry_module[slot]);
+        if (string_length(safe_path) == 0i64) { errors = errors + 1i64; }
+    }
 
     if (errors == 0i64) {
         g_pm_valid[slot] = 1i64;

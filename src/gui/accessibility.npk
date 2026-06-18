@@ -1,0 +1,167 @@
+// src/gui/accessibility.npk — AT-SPI / screen reader integration for Nitty v0.13.0
+//
+// Architecture:
+//   This module wraps the C shim accessibility API (nitty_a11y_*) and provides
+//   a clean Nitpick interface for terminal_widget.npk to call each frame.
+//
+//   The static C buffer pattern:
+//     1. a11y_push_frame() assembles a UTF-8 dump of the visible grid each draw.
+//     2. nitty_a11y_push_snapshot() copies that into C's static g_a11y_snap[].
+//     3. AT-SPI callbacks (get_contents, get_caret_position) read g_a11y_snap
+//        synchronously — no Nitpick global access from C.
+//
+//   Accessibility events per-frame (called from terminal_widget.npk → tw_on_draw):
+//     a11y_push_frame()       — push visible grid snapshot + emit events
+//     a11y_on_output()        — flag that new PTY output arrived this frame
+//     a11y_on_tab_switch(t)   — announce tab switch + update accessible label
+//     a11y_on_screen_clear()  — announce screen cleared
+//     a11y_announce_message() — announce arbitrary message to screen reader
+//
+//   Keyboard navigation:
+//     Ctrl+F6 skip-navigation is implemented in window.npk which calls
+//     a11y_announce_message() to announce the newly focused region.
+//
+// v0.13.0
+
+use "gtk4_ffi.npk".*;
+use "../terminal/grid.npk".*;
+use "../terminal/terminal_state.npk".*;
+
+// ── Module state ─────────────────────────────────────────────────────────────
+
+// 1 after a11y_init() succeeds.
+int64:g_a11y_enabled = 0i64;
+
+// Last cursor position — used to detect caret moves.
+int64:g_a11y_last_cursor_row = -1i64;
+int64:g_a11y_last_cursor_col = -1i64;
+
+// 1 if new PTY output arrived since last push → triggers text-changed event.
+int64:g_a11y_output_pending = 0i64;
+
+// Announce terminal output to screen reader (config-driven).
+int64:g_a11y_announce_output = 0i64;
+
+// ── Initialisation ────────────────────────────────────────────────────────────
+
+/// Initialise the AT-SPI accessibility subsystem.
+/// Call once from app_init() after the GTK main window and DrawingArea exist.
+pub func:a11y_init = NIL() {
+    drop(nitty_a11y_init_terminal());
+    g_a11y_enabled = 1i64;
+    pass(NIL);
+};
+
+/// Set accessibility configuration — called from app_init() after config load.
+/// announce_output: 1 = announce terminal output changes to screen reader.
+pub func:a11y_configure = NIL(int64:announce_output) {
+    g_a11y_announce_output = announce_output;
+    pass(NIL);
+};
+
+// ── Per-frame push ────────────────────────────────────────────────────────────
+
+/// Build a UTF-8 snapshot of the visible terminal grid and push it to the C
+/// shim buffer. Call once per tw_on_draw() frame, after renderer_sync_frame().
+///
+/// The snapshot is rows × cols characters, rows separated by '\n'.
+/// Non-ASCII codepoints above 127 are represented as '?' (AT-SPI receives
+/// UTF-8 through Orca's own font/text pipeline in practice).
+/// The cursor offset is the flat index cursor_row*(cols+1) + cursor_col.
+pub func:a11y_push_frame = NIL() {
+    if (g_a11y_enabled == 0i64) { pass(NIL); }
+
+    int64:rows = raw ts_get_rows();
+    int64:cols = raw ts_get_cols();
+    int64:cursor_row = raw ts_get_cursor_row();
+    int64:cursor_col = raw ts_get_cursor_col();
+
+    // Flat cursor offset: each row is cols+1 chars wide (includes '\n').
+    int64:cursor_offset = cursor_row * (cols + 1i64) + cursor_col;
+
+    // Build the snapshot string row by row.
+    string:snap = "";
+    int64:r = 0i64;
+    while (r < rows) {
+        string:row_str = "";
+        int64:c = 0i64;
+        while (c < cols) {
+            // grid_get_cp(row, col) — returns Unicode codepoint.
+            int64:cp = raw grid_get_cp(r, c);
+            // Map non-printable and non-ASCII to space for clean AT-SPI output.
+            if (cp < 0x20i64) { cp = 0x20i64; }
+            if (cp > 0x7Ei64) { cp = 0x20i64; }
+            row_str = row_str + string_from_char(cp);
+            c = c + 1i64;
+        }
+        if (r > 0i64) { snap = snap + "\n"; }
+        snap = snap + row_str;
+        r = r + 1i64;
+    }
+
+    int64:snap_len = string_length(snap);
+    drop(nitty_a11y_push_snapshot(snap, snap_len, cursor_offset));
+
+    // Detect and report caret movement.
+    int64:caret_moved = 0i64;
+    if (cursor_row != g_a11y_last_cursor_row) { caret_moved = 1i64; }
+    if (cursor_col != g_a11y_last_cursor_col) { caret_moved = 1i64; }
+    if (caret_moved == 1i64) {
+        drop(nitty_a11y_notify_caret_moved());
+        g_a11y_last_cursor_row = cursor_row;
+        g_a11y_last_cursor_col = cursor_col;
+    }
+
+    // Emit text-changed if PTY output arrived this frame.
+    if (g_a11y_output_pending == 1i64) {
+        drop(nitty_a11y_notify_text_changed());
+        g_a11y_output_pending = 0i64;
+    }
+
+    pass(NIL);
+};
+
+// ── Event hooks ───────────────────────────────────────────────────────────────
+
+/// Call when new PTY output was written to the terminal this frame.
+/// Sets a flag so a11y_push_frame() will emit a text-changed event.
+pub func:a11y_on_output = NIL() {
+    g_a11y_output_pending = 1i64;
+    pass(NIL);
+};
+
+/// Call when the active pane's tab title changes (tab switch, hostname change).
+/// Updates the accessible label and announces the tab title to Orca.
+pub func:a11y_on_tab_switch = NIL(string:title) {
+    if (g_a11y_enabled == 0i64) { pass(NIL); }
+    drop(nitty_a11y_set_label(title));
+    string:msg = string_concat("Tab: ", title);
+    // MEDIUM priority: read without interrupting ongoing output.
+    drop(nitty_a11y_announce(msg, 1i64));
+    pass(NIL);
+};
+
+/// Call when ESC[2J or Ctrl+L clears the screen.
+pub func:a11y_on_screen_clear = NIL() {
+    if (g_a11y_enabled == 0i64) { pass(NIL); }
+    drop(nitty_a11y_announce("Screen cleared", 0i64));
+    g_a11y_output_pending = 1i64;
+    pass(NIL);
+};
+
+/// Announce an arbitrary message via the AT-SPI live region.
+/// priority: 0=LOW  1=MEDIUM  2=HIGH
+/// Use for: connection established, auth errors, bell, plugin events.
+pub func:a11y_announce_message = NIL(string:msg, int64:priority) {
+    if (g_a11y_enabled == 0i64) { pass(NIL); }
+    drop(nitty_a11y_announce(msg, priority));
+    pass(NIL);
+};
+
+// ── System high-contrast detection ───────────────────────────────────────────
+
+/// Returns 1 if GTK4 system prefers high contrast (gtk-application-prefer-high-contrast).
+/// Called from app_init() to auto-select the high-contrast theme.
+pub func:a11y_system_prefers_high_contrast = int64() {
+    pass(nitty_a11y_system_prefers_high_contrast());
+};

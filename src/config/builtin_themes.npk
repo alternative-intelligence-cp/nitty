@@ -29,7 +29,7 @@
 // 21  catppuccin-latte — Catppuccin Latte
 
 /// Total number of built-in themes.
-pub func:builtin_theme_count = int64() { pass(22i64); };
+pub func:builtin_theme_count = int64() { pass(24i64); };
 
 /// Name of built-in theme at index i (0-based).
 pub func:builtin_theme_name = string(int64:i) {
@@ -51,10 +51,13 @@ pub func:builtin_theme_name = string(int64:i) {
     if (i == 15i64) { pass("kanagawa");            }
     if (i == 16i64) { pass("cobalt2");             }
     if (i == 17i64) { pass("solarized-light");     }
-    if (i == 18i64) { pass("one-light");           }
-    if (i == 19i64) { pass("github-light");        }
-    if (i == 20i64) { pass("gruvbox-light");       }
-    pass("catppuccin-latte");
+    if (i == 18i64) { pass("one-light");              }
+    if (i == 19i64) { pass("github-light");           }
+    if (i == 20i64) { pass("gruvbox-light");          }
+    if (i == 21i64) { pass("catppuccin-latte");        }
+    if (i == 22i64) { pass("high-contrast-dark");      }  // v0.13.0
+    if (i == 23i64) { pass("high-contrast-light");     }  // v0.13.0
+    pass("high-contrast-dark");  // fallback
 };
 
 /// Display name of built-in theme at index i.
@@ -80,7 +83,10 @@ pub func:builtin_theme_display_name = string(int64:i) {
     if (i == 18i64) { pass("One Light");              }
     if (i == 19i64) { pass("GitHub Light");           }
     if (i == 20i64) { pass("Gruvbox Light");          }
-    pass("Catppuccin Latte");
+    if (i == 21i64) { pass("Catppuccin Latte");       }
+    if (i == 22i64) { pass("High Contrast Dark");     }  // v0.13.0
+    if (i == 23i64) { pass("High Contrast Light");    }  // v0.13.0
+    pass("High Contrast Dark");  // fallback
 };
 
 /// Is the theme at index i a dark theme? (1=dark, 0=light)
@@ -327,6 +333,28 @@ pub func:builtin_theme_ansi_r = int64(int64:t, int64:c) {
         if (c == 12i64) { pass(0i64);   }  if (c == 13i64) { pass(143i64); }
         if (c == 14i64) { pass(104i64); }  pass(60i64);
     }
+    // theme 22: high-contrast-dark
+    if (t == 22i64) {
+        if (c == 0i64)  { pass(0i64); }  if (c == 1i64)  { pass(255i64); }
+        if (c == 2i64)  { pass(0i64); }  if (c == 3i64)  { pass(255i64); }
+        if (c == 4i64)  { pass(0i64); }  if (c == 5i64)  { pass(255i64); }
+        if (c == 6i64)  { pass(0i64); }  if (c == 7i64)  { pass(255i64); }
+        if (c == 8i64)  { pass(128i64); }  if (c == 9i64)  { pass(255i64); }
+        if (c == 10i64)  { pass(0i64); }  if (c == 11i64)  { pass(255i64); }
+        if (c == 12i64)  { pass(0i64); }  if (c == 13i64)  { pass(255i64); }
+        if (c == 14i64) { pass(0i64); }  pass(255i64);
+    }
+    // theme 23: high-contrast-light
+    if (t == 23i64) {
+        if (c == 0i64)  { pass(0i64); }  if (c == 1i64)  { pass(204i64); }
+        if (c == 2i64)  { pass(0i64); }  if (c == 3i64)  { pass(153i64); }
+        if (c == 4i64)  { pass(0i64); }  if (c == 5i64)  { pass(153i64); }
+        if (c == 6i64)  { pass(0i64); }  if (c == 7i64)  { pass(64i64); }
+        if (c == 8i64)  { pass(64i64); }  if (c == 9i64)  { pass(204i64); }
+        if (c == 10i64)  { pass(0i64); }  if (c == 11i64)  { pass(153i64); }
+        if (c == 12i64)  { pass(0i64); }  if (c == 13i64)  { pass(153i64); }
+        if (c == 14i64) { pass(0i64); }  pass(0i64);
+    }
     // theme 21: catppuccin-latte (fallthrough)
     if (c == 0i64)  { pass(220i64); }  if (c == 1i64)  { pass(210i64); }
     if (c == 2i64)  { pass(64i64);  }  if (c == 3i64)  { pass(223i64); }
@@ -549,6 +577,28 @@ pub func:builtin_theme_ansi_g = int64(int64:t, int64:c) {
         if (c == 10i64) { pass(115i64); }  if (c == 11i64) { pass(152i64); }
         if (c == 12i64) { pass(81i64);  }  if (c == 13i64) { pass(111i64); }
         if (c == 14i64) { pass(124i64); }  pass(66i64);
+    }
+    // theme 22: high-contrast-dark
+    if (t == 22i64) {
+        if (c == 0i64)  { pass(0i64); }  if (c == 1i64)  { pass(0i64); }
+        if (c == 2i64)  { pass(255i64); }  if (c == 3i64)  { pass(255i64); }
+        if (c == 4i64)  { pass(0i64); }  if (c == 5i64)  { pass(0i64); }
+        if (c == 6i64)  { pass(255i64); }  if (c == 7i64)  { pass(255i64); }
+        if (c == 8i64)  { pass(0i64); }  if (c == 9i64)  { pass(0i64); }
+        if (c == 10i64)  { pass(255i64); }  if (c == 11i64)  { pass(255i64); }
+        if (c == 12i64)  { pass(0i64); }  if (c == 13i64)  { pass(0i64); }
+        if (c == 14i64) { pass(255i64); }  pass(255i64);
+    }
+    // theme 23: high-contrast-light
+    if (t == 23i64) {
+        if (c == 0i64)  { pass(0i64); }  if (c == 1i64)  { pass(0i64); }
+        if (c == 2i64)  { pass(102i64); }  if (c == 3i64)  { pass(119i64); }
+        if (c == 4i64)  { pass(0i64); }  if (c == 5i64)  { pass(0i64); }
+        if (c == 6i64)  { pass(119i64); }  if (c == 7i64)  { pass(64i64); }
+        if (c == 8i64)  { pass(0i64); }  if (c == 9i64)  { pass(0i64); }
+        if (c == 10i64)  { pass(102i64); }  if (c == 11i64)  { pass(119i64); }
+        if (c == 12i64)  { pass(0i64); }  if (c == 13i64)  { pass(0i64); }
+        if (c == 14i64) { pass(119i64); }  pass(0i64);
     }
     // theme 21: catppuccin-latte
     if (c == 0i64)  { pass(220i64); }  if (c == 1i64)  { pass(65i64);  }
@@ -773,6 +823,28 @@ pub func:builtin_theme_ansi_b = int64(int64:t, int64:c) {
         if (c == 12i64) { pass(88i64);  }  if (c == 13i64) { pass(90i64);  }
         if (c == 14i64) { pass(109i64); }  pass(67i64);
     }
+    // theme 22: high-contrast-dark
+    if (t == 22i64) {
+        if (c == 0i64)  { pass(0i64); }  if (c == 1i64)  { pass(0i64); }
+        if (c == 2i64)  { pass(0i64); }  if (c == 3i64)  { pass(0i64); }
+        if (c == 4i64)  { pass(255i64); }  if (c == 5i64)  { pass(255i64); }
+        if (c == 6i64)  { pass(255i64); }  if (c == 7i64)  { pass(255i64); }
+        if (c == 8i64)  { pass(0i64); }  if (c == 9i64)  { pass(0i64); }
+        if (c == 10i64)  { pass(0i64); }  if (c == 11i64)  { pass(0i64); }
+        if (c == 12i64)  { pass(255i64); }  if (c == 13i64)  { pass(255i64); }
+        if (c == 14i64) { pass(255i64); }  pass(255i64);
+    }
+    // theme 23: high-contrast-light
+    if (t == 23i64) {
+        if (c == 0i64)  { pass(0i64); }  if (c == 1i64)  { pass(0i64); }
+        if (c == 2i64)  { pass(0i64); }  if (c == 3i64)  { pass(0i64); }
+        if (c == 4i64)  { pass(204i64); }  if (c == 5i64)  { pass(153i64); }
+        if (c == 6i64)  { pass(153i64); }  if (c == 7i64)  { pass(64i64); }
+        if (c == 8i64)  { pass(0i64); }  if (c == 9i64)  { pass(0i64); }
+        if (c == 10i64)  { pass(0i64); }  if (c == 11i64)  { pass(0i64); }
+        if (c == 12i64)  { pass(204i64); }  if (c == 13i64)  { pass(153i64); }
+        if (c == 14i64) { pass(153i64); }  pass(0i64);
+    }
     // theme 21: catppuccin-latte
     if (c == 0i64)  { pass(224i64); }  if (c == 1i64)  { pass(85i64);  }
     if (c == 2i64)  { pass(111i64); }  if (c == 3i64)  { pass(155i64); }
@@ -811,7 +883,10 @@ pub func:builtin_theme_fg_r = int64(int64:t) {
     if (t == 18i64) { pass(56i64);  }  // one-light
     if (t == 19i64) { pass(36i64);  }  // github-light
     if (t == 20i64) { pass(60i64);  }  // gruvbox-light: fg0
-    pass(76i64);                        // catppuccin-latte: text
+    if (t == 21i64) { pass(76i64);  }  // catppuccin-latte: text
+    if (t == 22i64) { pass(255i64); }  // hc-dark:  white #ffffff
+    if (t == 23i64) { pass(0i64);   }  // hc-light: black #000000
+    pass(229i64);                        // default fallback
 };
 
 /// Default foreground G for theme t.
@@ -837,7 +912,10 @@ pub func:builtin_theme_fg_g = int64(int64:t) {
     if (t == 18i64) { pass(64i64);  }
     if (t == 19i64) { pass(41i64);  }
     if (t == 20i64) { pass(56i64);  }
-    pass(79i64);
+    if (t == 21i64) { pass(79i64);  }  // catppuccin-latte
+    if (t == 22i64) { pass(255i64); }  // hc-dark:  white
+    if (t == 23i64) { pass(0i64);   }  // hc-light: black
+    pass(229i64);
 };
 
 /// Default foreground B for theme t.
@@ -863,7 +941,10 @@ pub func:builtin_theme_fg_b = int64(int64:t) {
     if (t == 18i64) { pass(64i64);  }
     if (t == 19i64) { pass(46i64);  }
     if (t == 20i64) { pass(52i64);  }
-    pass(98i64);
+    if (t == 21i64) { pass(98i64);  }  // catppuccin-latte
+    if (t == 22i64) { pass(255i64); }  // hc-dark:  white
+    if (t == 23i64) { pass(0i64);   }  // hc-light: black
+    pass(229i64);
 };
 
 /// Default background R for theme t.
@@ -889,7 +970,10 @@ pub func:builtin_theme_bg_r = int64(int64:t) {
     if (t == 18i64) { pass(250i64); }   // one-light: #fafafa
     if (t == 19i64) { pass(255i64); }   // github-light: #ffffff
     if (t == 20i64) { pass(251i64); }   // gruvbox-light: #fbf1c7
-    pass(239i64);                        // catppuccin-latte: base #eff1f5
+    if (t == 21i64) { pass(239i64); }   // ctp-latte: #eff1f5
+    if (t == 22i64) { pass(0i64);   }   // hc-dark:  #000000
+    if (t == 23i64) { pass(255i64); }   // hc-light: #ffffff
+    pass(0i64);
 };
 
 /// Default background G for theme t.
@@ -915,7 +999,10 @@ pub func:builtin_theme_bg_g = int64(int64:t) {
     if (t == 18i64) { pass(250i64); }
     if (t == 19i64) { pass(255i64); }
     if (t == 20i64) { pass(241i64); }   // gruvbox: #fbf1c7
-    pass(241i64);                        // ctp-latte: #eff1f5
+    if (t == 21i64) { pass(241i64); }   // ctp-latte: #eff1f5
+    if (t == 22i64) { pass(0i64);   }   // hc-dark:  #000000
+    if (t == 23i64) { pass(255i64); }   // hc-light: #ffffff
+    pass(0i64);
 };
 
 /// Default background B for theme t.
@@ -941,7 +1028,10 @@ pub func:builtin_theme_bg_b = int64(int64:t) {
     if (t == 18i64) { pass(250i64); }
     if (t == 19i64) { pass(255i64); }
     if (t == 20i64) { pass(199i64); }   // gruvbox: #fbf1c7
-    pass(245i64);                        // ctp-latte: #eff1f5
+    if (t == 21i64) { pass(245i64); }   // ctp-latte: #eff1f5
+    if (t == 22i64) { pass(0i64);   }   // hc-dark:  #000000
+    if (t == 23i64) { pass(255i64); }   // hc-light: #ffffff
+    pass(0i64);
 };
 
 /// Lookup built-in theme index by name string. Returns -1 if not found.

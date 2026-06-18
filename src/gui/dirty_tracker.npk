@@ -1,0 +1,122 @@
+// src/gui/dirty_tracker.npk — Per-row dirty tracking for renderer_sync_frame (v0.12.1)
+//
+// Tracks which terminal grid rows have changed content since the last rendered
+// frame, allowing renderer_sync_frame() to skip FFI calls for rows that haven't
+// changed. This eliminates the ~1920 unconditional FFI crossings per GTK frame
+// on an idle terminal (80×24 grid), replacing them with a row-level test that
+// avoids all set_cell_* calls for clean rows.
+//
+// Implementation: nitpick-bitset (one byte per bit), backed by aria_libc_mem.
+// One bit per row; bit i = 1 means row i has changed and must be resynced.
+//
+// Full-redraw flag (g_dt_full): set on resize, scroll jump, alt screen switch.
+// When set, dirty_is_row_set() always returns 1, so the entire grid is resynced.
+//
+// Usage:
+//   dirty_tracker_init(max_rows)         — call once in renderer_init
+//   dirty_mark_row(row)                  — mark a specific row changed
+//   dirty_mark_all()                     — force full redraw next frame
+//   dirty_is_row_set(row) → int32        — 1 if row needs resync
+//   dirty_clear()                        — call at end of renderer_sync_frame
+//   dirty_tracker_destroy()              — call on shutdown
+
+use "../../nitpick-packages/packages/nitpick-bitset/src/nitpick_bitset.npk".*;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Module state
+// ═══════════════════════════════════════════════════════════════════════
+
+// Bitset handle (allocated by dirty_tracker_init)
+int64:g_dt_bits    = 0i64;
+int64:g_dt_nrows   = 0i64;
+int32:g_dt_full    = 1i32;  // starts as full-redraw until first frame clears it
+
+// ═══════════════════════════════════════════════════════════════════════
+// Lifecycle
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Allocate the dirty bitset for up to max_rows rows.
+/// Call once during renderer_init().
+pub func:dirty_tracker_init = NIL(int64:max_rows) {
+    if (g_dt_bits != 0i64) {
+        drop(raw bitset_destroy(g_dt_bits));
+    }
+    g_dt_bits  = raw bitset_create(max_rows);
+    g_dt_nrows = max_rows;
+    g_dt_full  = 1i32;   // first frame is always a full redraw
+    pass(NIL);
+};
+
+/// Free bitset memory. Call on shutdown.
+pub func:dirty_tracker_destroy = NIL() {
+    if (g_dt_bits != 0i64) {
+        drop(raw bitset_destroy(g_dt_bits));
+        g_dt_bits  = 0i64;
+        g_dt_nrows = 0i64;
+    }
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Marking
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Mark a single row as dirty (needs FFI resync this frame).
+pub func:dirty_mark_row = NIL(int64:row) {
+    if (g_dt_bits != 0i64) {
+        if (row >= 0i64) {
+            if (row < g_dt_nrows) {
+                drop(raw bitset_set(g_dt_bits, row));
+            }
+        }
+    }
+    pass(NIL);
+};
+
+/// Mark all rows dirty — forces a full grid resync next frame.
+/// Call on: resize, scroll jump, alt screen switch, palette change.
+pub func:dirty_mark_all = NIL() {
+    g_dt_full = 1i32;
+    pass(NIL);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Query
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Returns 1 if the given row needs resyncing this frame, 0 if clean.
+/// When full-redraw is set, always returns 1.
+pub func:dirty_is_row_set = int32(int64:row) {
+    if (g_dt_full != 0i32) { pass(1i32); }
+    if (g_dt_bits == 0i64) { pass(1i32); }   // uninitialised: sync everything
+    if (row < 0i64)        { pass(0i32); }
+    if (row >= g_dt_nrows) { pass(0i32); }
+    pass(raw bitset_test(g_dt_bits, row));
+};
+
+/// Returns 1 if a full redraw is pending (dirty_mark_all was called).
+pub func:dirty_is_full_redraw = int32() {
+    pass(g_dt_full);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Reset
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Clear all dirty flags after renderer_sync_frame() completes.
+/// Must be called at the end of every sync.
+pub func:dirty_clear = NIL() {
+    g_dt_full = 0i32;
+    if (g_dt_bits != 0i64) {
+        // Zero all row flags by clearing each set bit.
+        // bitset_is_empty check avoids iterating a clean set.
+        if (raw bitset_is_empty(g_dt_bits) == 0i32) {
+            int64:i = 0i64;
+            while (i < g_dt_nrows) {
+                drop(raw bitset_clear(g_dt_bits, i));
+                i = i + 1i64;
+            }
+        }
+    }
+    pass(NIL);
+};

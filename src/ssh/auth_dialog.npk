@@ -7,7 +7,7 @@
 // each frame. Returns AUTH_DIALOG_DONE when done (success or failure).
 
 use "ssh_auth.npk".*;
-use "gtk4_ffi.npk".*;
+use "../gui/gtk4_ffi.npk".*;
 
 // ── Result codes ─────────────────────────────────────────────────────────────
 
@@ -79,27 +79,27 @@ pub func:auth_dialog_tick = int32(int64:pane_id) {
     }
 
     // Run the auth state machine
-    int32:meth = auth_current_method(p);
-    int32:result = auth_try_next(p);
+    int32:meth = raw auth_current_method(p);
+    int32:result = raw auth_try_next(p);
 
-    if (result == AUTH_RESULT_OK()) {
+    if (result == AUTH_RESULT_OK) {
         g_adlg_result[p] = 1i64;
         pass AUTH_DIALOG_DONE();
     }
 
-    if (result == AUTH_RESULT_FAIL()) {
+    if (result == AUTH_RESULT_FAIL) {
         g_adlg_result[p] = 2i64;
         pass AUTH_DIALOG_DONE();
     }
 
-    if (result == AUTH_RESULT_NEED_INPUT()) {
+    if (result == AUTH_RESULT_NEED_INPUT) {
         // Show appropriate dialog
         string:host = string_concat(g_adlg_hostname[p], "");
         string:user_input = "";
 
         // Keyboard-interactive: GTK4 prompt (no masking for now; real kbd-int
         // would parse the prompt name from the server's INFO_REQUEST packet)
-        if (meth == AUTH_METHOD_KBDINT()) {
+        if (meth == AUTH_METHOD_KBDINT) {
             string:title  = string_concat("SSH Authentication — ", host);
             string:prompt = string_concat("Verification code or passphrase for ", host);
             user_input = nitty_gtk4_prompt_password(title, prompt);
@@ -114,9 +114,9 @@ pub func:auth_dialog_tick = int32(int64:pane_id) {
         }
 
         // Password: masked entry dialog
-        if (meth == AUTH_METHOD_PASSWORD()) {
+        if (meth == AUTH_METHOD_PASSWORD) {
             string:title  = string_concat("SSH Password — ", host);
-            string:user_nm = auth_last_error(p); // reuse: actually get username
+            string:user_nm = raw auth_last_error(p); // reuse: actually get username
             string:prompt = string_concat("Password for ", host);
             user_input = nitty_gtk4_prompt_password(title, prompt);
             if (string_length(user_input) > 0i64) {

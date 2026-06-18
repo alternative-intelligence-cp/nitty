@@ -10,50 +10,59 @@
 //   3 = Enum       (string constrained to g_sch_enum_vals)
 //   4 = FloatX1000 (int64 x1000 fixed-point, e.g. 1000 = 1.0)
 
-// ── Schema table (parallel arrays, capacity 32) ──────────────────────────────
+// ── Schema table (parallel arrays, capacity 56) ──────────────────────────────
 
 int64:g_sch_count = 0i64;
 
-// Index arrays — one slot per schema entry (up to 32)
-string[48]:g_sch_key     = ["", "", "", "", "", "", "", "",
+// Index arrays — one slot per schema entry (up to 56)
+string[56]:g_sch_key     = ["", "", "", "", "", "", "", "",
                              "", "", "", "", "", "", "", "",
-                             "", "", "", "", "", "", "", "",
-                             "", "", "", "", "", "", "", "",
-                             "", "", "", "", "", "", "", "",
-                             "", "", "", "", "", "", "", ""];
-
-int64[48]:g_sch_type     = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
-                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
-                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
-                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
-                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
-                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
-
-string[48]:g_sch_default = ["", "", "", "", "", "", "", "",
                              "", "", "", "", "", "", "", "",
                              "", "", "", "", "", "", "", "",
                              "", "", "", "", "", "", "", "",
                              "", "", "", "", "", "", "", "",
                              "", "", "", "", "", "", "", ""];
 
-int64[48]:g_sch_min      = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+int64[56]:g_sch_type     = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                              0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
-                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
-                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
-                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
-                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
-
-int64[48]:g_sch_max      = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                              0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                              0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                              0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                              0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                              0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
 
+string[56]:g_sch_default = ["", "", "", "", "", "", "", "",
+                             "", "", "", "", "", "", "", "",
+                             "", "", "", "", "", "", "", "",
+                             "", "", "", "", "", "", "", "",
+                             "", "", "", "", "", "", "", "",
+                             "", "", "", "", "", "", "", "",
+                             "", "", "", "", "", "", "", ""];
 
-// Enum valid values: up to 4 per entry, stored in a flat 32×4 grid
+int64[56]:g_sch_min      = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+
+int64[56]:g_sch_max      = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                             0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+
+
+// Enum valid values: up to 4 per entry, stored in a flat 56×4 grid
 // Access: g_sch_enum_vals[entry_idx * 4 + val_idx]
-string[192]:g_sch_enum_vals  = ["", "", "", "", "", "", "", "",
+string[224]:g_sch_enum_vals  = ["", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
+                                 "", "", "", "", "", "", "", "",
                                  "", "", "", "", "", "", "", "",
                                  "", "", "", "", "", "", "", "",
                                  "", "", "", "", "", "", "", "",
@@ -78,7 +87,8 @@ string[192]:g_sch_enum_vals  = ["", "", "", "", "", "", "", "",
                                  "", "", "", "", "", "", "", "",
                                  "", "", "", "", "", "", "", ""];
 
-int64[48]:g_sch_enum_count   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+int64[56]:g_sch_enum_count   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
+                                 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                                  0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                                  0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
                                  0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
@@ -90,7 +100,7 @@ int64[48]:g_sch_enum_count   = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64,
 
 /// Add a String/Int/Bool/FloatX1000 entry (no enum values)
 func:_sch_add = NIL(string:key, int64:typ, string:def, int64:mn, int64:mx) {
-    if (g_sch_count >= 48i64) { pass(NIL); }
+    if (g_sch_count >= 56i64) { pass(NIL); }
     int64:i = g_sch_count;
     g_sch_key[i]     = key;
     g_sch_type[i]    = typ;
@@ -218,6 +228,19 @@ pub func:schema_init = NIL() {
     //   zmodem.download_dir:   string — destination for received files (default: ~/Downloads)
     drop(_sch_add("zmodem.auto_detect",  T_BOOL, "1",          0i64, 0i64));
     drop(_sch_add("zmodem.download_dir", T_STR,  "~/Downloads", 0i64, 0i64));
+
+    // a11y.* — v0.13.0: Accessibility / screen reader configuration
+    //   a11y.enabled:             bool — 1 = initialize AT-SPI GObject (default: 1)
+    //   a11y.screen_reader_mode:  bool — 1 = suppress visual-only effects for SR users
+    //   a11y.announce_output:     bool — 1 = emit live-region announce on new output
+    //   a11y.high_contrast:       bool — 1 = force high-contrast theme regardless of system pref
+    //   a11y.reduce_motion:       bool — 1 = disable cursor blink, transitions
+    int64:T_BOOL2 = 2i64;
+    drop(_sch_add("a11y.enabled",            T_BOOL2, "1", 0i64, 0i64));
+    drop(_sch_add("a11y.screen_reader_mode", T_BOOL2, "0", 0i64, 0i64));
+    drop(_sch_add("a11y.announce_output",    T_BOOL2, "0", 0i64, 0i64));
+    drop(_sch_add("a11y.high_contrast",      T_BOOL2, "0", 0i64, 0i64));
+    drop(_sch_add("a11y.reduce_motion",      T_BOOL2, "0", 0i64, 0i64));
 
     pass(NIL);
 };

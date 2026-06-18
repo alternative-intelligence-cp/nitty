@@ -17,6 +17,7 @@ use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/src/nitp
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".*;
 use "/home/randy/Workspace/REPOS/nitty/src/gui/gtk4_ffi.npk".*;
+use "./ssh_security.npk".{secure_clear};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -41,7 +42,7 @@ string[64]:g_vault_plaintext;          // decrypted, only valid while unlocked
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 func:vault_resolve_path = string() {
-    string:home = raw env_home();
+    string:home = env_get("HOME");
     if (string_is_empty(home)) {
         pass("/tmp/nitty_vault.toml");
     }
@@ -49,7 +50,7 @@ func:vault_resolve_path = string() {
 };
 
 func:vault_ensure_dir = NIL() {
-    string:home = raw env_home();
+    string:home = env_get("HOME");
     if (string_is_empty(home)) { pass(NIL); }
     string:dir = string_concat(string_concat(home, "/"), VAULT_NITTY_DIR);
     if (raw fs_is_dir(dir) == 0i64) {
@@ -72,6 +73,7 @@ func:vault_clear_memory = NIL() {
     int64:i = 0i64;
     while (i < VAULT_MAX_ENTRIES) {
         g_vault_profile_id[i] = "";
+        drop(secure_clear(g_vault_plaintext[i]));
         g_vault_plaintext[i]  = "";
         i = i + 1i64;
     }
@@ -92,17 +94,17 @@ func:vault_load_and_decrypt = int64() {
     if (string_is_empty(content)) { pass(0i64); }
 
     // Parse TOML — entries are [profile_id] sections with encrypted = "blob"
-    drop(TOML.parse(content));
-    int64:count = raw TOML.count();
+    drop(Toml.parse(content));
+    int64:count = raw Toml.count();
     int64:i = 0i64;
     while (i < count) {
-        string:key = raw TOML.key_at(i);
+        string:key = raw Toml.key_at(i);
         // key is like "profile_123.encrypted"
         if (string_ends_with(key, ".encrypted")) {
             int64:dot_pos = string_index_of(key, ".");
             if (dot_pos > 0i64) {
                 string:profile_id = string_substring(key, 0i64, dot_pos);
-                string:enc_blob   = raw TOML.get_string(key);
+                string:enc_blob   = raw Toml.get_string(key);
 
                 // Decrypt via vault shim
                 string:plaintext = raw nitpick_vault_decrypt(g_vault_master_pass, enc_blob);
@@ -156,7 +158,7 @@ func:vault_save = int64() {
 
 pub func:vault_init = NIL() {
     drop(vault_ensure_dir());
-    g_vault_path = vault_resolve_path();
+    g_vault_path = raw vault_resolve_path();
     g_vault_unlocked = 0i64;
     g_vault_master_pass = "";
     g_vault_unlock_ts   = 0i64;
@@ -169,20 +171,22 @@ pub func:vault_unlock = int64(string:master_pass) {
     g_vault_unlocked = 0i64;
 
     // Try to load and decrypt — if vault file doesn't exist yet, succeed trivially
-    int64:result = vault_load_and_decrypt();
+    int64:result = raw vault_load_and_decrypt();
     if (result < 0i64) {
         // Wrong passphrase
+        drop(secure_clear(g_vault_master_pass));
         g_vault_master_pass = "";
         drop(vault_clear_memory());
         pass(-1i64);
     }
 
     g_vault_unlocked  = 1i64;
-    g_vault_unlock_ts = raw nitty_epoch_seconds();
+    g_vault_unlock_ts = nitty_epoch_seconds();
     pass(0i64);
 };
 
 pub func:vault_lock = NIL() {
+    drop(secure_clear(g_vault_master_pass));
     g_vault_master_pass = "";
     g_vault_unlocked    = 0i64;
     g_vault_unlock_ts   = 0i64;
@@ -196,7 +200,7 @@ pub func:vault_is_unlocked = int64() {
 
 pub func:vault_get_password = string(string:profile_id) {
     if (g_vault_unlocked == 0i64) { pass(""); }
-    int64:slot = vault_find_slot(profile_id);
+    int64:slot = raw vault_find_slot(profile_id);
     if (slot < 0i64) { pass(""); }
     pass(g_vault_plaintext[slot]);
 };
@@ -205,8 +209,9 @@ pub func:vault_set_password = int64(string:profile_id, string:password) {
     if (g_vault_unlocked == 0i64) { pass(-1i64); }
 
     // Update or insert in memory
-    int64:slot = vault_find_slot(profile_id);
+    int64:slot = raw vault_find_slot(profile_id);
     if (slot >= 0i64) {
+        drop(secure_clear(g_vault_plaintext[slot]));
         g_vault_plaintext[slot] = password;
     } else {
         if (g_vault_count >= VAULT_MAX_ENTRIES) { pass(-1i64); }
@@ -216,14 +221,17 @@ pub func:vault_set_password = int64(string:profile_id, string:password) {
     }
 
     // Persist to disk
-    int64:ok = vault_save();
-    pass(ok);
+    int64:save_result = raw vault_save();
+    pass(save_result);
 };
 
 pub func:vault_delete_password = int64(string:profile_id) {
     if (g_vault_unlocked == 0i64) { pass(-1i64); }
-    int64:slot = vault_find_slot(profile_id);
+    int64:slot = raw vault_find_slot(profile_id);
     if (slot < 0i64) { pass(0i64); }   // not found = already gone
+
+    // Securely clear the password before dropping its reference
+    drop(secure_clear(g_vault_plaintext[slot]));
 
     // Shift remaining entries down
     int64:i = slot;
@@ -236,13 +244,13 @@ pub func:vault_delete_password = int64(string:profile_id) {
     g_vault_plaintext[g_vault_count - 1i64]  = "";
     g_vault_count = g_vault_count - 1i64;
 
-    int64:ok = vault_save();
-    pass(ok);
+    int64:save_result = raw vault_save();
+    pass(save_result);
 };
 
 pub func:vault_tick = NIL() {
     if (g_vault_unlocked == 0i64) { pass(NIL); }
-    int64:now = raw nitty_epoch_seconds();
+    int64:now = nitty_epoch_seconds();
     int64:elapsed = now - g_vault_unlock_ts;
     if (elapsed >= VAULT_AUTO_LOCK_SECS) {
         drop(vault_lock());

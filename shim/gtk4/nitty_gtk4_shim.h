@@ -1120,6 +1120,87 @@ int64_t nitty_serial_toolbar_poll_input_mode(void);
  */
 int64_t nitty_serial_toolbar_poll_output_mode(void);
 
+/* ── v0.11.3: Secure memory clearing ───────────────────────────────────────
+ * Zero len bytes at data_ptr using compiler-safe explicit_bzero / volatile
+ * loop.  Called from ssh_security.npk secure_clear() to wipe credential
+ * strings before GC reclaims them.
+ * data_ptr: int64 cast of the buffer address.
+ * len:      number of bytes to zero.
+ */
+void nitty_shim_memzero(const char *data, int64_t len);
+
+/* ── v0.13.0: Accessibility (GtkAccessibleText / AT-SPI) ──────────────────
+ *
+ * Architecture: Nitpick pushes a UTF-8 snapshot of the visible terminal grid
+ * to C via nitty_a11y_push_snapshot() at the end of each tw_on_draw() frame.
+ * AT-SPI/Orca queries are answered synchronously from the static C buffer —
+ * Nitpick globals are never accessed from C callbacks.
+ *
+ * The NittyTerminalAccessible GObject implements GtkAccessible +
+ * GtkAccessibleText (GTK ≥ 4.14) with role GTK_ACCESSIBLE_ROLE_TERMINAL.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Initialise accessibility for the terminal DrawingArea.
+ * Creates the NittyTerminalAccessible GObject, wires it into the GTK
+ * accessible tree, and sets role = GTK_ACCESSIBLE_ROLE_TERMINAL.
+ * Must be called once after the DrawingArea widget exists (post on_activate).
+ * No-op if GTK < 4.14 or AT-SPI is not running.
+ */
+void    nitty_a11y_init_terminal(void);
+
+/**
+ * Push a UTF-8 snapshot of the current visible screen content to the
+ * static C buffer that AT-SPI queries read from.
+ *
+ * utf8_text   : flat UTF-8 string, rows joined with '\n'.
+ *               NUL-codepoint cells are represented as U+0020 (space).
+ * len         : byte length of utf8_text (may contain multi-byte sequences).
+ * cursor_offset: flat character offset of the cursor
+ *               = cursor_row × cols + cursor_col.
+ *
+ * Call this ONCE per tw_on_draw() frame, after renderer_sync_frame().
+ * Thread-safe: only called from the GTK main thread.
+ */
+void    nitty_a11y_push_snapshot(const char *utf8_text, int64_t len,
+                                  int64_t cursor_offset);
+
+/**
+ * Update the accessible label (name) of the terminal widget.
+ * Call when the active pane title changes (e.g. on tab switch or hostname change).
+ */
+void    nitty_a11y_set_label(const char *label);
+
+/**
+ * Emit an AT-SPI "live region" announcement via gtk_accessible_announce().
+ * priority: 0 = GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_LOW
+ *           1 = GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM
+ *           2 = GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_HIGH
+ * Used for: tab switches, connection events, bell, screen clear.
+ */
+void    nitty_a11y_announce(const char *message, int64_t priority);
+
+/**
+ * Notify AT-SPI that the terminal text content has changed.
+ * Wraps gtk_accessible_text_update_contents() with a full-range INSERT change.
+ * Call after nitty_a11y_push_snapshot() when new output was received.
+ */
+void    nitty_a11y_notify_text_changed(void);
+
+/**
+ * Notify AT-SPI that the caret (cursor) position has moved.
+ * Wraps gtk_accessible_text_update_caret_position().
+ * Call when the cursor offset in the snapshot changes.
+ */
+void    nitty_a11y_notify_caret_moved(void);
+
+/**
+ * Detect whether the GTK4 system high-contrast preference is active.
+ * Reads GtkSettings:gtk-application-prefer-high-contrast.
+ * Returns 1 if high-contrast is requested by the system, 0 otherwise.
+ */
+int64_t nitty_a11y_system_prefers_high_contrast(void);
+
 #ifdef __cplusplus
 }
 #endif

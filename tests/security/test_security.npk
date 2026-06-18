@@ -1,0 +1,26 @@
+// tests/security/test_security.npk
+// Security tests for Nitty v0.11.3
+
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/src/nitpick_test.npk".*;
+use "/home/randy/Workspace/REPOS/nitty/src/plugin/plugin_safe_path.npk".*;
+
+pub func:main = int32() {
+    drop(Test.begin("Nitty Security Audit Tests"));
+
+    // T01-T05: Plugin path traversal
+    string:p1 = raw safe_resolve_path("/etc/nitty/plugins", "../../../etc/passwd");
+    drop(Test.assert_eq_str("T01: Reject parent directory traversal", p1, ""));
+
+    string:p2 = raw safe_resolve_path("/etc/nitty/plugins", "/etc/shadow");
+    drop(Test.assert_eq_str("T02: Reject absolute path traversal", p2, ""));
+
+    string:p3 = raw safe_resolve_path("/etc/nitty/plugins", "valid/plugin.npk");
+    drop(Test.assert_eq_str("T03: Accept valid relative path", p3, "/etc/nitty/plugins/valid/plugin.npk"));
+
+    drop(Test.finish());
+    exit 0i32;
+};
+
+pub func:failsafe = int32(tbb32:err) {
+    exit 1i32;
+};

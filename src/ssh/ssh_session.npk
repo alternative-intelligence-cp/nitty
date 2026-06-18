@@ -23,6 +23,7 @@
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/src/nitpick_ssh.npk".*;
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/src/nitpick_socket_v2.npk".*;
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/src/nitpick_unix_socket.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/src/nitpick_base64.npk".*;
 use "../../src/ssh/ssh_error.npk".*;
 use "../../src/ssh/ssh_known_hosts.npk".*;
 use "../../src/ssh/ssh_auth.npk".*;
@@ -31,7 +32,7 @@ use "../../src/core/pane.npk".*;
 use "../../src/ssh/ssh_forward.npk".{fwd_confirm_channel, fwd_close_channel, fwd_remote_accept};
 use "../../src/config/profile.npk".{profile_get_x11_forwarding, profile_get_ssh_compress}; // v0.8.7
 use "../../src/ssh/ssh_x11.npk".{x11_request_forwarding, x11_handle_open};                 // v0.8.7
-use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".{env_get}; // v0.8.7
+// v0.8.7: env_get removed — DISPLAY is read by x11_request_forwarding via nitty_x11_get_display() in ssh_x11.npk
 
 // ── Session State Constants ──────────────────────────────────────────────────
 
@@ -47,7 +48,7 @@ pub func:SSH_SESS_ERROR          = int64() { pass(5i64); };
 
 int64:_SSH_MAX = 64i64;
 string[64]:g_ssh_error = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""];
-int64[64]:g_ssh_state  = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
+pub int64[64]:g_ssh_state  = [0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64];
 // v0.8.6: Per-slot hostname (for tab bar indicator and X11 forwarding)
 pub string[64]:g_ssh_host = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""];
 
@@ -165,9 +166,36 @@ pub func:ssh_connect = int64(int64:pane_slot, string:host, int64:port, string:us
     }
 
     // ── Step 7: Host key check ───────────────────────────────────────────────
-    // TODO v0.8.2: Extract server host key from session and call ssh_kh_check.
-    // For v0.8.1 we defer TOFU UI and accept on first connect (stored in session).
-    // The DH reply already verified the host key signature cryptographically.
+    string:_hk_s = ahget(session, "_server_host_key_buf");
+    int64:hk_buf = raw SSH_str_to_handle(_hk_s);
+    string:hk_type = raw SSH_decode_string_data(hk_buf, 0i64);
+
+    int64:kh_file = raw ssh_kh_load();
+    int64:kh_status = raw ssh_kh_check(kh_file, host, hk_type, hk_buf);
+    
+    drop(auth_dialog_init(pane_slot, host));
+    
+    if (kh_status == raw KH_MISMATCH()) {
+        drop(_ssh_set_error(pane_slot, "Host key mismatch! Potential MITM attack."));
+        int32:proceed = raw auth_dialog_host_key_verify(pane_slot, hk_type);
+        if (proceed == 0i32) {
+            drop(SSH_disconnect(session));
+            pass(-6i64);
+        }
+    } else {
+        if (kh_status == raw KH_NEW_HOST() || kh_status == raw KH_ERROR()) {
+            int32:proceed = raw auth_dialog_host_key_verify(pane_slot, hk_type);
+            if (proceed == 0i32) {
+                drop(SSH_disconnect(session));
+                pass(-6i64);
+            } else {
+                int64:hk_len = raw SSH_buf_len(hk_buf);
+                string:hk_raw_str = raw SSH_buf_extract_str(hk_buf, 0i64, hk_len);
+                string:hk_b64 = raw b64_encode(hk_raw_str, @cast_unchecked<int32>(hk_len));
+                drop(raw ssh_kh_add(host, hk_type, hk_b64));
+            }
+        }
+    }
 
     // ── Step 8: Derive session keys ───────────────────────────────────────────
     int32:dk = raw SSH_derive_keys(session);
@@ -246,10 +274,10 @@ pub func:ssh_connect = int64(int64:pane_slot, string:host, int64:port, string:us
     int32:auth_ok     = 0i32;
     int64:auth_iters  = 0i64;
     while (auth_iters < 64i64 && auth_done == 0i32) {
-        int32:tick_result = auth_dialog_tick(pane_slot);
-        if (tick_result == AUTH_DIALOG_DONE()) {
+        int32:tick_result = raw auth_dialog_tick(pane_slot);
+        if (tick_result == 0i32) { // 0 = AUTH_DIALOG_DONE
             auth_done = 1i32;
-            if (auth_dialog_success(pane_slot) == 1i32) {
+            if (raw auth_dialog_success(pane_slot) == 1i32) {
                 auth_ok = 1i32;
             }
         }
@@ -330,13 +358,13 @@ pub func:ssh_connect = int64(int64:pane_slot, string:host, int64:port, string:us
     // v0.8.7: X11 forwarding — send x11-req after shell channel is ready
     // Only sends if the profile has x11_forwarding enabled.
     if (raw profile_get_x11_forwarding(pane_slot) == 1i64) {
-        drop(x11_request_forwarding(pane_slot, session, chan_id));
+        drop(raw x11_request_forwarding(pane_slot, session, chan_id));
     }
 
     // v0.8.7: If using zlib@openssh.com, activate compression now (post-auth).
     // For plain "zlib" it was already activated after NEWKEYS (in nitpick_ssh.npk).
-    string:_comp_algo = raw SSH_compression_get(session);
-    if (_comp_algo == "zlib@openssh.com") {
+    // SSH_compression_enabled returns 1 if compression is active.
+    if (raw SSH_compression_enabled(session) == 1i32) {
         ahset(session, "_compression_active", "1");
     }
 
@@ -419,8 +447,8 @@ pub func:ssh_poll_read = string(int64:pane_slot) {
             if (msg_type == 94i32) {
                 // CHANNEL_DATA (type 94) — check if it's a forwarding channel
                 // The channel id (recipient) is at bytes 1-4 in the payload
-                int32:recv_chan = nitpick_ssh_decode_uint32(payload, 1i64);
-                int64:recv_chan64 = @cast_unchecked<int64>(recv_chan);
+                int64:recv_chan = nitpick_ssh_decode_uint32(payload, 1i64);
+                int64:recv_chan64 = recv_chan;
                 if (recv_chan64 != shell_chan) {
                     // Forwarding channel — relay data to local fd
                     // First dispatch normally to update channel state/buffer
@@ -456,8 +484,8 @@ pub func:ssh_poll_read = string(int64:pane_slot) {
 
             if (msg_type == 91i32) {
                 // CHANNEL_OPEN_CONFIRM — could be a forwarding channel
-                int32:confirm_our_chan = nitpick_ssh_decode_uint32(payload, 1i64);
-                int64:confirm_chan64 = @cast_unchecked<int64>(confirm_our_chan);
+                int64:confirm_our_chan = nitpick_ssh_decode_uint32(payload, 1i64);
+                int64:confirm_chan64 = confirm_our_chan;
                 int32:r = raw SSH_dispatch(session, payload);
                 drop(raw SSH_buf_free(payload));
                 if (confirm_chan64 != shell_chan) {
@@ -741,10 +769,10 @@ pub func:ssh_connect_over_fd = int64(int64:pane_slot, int64:transport_fd,
     int32:auth_ok2    = 0i32;
     int64:auth_iters2 = 0i64;
     while (auth_iters2 < 64i64 && auth_done2 == 0i32) {
-        int32:tick_result2 = auth_dialog_tick(pane_slot);
-        if (tick_result2 == AUTH_DIALOG_DONE()) {
+        int32:tick_result2 = raw auth_dialog_tick(pane_slot);
+        if (tick_result2 == 0i32) { // 0 = AUTH_DIALOG_DONE
             auth_done2 = 1i32;
-            if (auth_dialog_success(pane_slot) == 1i32) { auth_ok2 = 1i32; }
+            if (raw auth_dialog_success(pane_slot) == 1i32) { auth_ok2 = 1i32; }
         }
         auth_iters2 = auth_iters2 + 1i64;
     }

@@ -85,14 +85,14 @@ func:x11_gen_fake_cookie = string() {
 // ── Request X11 forwarding on a shell channel ─────────────────────────────────
 
 pub func:x11_request_forwarding = int64(int64:pane_slot, int64:ssh_session, int64:channel_id) {
-    // Check that DISPLAY is set
-    string:display = raw nitty_x11_get_display();
+    // Check that DISPLAY is set (extern func — plain return, no raw)
+    string:display = nitty_x11_get_display();
     if (string_is_empty(display)) {
         pass(-1i64);   // no local display available
     }
 
-    // Generate fake auth cookie
-    string:cookie = x11_gen_fake_cookie();
+    // Generate fake auth cookie (private func: in same file — needs raw in pub func context)
+    string:cookie = raw x11_gen_fake_cookie();
 
     // Extract screen number from DISPLAY (e.g. ":0.0" → screen 0)
     // DISPLAY format: [host]:display[.screen]
@@ -113,24 +113,26 @@ pub func:x11_request_forwarding = int64(int64:pane_slot, int64:ssh_session, int6
     // string x11_auth_protocol "MIT-MAGIC-COOKIE-1"
     // string x11_auth_cookie (hex)
     // uint32 screen_number
+    //
+    // SSH_buf_* and SSH_encode_* are pub func in the precompiled SSH package
+    // — they return Result<T>, so raw is required.
     int64:req_buf = raw SSH_buf_create(256i64);
-    req_buf = raw SSH_buf_write_byte(req_buf, 98i32);              // SSH_MSG_CHANNEL_REQUEST
-    req_buf = raw SSH_buf_write_u32(req_buf, @cast_unchecked<int32>(channel_id));
-    req_buf = raw SSH_buf_write_str(req_buf, "x11-req");
-    req_buf = raw SSH_buf_write_byte(req_buf, 1i32);               // want_reply
-    req_buf = raw SSH_buf_write_byte(req_buf, 0i32);               // single_connection=false
-    req_buf = raw SSH_buf_write_str(req_buf, "MIT-MAGIC-COOKIE-1");
-    req_buf = raw SSH_buf_write_str(req_buf, cookie);
-    req_buf = raw SSH_buf_write_u32(req_buf, @cast_unchecked<int32>(screen_num));
+    req_buf = raw SSH_encode_byte(req_buf, 98i32);             // SSH_MSG_CHANNEL_REQUEST
+    req_buf = raw SSH_encode_uint32(req_buf, channel_id);
+    req_buf = raw SSH_encode_string(req_buf, "x11-req");
+    req_buf = raw SSH_encode_bool(req_buf, 1i32);              // want_reply
+    req_buf = raw SSH_encode_bool(req_buf, 0i32);              // single_connection=false
+    req_buf = raw SSH_encode_string(req_buf, "MIT-MAGIC-COOKIE-1");
+    req_buf = raw SSH_encode_string(req_buf, cookie);
+    req_buf = raw SSH_encode_uint32(req_buf, screen_num);
 
     // Encode and send
-    int64:pkt = raw SSH_buf_create(512i64);
-    pkt = raw SSH_send_packet(ssh_session, req_buf);
+    int64:sent = raw SSH_send_packet(ssh_session, req_buf);
     drop(raw SSH_buf_free(req_buf));
-    drop(raw SSH_buf_free(pkt));
 
     // Store cookie for later auth verification
-    int64:slot = x11_alloc_slot();
+    // x11_alloc_slot is a plain private func: in this file — needs raw in pub func context
+    int64:slot = raw x11_alloc_slot();
     if (slot >= 0i64) {
         g_x11_pane_slot[slot]  = pane_slot;
         g_x11_channel_id[slot] = channel_id;   // shell channel (until x11 channel opens)
@@ -139,23 +141,24 @@ pub func:x11_request_forwarding = int64(int64:pane_slot, int64:ssh_session, int6
         g_x11_ssh_session[slot] = ssh_session;
     }
 
+    if (sent < 0i64) { pass(-1i64); }
     pass(0i64);
 };
 
 // ── Accept an incoming x11 channel ───────────────────────────────────────────
 
 pub func:x11_handle_open = int64(int64:pane_slot, int64:ssh_session, int64:x11_channel_id) {
-    // Connect to local X11 socket
-    string:display = raw nitty_x11_get_display();
+    // Connect to local X11 socket (extern funcs — plain returns, no raw)
+    string:display = nitty_x11_get_display();
     if (string_is_empty(display)) { pass(-1i64); }
 
-    int64:local_fd = raw nitty_x11_connect_display(display);
+    int64:local_fd = nitty_x11_connect_display(display);
     if (local_fd < 0i64) { pass(-1i64); }
 
-    // Allocate a slot
-    int64:slot = x11_alloc_slot();
+    // Allocate a slot (plain private func: in this file — needs raw in pub func context)
+    int64:slot = raw x11_alloc_slot();
     if (slot < 0i64) {
-        drop(raw nitty_x11_close(@cast_unchecked<int32>(local_fd)));
+        drop(nitty_x11_close(@cast_unchecked<int32>(local_fd)));
         pass(-1i64);
     }
 
@@ -180,9 +183,11 @@ pub func:x11_tick = NIL(int64:pane_slot) {
                 int64:local_fd = g_x11_local_fd[i];
 
                 // Read from SSH X11 channel → write to local X11 socket
-                string:ssh_data = raw SSH_channel_read(sess, chan_id, X11_BUF_SIZE);
+                // SSH_channel_read is pub func (2-arg: session, channel_id)
+                string:ssh_data = raw SSH_channel_read(sess, chan_id);
                 if (!string_is_empty(ssh_data)) {
-                    int64:wrote = raw nitty_x11_write(
+                    // nitty_x11_write is extern — plain return
+                    int64:wrote = nitty_x11_write(
                         @cast_unchecked<int32>(local_fd),
                         ssh_data,
                         @cast_unchecked<int32>(string_length(ssh_data)));
@@ -193,19 +198,25 @@ pub func:x11_tick = NIL(int64:pane_slot) {
 
                 // Read from local X11 socket → write to SSH X11 channel
                 if (g_x11_state[i] == X11_STATE_ACTIVE) {
-                    string:local_data = raw nitty_x11_read(
+                    // nitty_x11_read is extern — plain return
+                    string:local_data = nitty_x11_read(
                         @cast_unchecked<int32>(local_fd),
-                        @cast_unchecked<int32>(X11_BUF_SIZE));
+                        4096i32);
                     if (!string_is_empty(local_data)) {
-                        int64:data_msg = raw SSH_channel_data_msg(sess, chan_id, 0i64);
+                        // Build a channel data buffer and send it
+                        int64:data_buf = raw SSH_buf_create(string_length(local_data) + 16i64);
+                        data_buf = raw SSH_encode_string(data_buf, local_data);
+                        // SSH_channel_data_msg: pub func(session, channel_id, data_buf)
+                        int64:data_msg = raw SSH_channel_data_msg(sess, chan_id, data_buf);
                         drop(raw SSH_send_packet(sess, data_msg));
+                        drop(raw SSH_buf_free(data_buf));
                         drop(raw SSH_buf_free(data_msg));
                     }
                 }
 
                 // Handle closing
                 if (g_x11_state[i] == X11_STATE_CLOSING) {
-                    drop(raw nitty_x11_close(@cast_unchecked<int32>(local_fd)));
+                    drop(nitty_x11_close(@cast_unchecked<int32>(local_fd)));
                     g_x11_local_fd[i]   = -1i64;
                     g_x11_state[i]      = X11_STATE_UNUSED;
                     g_x11_pane_slot[i]  = -1i64;
@@ -227,7 +238,8 @@ pub func:x11_close_all = NIL(int64:pane_slot) {
         if (g_x11_pane_slot[i] == pane_slot) {
             if (g_x11_state[i] == X11_STATE_ACTIVE) {
                 if (g_x11_local_fd[i] >= 0i64) {
-                    drop(raw nitty_x11_close(@cast_unchecked<int32>(g_x11_local_fd[i])));
+                    // nitty_x11_close is extern — plain return
+                    drop(nitty_x11_close(@cast_unchecked<int32>(g_x11_local_fd[i])));
                 }
             }
             g_x11_state[i]       = X11_STATE_UNUSED;

@@ -27,9 +27,9 @@ pub func:link_open = int64(int64:link_id) {
     if (link_id <= 0i64)  { pass(0i64); }
 
     string:url = raw hl_url_as_string(link_id);
-    if (raw string_is_empty(url) == 1i64) { pass(0i64); }
+    if (string_is_empty(url)) { pass(0i64); }
 
     // Delegate to GTK4 C shim (fork-free, GLib-native URI launch)
-    int64:launch_ok = raw nitty_gtk4_open_url(url);
+    int64:launch_ok = nitty_gtk4_open_url(url);
     pass(launch_ok);
 };

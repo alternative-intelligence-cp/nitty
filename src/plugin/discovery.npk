@@ -68,15 +68,17 @@ pub func:discovery_scan = int64(string:search_dir) {
         if (is_sep == 1i64) {
             // Process accumulated entry name
             if (string_length(entry) > 0i64) {
-                // Build full path to potential plugin dir
-                string:plugin_dir  = string_concat(search_dir, string_concat("/", entry));
-                string:manifest_path = string_concat(plugin_dir, "/plugin.yaml");
+                int64:is_dot = is (entry == "." || entry == "..") : 1i64 : 0i64;
+                if (is_dot == 0i64) {
+                    // Build full path to potential plugin dir
+                    string:plugin_dir  = string_concat(search_dir, string_concat("/", entry));
+                    string:manifest_path = string_concat(plugin_dir, "/plugin.yaml");
 
-                int32:is_d = raw fs_is_dir(plugin_dir);
-                int32:has_m = raw fs_exists(manifest_path);
+                    int32:is_d = raw fs_is_dir(plugin_dir);
+                    int32:has_m = raw fs_exists(manifest_path);
 
-                if (is_d == 1i32) {
-                    if (has_m == 1i32) {
+                    if (is_d == 1i32) {
+                        if (has_m == 1i32) {
                         // Allocate a manifest slot
                         int64:slot = raw manifest_alloc_slot();
                         if (slot >= 0i64) {
@@ -116,6 +118,7 @@ pub func:discovery_scan = int64(string:search_dir) {
                             }
                         }
                     }
+                }
                 }
             }
             entry = "";

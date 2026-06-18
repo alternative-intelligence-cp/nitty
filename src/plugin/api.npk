@@ -137,6 +137,15 @@ pub func:api_get_data_dir = string(PluginAPI:api) {
 
 // Returns the plugin's cache directory.
 // Stub: returns "". Real path (~/.cache/nitty/plugins/<name>/) in v0.10.3.
+// Future: will return a canonicalized path verified under plugin base.
 pub func:api_get_cache_dir = string(PluginAPI:api) {
     pass("");
+};
+
+// ── Permissions (v0.11.3 stub) ────────────────────────────────────────────────
+
+// Checks if a plugin has a specific permission ("network", "filesystem", "shell_exec").
+// Stub: always returns 0 for now.
+pub func:api_check_permission = int64(PluginAPI:api, string:perm) {
+    pass(0i64);
 };

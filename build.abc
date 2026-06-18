@@ -53,9 +53,9 @@ deps = []
 type = "binary"
 sources = ["src/main.npk"]
 deps = ["gtk4_shim", "pty_shim", "serial_shim", "telnet_shim"]
-flags = ["-O2"]
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib"]
+flags = ["-O2", "-Wl,-s"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 # ── Test suite ────────────────────────────────────────────────────────────────
 
@@ -64,40 +64,40 @@ type = "binary"
 sources = ["tests/test_app.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_gtk4_ffi]
 type = "binary"
 sources = ["tests/test_gtk4_ffi.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_renderer]
 type = "binary"
 sources = ["tests/test_renderer.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_input]
 type = "binary"
 sources = ["tests/test_input.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_terminal_grid]
 type = "binary"
 sources = ["tests/test_terminal_grid.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_pty]
 type = "binary"
@@ -136,8 +136,8 @@ type = "binary"
 sources = ["tests/test_output_processing.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_utf8]
 type = "binary"
@@ -240,103 +240,103 @@ type = "binary"
 sources = ["tests/test_terminal_state_smoke.npk"]
 deps = []
 flags = []
-link_libraries = []
-link_paths = []
+link_libraries = ["nitpick_compress_shim", "z"]
+link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress"]
 [target.test_terminal_integration]
 type = "binary"
 sources = ["tests/test_terminal_integration.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_terminal_widget]
 type = "binary"
 sources = ["tests/test_terminal_widget.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_color_scheme]
 type = "binary"
 sources = ["tests/test_color_scheme.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_color_resolve]
 type = "binary"
 sources = ["tests/test_color_resolve.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_text_attributes]
 type = "binary"
 sources = ["tests/test_text_attributes.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_cursor]
 type = "binary"
 sources = ["tests/test_cursor.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_scrollback]
 type = "binary"
 sources = ["tests/test_scrollback.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_unicode_width]
 type = "binary"
 sources = ["tests/test_unicode_width.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_font_config]
 type = "binary"
 sources = ["tests/test_font_config.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_glyph_atlas]
 type = "binary"
 sources = ["tests/test_glyph_atlas.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_damage_tracker]
 type = "binary"
 sources = ["tests/test_damage_tracker.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_render_perf]
 type = "binary"
 sources = ["tests/test_render_perf.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_tab]
 type = "binary"
@@ -351,8 +351,8 @@ type = "binary"
 sources = ["tests/test_tab_manager.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 # v0.4.4: Session persistence tests
 [target.test_session]
@@ -360,8 +360,8 @@ type = "binary"
 sources = ["tests/test_session.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 # v0.5.0: Split tree data model tests (pure Nitpick, no shim deps)
 [target.test_split_tree]
@@ -441,8 +441,8 @@ type = "binary"
 sources = ["tests/config/test_config.npk"]
 deps = ["gtk4_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 # v0.6.4: Theme engine tests
 [target.test_theme]
@@ -450,8 +450,8 @@ type = "binary"
 sources = ["tests/config/test_theme.npk"]
 deps = ["gtk4_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 # v0.6.1: Profile system tests
 [target.test_profile]
@@ -468,8 +468,8 @@ type = "binary"
 sources = ["tests/test_hotkey.npk"]
 deps = ["gtk4_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 # v0.6.3: Quake mode state machine tests
 [target.test_quake]
@@ -477,8 +477,8 @@ type = "binary"
 sources = ["tests/test_quake.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 # v0.6.3: Global hotkey module tests
 [target.test_global_hotkey]
@@ -486,16 +486,16 @@ type = "binary"
 sources = ["tests/test_global_hotkey.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_quake_minimal]
 type = "binary"
 sources = ["tests/test_quake_minimal.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 # v0.7.0: Search-in-scrollback engine unit tests
 [target.test_search]
@@ -503,24 +503,24 @@ type = "binary"
 sources = ["tests/terminal/test_search.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_selection]
 type = "binary"
 sources = ["tests/terminal/test_selection.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 [target.test_clipboard]
 type = "binary"
 sources = ["tests/terminal/test_clipboard.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 # v0.7.3: Window features no-op guard tests (GTK shim linked; win_ptr=0 throughout)
 [target.test_window_features]
@@ -528,7 +528,7 @@ type = "binary"
 sources = ["tests/test_window_features.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "z", "ssl", "crypto"]
 link_paths = [".nitpick_make/build"]
 
 # v0.7.3: Window state YAML persistence tests
@@ -546,8 +546,8 @@ type = "binary"
 sources = ["tests/terminal/test_bell.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 # v0.7.4: Background tab activity monitor tests
 [target.test_activity]
@@ -555,8 +555,8 @@ type = "binary"
 sources = ["tests/terminal/test_activity.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 # v0.7.4: Process completion monitor tests
 [target.test_process_monitor]
@@ -564,8 +564,8 @@ type = "binary"
 sources = ["tests/terminal/test_process_monitor.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 # v0.7.5: Terminal behavior polish tests
 [target.test_terminal_polish]
@@ -573,8 +573,8 @@ type = "binary"
 sources = ["tests/terminal/test_terminal_polish.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 
 # v0.8.0: SSH lifecycle integration tests (uses nitpick-ssh via nitpick_ssh_shim)
@@ -601,7 +601,7 @@ type = "binary"
 sources = ["tests/ssh/test_ssh_session.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_ssh_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim", "ssh2"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_ssh_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim", "ssh2", "z", "ssl", "crypto"]
 link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
 
 # v0.8.2: SSH multi-method auth negotiator tests (needs nitpick-ssh + nitpick-env + nitpick-unix-socket + nitpick-fs)
@@ -646,8 +646,8 @@ type = "binary"
 sources = ["tests/ssh/test_ssh_e2e.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitpick_ssh_shim", "nitpick_env_shim", "nitpick_fs_shim", "nitpick_toml_shim", "ssl", "crypto", "z", "gtk-4", "gio-2.0", "gobject-2.0", "glib-2.0", "util"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 # v0.9.0: Serial port foundation unit tests
 [target.test_serial_port]
@@ -775,8 +775,8 @@ type = "binary"
 sources = ["tests/e2e/test_vt_conformance.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitpick_test_shim", "nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 # Shell interaction — needs pty_shim + gtk4_shim (via pipeline_feed deps)
 [target.test_e2e_shell]
@@ -784,8 +784,8 @@ type = "binary"
 sources = ["tests/e2e/test_shell.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitpick_test_shim", "nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 # Tab and pane management — needs gtk4_shim (tab_manager uses gtk4_ffi)
 [target.test_e2e_tabs_panes]
@@ -793,8 +793,8 @@ type = "binary"
 sources = ["tests/e2e/test_tabs_panes.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitpick_test_shim", "nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitty_gtk4_shim", "nitty_pty_shim", "nitty_serial_shim", "nitty_telnet_shim", "nitpick_test_shim", "nitpick_base64_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_ssh_shim", "nitpick_yaml_shim", "nitpick_semver", "nitpick_compress_shim", "nitpick_libc_mem", "nitpick_unix_socket_shim", "nitpick_socket", "nitpick_libc_net", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-base64/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress", "/home/randy/Workspace/REPOS/nitpick-libc/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-unix-socket/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/shim/.nitpick_make/lib"]
 
 # Config system — no gtk4 needed (config.npk does not import gtk4_ffi)
 [target.test_e2e_config]
@@ -861,8 +861,8 @@ type = "binary"
 sources = ["tests/stress/test_large_output.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitpick_test_shim", "nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitpick_compress_shim", "nitpick_test_shim", "nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress"]
 
 # Rapid resize — shrink/grow loops, alt-screen resize, minimum 1x1 round-trips
 [target.test_rapid_resize]
@@ -879,8 +879,8 @@ type = "binary"
 sources = ["tests/stress/test_many_terminals.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitpick_test_shim", "nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitpick_compress_shim", "nitpick_test_shim", "nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress"]
 
 # Memory leaks — 200 create/destroy cycles, 100 resize cycles, 50 scrollback flood/clear, 100 alt cycles
 [target.test_memory_leaks]
@@ -888,8 +888,8 @@ type = "binary"
 sources = ["tests/stress/test_memory_leaks.npk"]
 deps = ["gtk4_shim", "pty_shim"]
 flags = []
-link_libraries = ["nitpick_test_shim", "nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z"]
-link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+link_libraries = ["nitpick_compress_shim", "nitpick_test_shim", "nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-compress"]
 
 # UTF-8 edge cases — invalid bytes, CJK width, combining chains, emoji ZWJ, very long lines
 [target.test_utf8_edge_cases]
@@ -899,3 +899,45 @@ deps = ["gtk4_shim", "pty_shim"]
 flags = []
 link_libraries = ["nitpick_test_shim", "nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z"]
 link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+
+# ── v0.12.0: Benchmark Suite ──────────────────────────────────────────────────
+
+[target.bench_shim]
+type = "c_library"
+sources = ["shim/bench/nitty_bench_shim.c"]
+compiler = "gcc"
+flags = ["-fPIC", "-O2", "-Wall", "-Wextra", "-D_GNU_SOURCE"]
+output = "libnitty_bench_shim.a"
+deps = []
+
+[target.test_throughput]
+type = "binary"
+sources = ["tests/bench/test_throughput.npk"]
+deps = ["bench_shim"]
+flags = ["-O3"]
+link_libraries = ["nitty_bench_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim"]
+
+[target.test_latency]
+type = "binary"
+sources = ["tests/bench/test_latency.npk"]
+deps = ["bench_shim"]
+flags = ["-O3"]
+link_libraries = ["nitty_bench_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim"]
+
+[target.test_startup]
+type = "binary"
+sources = ["tests/bench/test_startup.npk"]
+deps = ["bench_shim"]
+flags = ["-O3"]
+link_libraries = ["nitty_bench_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim"]
+
+[target.test_memory]
+type = "binary"
+sources = ["tests/bench/test_memory.npk"]
+deps = ["bench_shim"]
+flags = ["-O3"]
+link_libraries = ["nitty_bench_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim"]

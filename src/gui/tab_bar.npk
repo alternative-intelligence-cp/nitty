@@ -278,7 +278,7 @@ pub func:tb_render = NIL(int64:window_width) {
         }
         // v0.8.6: SSH hostname suffix on active tab when connected
         if (is_active_tab == 1i64) {
-            if (g_ssh_state[i] == SSH_SESS_OPEN()) {
+            if (g_ssh_state[i] == raw SSH_SESS_OPEN()) {
                 if (!string_is_empty(g_ssh_host[i])) {
                     disp_title = string_concat(string_concat(disp_title, " ("), string_concat(g_ssh_host[i], ")"));
                 }
@@ -367,7 +367,7 @@ pub func:tb_render = NIL(int64:window_width) {
             }
 
             // v0.8.6: SSH connected dot (cyan, leftmost — additional indicator)
-            if (g_ssh_state[i] == SSH_SESS_OPEN()) {
+            if (g_ssh_state[i] == raw SSH_SESS_OPEN()) {
                 int64:ssh_dot_x = x + 6i64;   // far-left edge of tab
                 nitty_render_draw_dot(ssh_dot_x, dot_y,
                     TB_DOT_SSH_R, TB_DOT_SSH_G, TB_DOT_SSH_B);
@@ -376,7 +376,7 @@ pub func:tb_render = NIL(int64:window_width) {
 
         // v0.8.6: SSH dot on ACTIVE tab too (show state for active SSH tab)
         if (is_active_tab == 1i64) {
-            if (g_ssh_state[i] == SSH_SESS_OPEN()) {
+            if (g_ssh_state[i] == raw SSH_SESS_OPEN()) {
                 int64:ssh_dot_ax = x + 6i64;
                 nitty_render_draw_dot(ssh_dot_ax, dot_y,
                     TB_DOT_SSH_R, TB_DOT_SSH_G, TB_DOT_SSH_B);

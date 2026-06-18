@@ -57,6 +57,7 @@ use "selection.npk".*;             // v0.7.1: text selection
 use "clipboard.npk".*;             // v0.7.1: clipboard copy/paste
 use "../terminal/terminal_pipeline.npk".*;
 use "../terminal/terminal_state.npk".*;
+use "../terminal/grid.npk".*;
 use "../terminal/scrollback.npk".*;
 use "../core/tab_manager.npk".*;
 use "../core/tab.npk".*;             // v0.5.4+: tab_get_broadcast_enabled, tab_get_pty_fd etc.
@@ -80,17 +81,21 @@ use "../terminal/process_monitor.npk".*; // v0.7.4: process completion notificat
 use "connection_manager.npk".*;          // v0.8.3: connection manager sidebar
 use "profile_editor.npk".*;              // v0.8.3: profile editor dialog
 use "plugin_manager_ui.npk".*;           // v0.10.4: plugin manager panel
-use "../ssh/ssh_session.npk".{ssh_poll_read, ssh_get_state}; // v0.8.3: SSH data poll
-use "../ssh/ssh_forward.npk".{fwd_local_tick, fwd_dynamic_tick}; // v0.8.4: port forward relay
-use "../ssh/ssh_jump.npk".{jump_relay_tick, jump_is_active};      // v0.8.4: jump host relay
-use "../core/pane.npk".{pane_get_type, PANE_TYPE_SSH, PANE_TYPE_TELNET, PANE_TYPE_SERIAL};  // v0.8.4/v0.9.2/v0.9.3
-use "sftp_browser.npk".*;                                         // v0.8.5: SFTP browser panel
-use "../ssh/ssh_x11.npk".{x11_tick};                              // v0.8.6: X11 forwarding relay
-use "../core/zmodem.npk".{zmodem_feed, zmodem_get_pending_send, zmodem_state, ZMODEM_STATE_IDLE}; // v0.9.4: Zmodem (now connection-agnostic)
-use "../ssh/ssh_vault.npk".{vault_tick};                          // v0.8.6: vault auto-lock
-use "../telnet/telnet_session.npk".{telnet_poll_read, telnet_poll_key_input, telnet_write}; // v0.9.2: telnet support; telnet_write added v0.9.4 for Zmodem
-use "../serial/serial_session.npk".{serial_poll_read, serial_poll_key_input, serial_session_is_open, serial_session_push_key}; // v0.9.3: serial support; push_key added v0.9.4 for Zmodem
-use "serial_toolbar.npk".{serial_toolbar_create, serial_toolbar_poll};    // v0.9.4: serial toolbar
+use "../plugin/plugin_manager.npk".*;                      // v0.12.2: deferred plugin init drain
+use "../ssh/ssh_session.npk".*;                            // v0.8.3: SSH data poll
+use "../ssh/ssh_forward.npk".*;                            // v0.8.4: port forward relay
+use "../ssh/ssh_jump.npk".*;                               // v0.8.4: jump host relay
+use "../core/pane.npk".*;                                  // v0.8.4/v0.9.2/v0.9.3
+use "sftp_browser.npk".*;                                  // v0.8.5: SFTP browser panel
+use "../ssh/ssh_x11.npk".*;                                // v0.8.6: X11 forwarding relay
+use "../core/zmodem.npk".*;                                // v0.9.4: Zmodem (now connection-agnostic)
+use "../ssh/ssh_vault.npk".*;                              // v0.8.6: vault auto-lock
+use "../telnet/telnet_session.npk".*;                      // v0.9.2: telnet support; telnet_write added v0.9.4 for Zmodem
+use "../serial/serial_port.npk".*;                         // v0.9.0: serial support
+use "../serial/serial_modes.npk".*;                        // v0.9.0: serial support
+use "../serial/serial_session.npk".*;                      // v0.9.3: serial support; push_key added v0.9.4 for Zmodem
+use "serial_toolbar.npk".*;                                // v0.9.4: serial toolbar
+use "accessibility.npk".*;
 
 // v0.8.4: Built-in string byte accessor (Nitpick runtime)
 extern func:npk_string_byte_at = int64(string:s, int64:i);
@@ -157,6 +162,8 @@ func:_tw_update_win_title = NIL() {
     int64:wt_slot = raw tm_get_active_index();
     string:t = raw tm_get_title_at(wt_slot);
     drop(wf_update_title(wt_win, t));
+    // v0.13.0: Announce tab switch to screen reader (AT-SPI / Orca)
+    drop(a11y_on_tab_switch(t));
     // v0.7.4: Clear bell + activity indicators when tab becomes active
     drop(tab_clear_bell(wt_slot));
     drop(tab_clear_activity(wt_slot));
@@ -256,6 +263,8 @@ func:dispatch_action = NIL(string:action, int64:rows, int64:cols) {
             drop(nitty_gtk4_pty_write_byte(0x1Bi64));
             drop(nitty_gtk4_pty_write_byte(0x5Bi64));
             drop(nitty_gtk4_pty_write_byte(0x48i64));
+            // v0.13.0: Announce screen clear to screen reader
+            drop(a11y_on_screen_clear());
         },
         // View
         ("view.fullscreen") {
@@ -294,6 +303,11 @@ func:dispatch_action = NIL(string:action, int64:rows, int64:cols) {
         },
         // v0.6.3: Quake mode toggle
         ("quake.toggle") { drop(quake_toggle()); },
+        // v0.13.0: Accessibility skip-navigation (WCAG 2.1 SC 2.4.1)
+        // Ctrl+F6 — announce the terminal landmark to Orca so it grabs focus.
+        ("a11y.skip_nav") {
+            drop(a11y_announce_message("Terminal", 2i64));
+        },
         (*) { }  // unknown action — no-op
     }
     pass(NIL);
@@ -362,7 +376,7 @@ pub func:tw_on_draw = NIL() {
 
     // v0.8.5 Step 0d: Advance SFTP session + transfer state machines for active SSH pane
     int64:sftp_pane_id = raw split_tree_get_active();
-    if (raw pane_get_type(sftp_pane_id) == PANE_TYPE_SSH) {
+    if (raw pane_get_type(sftp_pane_id) == raw PANE_TYPE_SSH()) {
         drop(sftp_browser_tick(sftp_pane_id));
     }
     drop(sftp_browser_poll_events());
@@ -1081,6 +1095,8 @@ pub func:tw_on_draw = NIL() {
     int64:a_slot = raw tm_get_active_index();
     if (available_start > 0i64) {
         drop(activity_on_output(a_slot, 1i64, a_now));
+        // v0.13.0: Flag new PTY output for screen reader live-region announce
+        drop(a11y_on_output());
     }
 
     // v0.8.4: SSH + Port Forward tick — drain active SSH pane data each frame
@@ -1088,7 +1104,7 @@ pub func:tw_on_draw = NIL() {
     // Currently processes the primary active pane only (one SSH session per draw frame).
     int64:ssh_pane_slot = raw tm_get_active_pane_slot(raw tm_get_active_index());
     int64:ssh_ptype = raw pane_get_type(ssh_pane_slot);
-    if (ssh_ptype == PANE_TYPE_SSH()) {
+    if (ssh_ptype == raw PANE_TYPE_SSH()) {
         string:ssh_data = raw ssh_poll_read(ssh_pane_slot);
         int64:sdi = 0i64;
         int64:sdlen = string_length(ssh_data);
@@ -1103,7 +1119,7 @@ pub func:tw_on_draw = NIL() {
         if (zm_consumed == 0i64) {
             while (sdi < sdlen) {
                 // npk_string_byte_at extracts the raw byte value at index sdi
-                int64:ssh_byte = raw npk_string_byte_at(ssh_data, sdi);
+                int64:ssh_byte = npk_string_byte_at(ssh_data, sdi);
                 if (ssh_byte >= 0i64) {
                     drop(pipeline_feed(ssh_byte));
                 }
@@ -1132,7 +1148,7 @@ pub func:tw_on_draw = NIL() {
     // v0.9.4: Added Zmodem detection (mirrors SSH tick pattern).
     int64:tel_pane_slot = raw tm_get_active_pane_slot(raw tm_get_active_index());
     int64:tel_ptype = raw pane_get_type(tel_pane_slot);
-    if (tel_ptype == PANE_TYPE_TELNET()) {
+    if (tel_ptype == raw PANE_TYPE_TELNET()) {
         // v0.9.4: Flush any pending Zmodem SEND bytes via telnet_write (handles IAC escaping)
         int64:tel_zm_state = raw zmodem_state(tel_pane_slot);
         if (tel_zm_state != ZMODEM_STATE_IDLE) {
@@ -1155,7 +1171,7 @@ pub func:tw_on_draw = NIL() {
             }
             if (tel_zm_consumed == 0i64) {
                 while (tel_di < tel_dlen) {
-                    int64:tel_byte = raw npk_string_byte_at(tel_data, tel_di);
+                    int64:tel_byte = npk_string_byte_at(tel_data, tel_di);
                     if (tel_byte >= 0i64) {
                         drop(pipeline_feed(tel_byte));
                     }
@@ -1171,7 +1187,7 @@ pub func:tw_on_draw = NIL() {
     // v0.9.4: Added Zmodem detection and pending-send flush.
     int64:ser_pane_slot = raw tm_get_active_pane_slot(raw tm_get_active_index());
     int64:ser_ptype = raw pane_get_type(ser_pane_slot);
-    if (ser_ptype == PANE_TYPE_SERIAL()) {
+    if (ser_ptype == raw PANE_TYPE_SERIAL()) {
         // v0.9.4: Flush any pending Zmodem SEND bytes through the serial write path
         int64:ser_zm_state = raw zmodem_state(ser_pane_slot);
         if (ser_zm_state != ZMODEM_STATE_IDLE) {
@@ -1194,7 +1210,7 @@ pub func:tw_on_draw = NIL() {
             }
             if (ser_zm_consumed == 0i64) {
                 while (ser_di < ser_dlen) {
-                    int64:ser_byte = raw npk_string_byte_at(ser_data, ser_di);
+                    int64:ser_byte = npk_string_byte_at(ser_data, ser_di);
                     if (ser_byte >= 0i64) {
                         drop(pipeline_feed(ser_byte));
                     }
@@ -1222,6 +1238,8 @@ pub func:tw_on_draw = NIL() {
         }
     }
     drop(renderer_sync_frame());
+    // v0.13.0: Push visible grid snapshot to C buffer for AT-SPI / Orca
+    drop(a11y_push_frame());
 
     // v0.7.1: Poll pending clipboard paste result (async GdkClipboard read)
     drop(clipboard_poll_paste());
@@ -1234,6 +1252,10 @@ pub func:tw_on_draw = NIL() {
 
     // v0.8.6: Vault auto-lock tick (checks 15-min idle timeout, no-op otherwise)
     drop(vault_tick());
+
+    // v0.12.2: Drain one deferred plugin per frame until queue is empty
+    // (Initializes non-hotkey plugins lazily after first frame to reduce startup cost)
+    drop(plugin_manager_run_deferred_idle());
 
     // v0.4.4: Periodic session save every 30 seconds
     int64:now_s = nitty_gtk4_monotonic_sec();

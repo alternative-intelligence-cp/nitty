@@ -1,0 +1,22 @@
+// tests/bench/test_latency.npk
+use "framework.npk".*;
+
+pub func:main = int32() {
+    int64:iters = 10000i64;
+    int64:start_ns = nitty_bench_time_now_ns();
+    
+    int64:x = 0i64;
+    while (x < iters) {
+        x = x + 1i64;
+    }
+    
+    int64:end_ns = nitty_bench_time_now_ns();
+    BenchResult:res = raw bench_compute("Latency Base", iters, start_ns, end_ns);
+    drop(bench_save_result(res, ""));
+    
+    exit 0i32;
+};
+
+func:failsafe = int32(tbb32:_err) {
+    exit 1i32;
+};

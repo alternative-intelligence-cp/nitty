@@ -99,7 +99,7 @@ pub func:clipboard_poll_paste = NIL() {
             if (b == 0x0Ai64) { line_count = line_count + 1i64; }
             ci = ci + 1i64;
         }
-        string:msg = "Paste " + string_from_int(line_count) + " lines? This may execute commands.";
+        string:msg = string_concat(string_concat("Paste ", string_from_int(line_count)), " lines? This may execute commands.");
         int64:confirmed = nitty_gtk4_confirm_close(msg);
         if (confirmed == 0i64) { pass(NIL); }
     }

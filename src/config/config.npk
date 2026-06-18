@@ -67,9 +67,17 @@ int64:g_cfg_process_min_duration              = 10000i64;
 int64:g_cfg_zmodem_auto_detect   = 1i64;          // 1 = auto-detect (default)
 string:g_cfg_zmodem_download_dir = "~/Downloads"; // destination for received files
 
+// v0.13.0: Accessibility (AT-SPI / screen reader) configuration
+int64:g_cfg_a11y_enabled            = 1i64;  // 1 = init AT-SPI GObject
+int64:g_cfg_a11y_screen_reader_mode = 0i64;  // 1 = suppress visual-only effects
+int64:g_cfg_a11y_announce_output    = 0i64;  // 1 = live-region announce on output
+int64:g_cfg_a11y_high_contrast      = 0i64;  // 1 = force high-contrast theme
+int64:g_cfg_a11y_reduce_motion      = 0i64;  // 1 = disable blink, transitions
+
 // State flags
 int64:g_cfg_is_default = 1i64;  // 1 if no config file found; 0 if loaded from disk
 int64:g_cfg_loaded     = 0i64;  // set to 1 after config_load() completes
+int64:g_cfg_last_mtime = 0i64;  // v0.12.2: mtime of config file at last load (0 = never)
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -109,6 +117,12 @@ func:_load_defaults = NIL() {
     // v0.8.7 zmodem defaults
     g_cfg_zmodem_auto_detect   = 1i64;
     g_cfg_zmodem_download_dir  = "~/Downloads";
+    // v0.13.0 accessibility defaults
+    g_cfg_a11y_enabled            = 1i64;
+    g_cfg_a11y_screen_reader_mode = 0i64;
+    g_cfg_a11y_announce_output    = 0i64;
+    g_cfg_a11y_high_contrast      = 0i64;
+    g_cfg_a11y_reduce_motion      = 0i64;
     pass(NIL);
 };
 
@@ -143,7 +157,21 @@ func:_read_from_toml = NIL() {
     int32:has_sh = raw Toml.has_key("terminal.shell");
     if (has_sh == 1i32) {
         string:v = raw Toml.get_string("terminal.shell");
-        g_cfg_shell = v;
+        if (string_length(v) > 0i64) {
+            int64:sh_len = string_length(v);
+            int64:sh_pos = 0i64;
+            int64:sh_has_dots = 0i64;
+            while (sh_pos < sh_len - 1i64) {
+                if (string_substring(v, sh_pos, sh_pos + 2i64) == "..") { sh_has_dots = 1i64; }
+                sh_pos = sh_pos + 1i64;
+            }
+            if (sh_has_dots == 0i64) {
+                int32:sh_exists = raw fs_exists(v);
+                if (sh_exists == 1i32 || string_substring(v, 0i64, 1i64) != "/") {
+                    g_cfg_shell = v;
+                }
+            }
+        }
     }
 
     // terminal.columns
@@ -277,7 +305,25 @@ func:_read_from_toml = NIL() {
     int32:has_lh = raw Toml.has_key("terminal.link_handler");
     if (has_lh == 1i32) {
         string:lh_v = raw Toml.get_string("terminal.link_handler");
-        if (raw string_is_empty(lh_v) == 0i64) { g_cfg_link_handler = lh_v; }
+        if (raw string_is_empty(lh_v) == 0i64) {
+            int64:lh_len = string_length(lh_v);
+            int64:lh_pos = 0i64;
+            int64:lh_invalid = 0i64;
+            while (lh_pos < lh_len) {
+                string:c = string_substring(lh_v, lh_pos, lh_pos + 1i64);
+                if (c == ";") { lh_invalid = 1i64; }
+                if (c == "|") { lh_invalid = 1i64; }
+                if (c == "&") { lh_invalid = 1i64; }
+                if (c == "`") { lh_invalid = 1i64; }
+                lh_pos = lh_pos + 1i64;
+            }
+            if (lh_invalid == 0i64) {
+                int32:lh_exists = raw fs_exists(lh_v);
+                if (lh_exists == 1i32 || string_substring(lh_v, 0i64, 1i64) != "/") {
+                    g_cfg_link_handler = lh_v;
+                }
+            }
+        }
     }
     int32:has_lcm = raw Toml.has_key("terminal.link_click_modifier");
     if (has_lcm == 1i32) {
@@ -360,6 +406,38 @@ func:_read_from_toml = NIL() {
         if (string_length(zdd_v) > 0i64) { g_cfg_zmodem_download_dir = zdd_v; }
     }
 
+    // v0.13.0: accessibility config
+    int32:has_a11y_en = raw Toml.has_key("a11y.enabled");
+    if (has_a11y_en == 1i32) {
+        int32:v = raw Toml.get_bool("a11y.enabled");
+        if (v == 1i32) { g_cfg_a11y_enabled = 1i64; }
+        if (v == 0i32) { g_cfg_a11y_enabled = 0i64; }
+    }
+    int32:has_a11y_sr = raw Toml.has_key("a11y.screen_reader_mode");
+    if (has_a11y_sr == 1i32) {
+        int32:v = raw Toml.get_bool("a11y.screen_reader_mode");
+        if (v == 1i32) { g_cfg_a11y_screen_reader_mode = 1i64; }
+        if (v == 0i32) { g_cfg_a11y_screen_reader_mode = 0i64; }
+    }
+    int32:has_a11y_ao = raw Toml.has_key("a11y.announce_output");
+    if (has_a11y_ao == 1i32) {
+        int32:v = raw Toml.get_bool("a11y.announce_output");
+        if (v == 1i32) { g_cfg_a11y_announce_output = 1i64; }
+        if (v == 0i32) { g_cfg_a11y_announce_output = 0i64; }
+    }
+    int32:has_a11y_hc = raw Toml.has_key("a11y.high_contrast");
+    if (has_a11y_hc == 1i32) {
+        int32:v = raw Toml.get_bool("a11y.high_contrast");
+        if (v == 1i32) { g_cfg_a11y_high_contrast = 1i64; }
+        if (v == 0i32) { g_cfg_a11y_high_contrast = 0i64; }
+    }
+    int32:has_a11y_rm = raw Toml.has_key("a11y.reduce_motion");
+    if (has_a11y_rm == 1i32) {
+        int32:v = raw Toml.get_bool("a11y.reduce_motion");
+        if (v == 1i32) { g_cfg_a11y_reduce_motion = 1i64; }
+        if (v == 0i32) { g_cfg_a11y_reduce_motion = 0i64; }
+    }
+
     pass(NIL);
 };
 
@@ -429,8 +507,16 @@ func:_default_toml_text = string() {
 ///   2. Ensure directories exist
 ///   3. If config file missing: load defaults + write default file
 ///   4. Parse TOML file + validate each key + store in globals
+///   v0.12.2: Skips TOML re-parse if file mtime is unchanged (fast path).
 pub func:config_load = NIL() {
-    if (g_cfg_loaded == 1i64) { pass(NIL); }  // idempotent
+    if (g_cfg_loaded == 1i64) {
+        // v0.12.2: Fast-path — check mtime before doing any I/O
+        string:cfg_path_fast = raw config_file_path();
+        int64:cur_mtime = raw fs_modified_time(cfg_path_fast);
+        if (cur_mtime == g_cfg_last_mtime) { pass(NIL); }  // unchanged — skip
+        // mtime changed — fall through to full reload
+        g_cfg_loaded = 0i64;
+    }
 
     drop(schema_init());
     drop(paths_init());
@@ -449,8 +535,12 @@ pub func:config_load = NIL() {
         g_cfg_is_default = 1i64;
         drop(config_write_defaults());
         g_cfg_loaded = 1i64;
+        g_cfg_last_mtime = 0i64;    // no file → reset cached mtime
         pass(NIL);
     }
+
+    // File exists — capture mtime before parse
+    g_cfg_last_mtime = raw fs_modified_time(cfg_path);  // v0.12.2
 
     // File exists — parse it
     g_cfg_is_default = 0i64;
@@ -630,6 +720,13 @@ pub func:cfg_process_min_duration             = int64()  { pass(g_cfg_process_mi
 pub func:cfg_zmodem_auto_detect   = int64()  { pass(g_cfg_zmodem_auto_detect); };
 pub func:cfg_zmodem_download_dir  = string() { pass(g_cfg_zmodem_download_dir); };
 
+// v0.13.0: Accessibility config getters
+pub func:cfg_a11y_enabled            = int64() { pass(g_cfg_a11y_enabled); };
+pub func:cfg_a11y_screen_reader_mode = int64() { pass(g_cfg_a11y_screen_reader_mode); };
+pub func:cfg_a11y_announce_output    = int64() { pass(g_cfg_a11y_announce_output); };
+pub func:cfg_a11y_high_contrast      = int64() { pass(g_cfg_a11y_high_contrast); };
+pub func:cfg_a11y_reduce_motion      = int64() { pass(g_cfg_a11y_reduce_motion); };
+
 // v0.10.0: Plugin configuration
 // Plugins enabled/disabled lists stored as indexed TOML keys:
 //   plugins.enabled.0 = "my-plugin"
@@ -685,7 +782,8 @@ pub func:_config_load_plugins = NIL() {
         string:sk  = string_concat("plugins.search_dirs.", string_from_int(si));
         int32:hsk  = raw Toml.has_key(sk);
         if (hsk == 1i32) {
-            g_cfg_plugins_search_dirs[si]   = raw Toml.get_string(sk);
+            string:sv = raw Toml.get_string(sk);
+            g_cfg_plugins_search_dirs[si]   = raw path_normalize(sv);
             g_cfg_plugins_search_dirs_count = g_cfg_plugins_search_dirs_count + 1i64;
             si = si + 1i64;
         }

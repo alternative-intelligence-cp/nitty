@@ -122,6 +122,12 @@ int64_t nitty_serial_open(const char *path, int64_t baud, int64_t data_bits,
         return -1;
     }
 
+    /* v0.11.3: Reject paths outside /dev/ to prevent opening arbitrary files. */
+    if (strncmp(path, "/dev/", 5) != 0) {
+        fprintf(stderr, "SERIAL: open: rejected path '%s' — must be under /dev/\n", path);
+        return -1;
+    }
+
     /* Open the device in read/write, non-controlling, non-blocking mode */
     int fd = open(path, O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (fd < 0) {
