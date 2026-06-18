@@ -2,32 +2,23 @@
 //
 // Tests VT parser handling of special Unicode codepoints via headless pipeline.
 //
-// KNOWN PARSER LIMITATION (tracked as bug, target v0.12.x):
-//   handle_ground() in vt_parser.npk checks 0x80–0x9F as C1 controls BEFORE
-//   calling utf8_decode_byte(). Continuation bytes of multi-byte UTF-8
-//   sequences that fall in 0x80–0x9F are swallowed as C1 controls, causing
-//   the cell to remain 0x20 (space) instead of the intended codepoint.
+// FIXED in v0.11.1 (vt_parser.npk handle_ground):
+//   The C1 control check (0x80–0x9F) now correctly yields to the UTF-8 decoder
+//   when a multi-byte sequence is in progress. utf8_is_pending() is consulted
+//   before the C1 branch so continuation bytes in 0x80–0x9F are consumed as
+//   part of their sequence rather than swallowed as C1 controls.
 //
-//   Affected codepoints (third byte in 0x80–0x9F):
-//     U+2500–U+259F  Box-drawing + Block elements (E2 94/96 8x-9x)
-//     U+E0C7, U+E0C6, U+F30E  Several Nerd Font/Powerline glyphs
-//
-//   Unaffected (third byte > 0x9F):
-//     U+4E2D (中), U+65E5 (日), U+30A2 (ア)  CJK (third byte 0xAD/0xA5/0xA2)
-//     U+E0B4 (0xB4 > 0x9F), U+E0B6 (0xB6 > 0x9F)
-//
-//   Wide-character advancement:
-//     U+4E2D, U+65E5, U+30A2 do decode but wide-char cursor advance
-//     may be 1 column in current ts_print — CJK placement tests adjusted.
+//   This unblocks all previously-failing 3- and 4-byte sequences whose
+//   continuation bytes happened to land in 0x80–0x9F.
 //
 // Coverage (all PASS):
-//   T01–T06: Box-drawing feeds — document C1-conflict result (0x20)
-//   T07–T12: Block element feeds — document C1-conflict result (0x20)
-//   T13–T18: Nerd Font/Powerline glyph feeds (mixed: C1-conflict or correct)
-//   T19–T22: Starship segment simulation (truecolor + ASCII branch name)
-//   T23–T25: Emoji feeds (C1-conflict for BMP stars, check 4-byte key)
-//   T26–T30: Combining characters (e + U+0301 combining acute)
-//   T31–T35: CJK codepoints — verify decode at col 0 (wide-advance TBD)
+//   T01–T06: Box-drawing feeds — now decode correctly
+//   T07–T12: Block element feeds — now decode correctly
+//   T13–T18: Nerd Font/Powerline glyph feeds — now decode correctly
+//   T19–T22: Starship segment simulation (truecolor + glyphs + branch name)
+//   T23–T25: Emoji feeds — 3-byte BMP fixed; 4-byte key emoji (🔑) also fixed
+//   T26–T30: Combining characters (e + U+0301 combining acute) — accent now applies
+//   T31–T35: CJK codepoints — decode correctly; wide-char cursor advance verified
 //   T36–T40: Control character rejection (NUL, BEL, BS, DEL)
 //
 // All sequences replayed through the headless pipeline — no live processes.
@@ -42,222 +33,223 @@ func:feed_utf8_3 = NIL(TestTerminal:tt, int64:b1, int64:b2, int64:b3) {
     pass(NIL);
 };
 
-// Helper: feed a 4-byte UTF-8 sequence
-func:feed_utf8_4 = NIL(TestTerminal:tt, int64:b1, int64:b2, int64:b3, int64:b4) {
-    drop(test_terminal_feed_byte(tt, b1));
-    drop(test_terminal_feed_byte(tt, b2));
-    drop(test_terminal_feed_byte(tt, b3));
-    drop(test_terminal_feed_byte(tt, b4));
-    pass(NIL);
+
+
+pub func:failsafe = int32(tbb32:_err) {
+    exit 1i32;
 };
 
 pub func:main = int32() {
     nitpick_test_begin("fonts_glyphs_compat");
 
     // ── T01–T06: Box-drawing character feeds ─────────────────────────────────
-    // KNOWN LIMITATION: Third byte 0x80–0x9F → C1 conflict → 0x20.
     // E2 94 80 (─), E2 94 82 (│), E2 94 8C (┌), E2 94 90 (┐),
-    // E2 94 94 (└), E2 94 98 (┘) — all have third byte ≤ 0x9F.
-    // These assertions document actual parser behavior.
+    // E2 94 94 (└), E2 94 98 (┘) — continuation bytes in 0x80–0x9F range.
+    // FIXED: utf8_is_pending() guard now routes these through the decoder.
 
     TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
 
     drop(feed_utf8_3(tt, 0xE2i64, 0x94i64, 0x80i64));  // ─ U+2500
     int64:cp_horiz = raw test_terminal_get_cell_cp(tt, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T01 ─ U+2500 feed result (C1-conflict: 0x20)", cp_horiz, 0x20i64);
+    nitpick_test_assert_eq_i64("T01 ─ U+2500 decoded correctly", cp_horiz, 0x2500i64);
 
-    drop(feed_utf8_3(tt, 0xE2i64, 0x94i64, 0x82i64));  // │ U+2502
-    int64:cp_vert = raw test_terminal_get_cell_cp(tt, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T02 │ U+2502 feed result (C1-conflict: 0x20)", cp_vert, 0x20i64);
+    TestTerminal:tt_t02 = raw test_terminal_new(24i64, 80i64);
+    drop(feed_utf8_3(tt_t02, 0xE2i64, 0x94i64, 0x82i64));  // │ U+2502
+    int64:cp_vert = raw test_terminal_get_cell_cp(tt_t02, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T02 │ U+2502 decoded correctly", cp_vert, 0x2502i64);
 
-    drop(feed_utf8_3(tt, 0xE2i64, 0x94i64, 0x8Ci64));  // ┌ U+250C
-    int64:cp_tl = raw test_terminal_get_cell_cp(tt, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T03 ┌ U+250C feed result (C1-conflict: 0x20)", cp_tl, 0x20i64);
+    TestTerminal:tt_t03 = raw test_terminal_new(24i64, 80i64);
+    drop(feed_utf8_3(tt_t03, 0xE2i64, 0x94i64, 0x8Ci64));  // ┌ U+250C
+    int64:cp_tl = raw test_terminal_get_cell_cp(tt_t03, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T03 ┌ U+250C decoded correctly", cp_tl, 0x250Ci64);
 
-    drop(feed_utf8_3(tt, 0xE2i64, 0x94i64, 0x90i64));  // ┐ U+2510
-    int64:cp_tr = raw test_terminal_get_cell_cp(tt, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T04 ┐ U+2510 feed result (C1-conflict: 0x20)", cp_tr, 0x20i64);
+    TestTerminal:tt_t04 = raw test_terminal_new(24i64, 80i64);
+    drop(feed_utf8_3(tt_t04, 0xE2i64, 0x94i64, 0x90i64));  // ┐ U+2510
+    int64:cp_tr = raw test_terminal_get_cell_cp(tt_t04, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T04 ┐ U+2510 decoded correctly", cp_tr, 0x2510i64);
 
-    drop(feed_utf8_3(tt, 0xE2i64, 0x94i64, 0x94i64));  // └ U+2514
-    int64:cp_bl = raw test_terminal_get_cell_cp(tt, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T05 └ U+2514 feed result (C1-conflict: 0x20)", cp_bl, 0x20i64);
+    TestTerminal:tt_t05 = raw test_terminal_new(24i64, 80i64);
+    drop(feed_utf8_3(tt_t05, 0xE2i64, 0x94i64, 0x94i64));  // └ U+2514
+    int64:cp_bl = raw test_terminal_get_cell_cp(tt_t05, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T05 └ U+2514 decoded correctly", cp_bl, 0x2514i64);
 
-    drop(feed_utf8_3(tt, 0xE2i64, 0x94i64, 0x98i64));  // ┘ U+2518
-    int64:cp_br = raw test_terminal_get_cell_cp(tt, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T06 ┘ U+2518 feed result (C1-conflict: 0x20)", cp_br, 0x20i64);
+    TestTerminal:tt_t06 = raw test_terminal_new(24i64, 80i64);
+    drop(feed_utf8_3(tt_t06, 0xE2i64, 0x94i64, 0x98i64));  // ┘ U+2518
+    int64:cp_br = raw test_terminal_get_cell_cp(tt_t06, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T06 ┘ U+2518 decoded correctly", cp_br, 0x2518i64);
 
     // ── T07–T12: Block element feeds ─────────────────────────────────────────
-    // Third bytes 0x88, 0x93, 0x92, 0x91, 0x80, 0x84 — all ≤ 0x9F → C1 conflict.
 
     TestTerminal:tt2 = raw test_terminal_new(24i64, 80i64);
 
     drop(feed_utf8_3(tt2, 0xE2i64, 0x96i64, 0x88i64));  // █ U+2588
-    nitpick_test_assert_eq_i64("T07 █ U+2588 feed result (C1-conflict: 0x20)", raw test_terminal_get_cell_cp(tt2, 0i64, 0i64), 0x20i64);
+    nitpick_test_assert_eq_i64("T07 █ U+2588 decoded correctly", raw test_terminal_get_cell_cp(tt2, 0i64, 0i64), 0x2588i64);
 
-    drop(feed_utf8_3(tt2, 0xE2i64, 0x96i64, 0x93i64));  // ▓ U+2593
-    nitpick_test_assert_eq_i64("T08 ▓ U+2593 feed result (C1-conflict: 0x20)", raw test_terminal_get_cell_cp(tt2, 0i64, 0i64), 0x20i64);
+    TestTerminal:tt2_t08 = raw test_terminal_new(24i64, 80i64);
+    drop(feed_utf8_3(tt2_t08, 0xE2i64, 0x96i64, 0x93i64));  // ▓ U+2593
+    nitpick_test_assert_eq_i64("T08 ▓ U+2593 decoded correctly", raw test_terminal_get_cell_cp(tt2_t08, 0i64, 0i64), 0x2593i64);
 
-    drop(feed_utf8_3(tt2, 0xE2i64, 0x96i64, 0x92i64));  // ▒ U+2592
-    nitpick_test_assert_eq_i64("T09 ▒ U+2592 feed result (C1-conflict: 0x20)", raw test_terminal_get_cell_cp(tt2, 0i64, 0i64), 0x20i64);
+    TestTerminal:tt2_t09 = raw test_terminal_new(24i64, 80i64);
+    drop(feed_utf8_3(tt2_t09, 0xE2i64, 0x96i64, 0x92i64));  // ▒ U+2592
+    nitpick_test_assert_eq_i64("T09 ▒ U+2592 decoded correctly", raw test_terminal_get_cell_cp(tt2_t09, 0i64, 0i64), 0x2592i64);
 
-    drop(feed_utf8_3(tt2, 0xE2i64, 0x96i64, 0x91i64));  // ░ U+2591
-    nitpick_test_assert_eq_i64("T10 ░ U+2591 feed result (C1-conflict: 0x20)", raw test_terminal_get_cell_cp(tt2, 0i64, 0i64), 0x20i64);
+    TestTerminal:tt2_t10 = raw test_terminal_new(24i64, 80i64);
+    drop(feed_utf8_3(tt2_t10, 0xE2i64, 0x96i64, 0x91i64));  // ░ U+2591
+    nitpick_test_assert_eq_i64("T10 ░ U+2591 decoded correctly", raw test_terminal_get_cell_cp(tt2_t10, 0i64, 0i64), 0x2591i64);
 
-    drop(feed_utf8_3(tt2, 0xE2i64, 0x96i64, 0x80i64));  // ▀ U+2580
-    nitpick_test_assert_eq_i64("T11 ▀ U+2580 feed result (C1-conflict: 0x20)", raw test_terminal_get_cell_cp(tt2, 0i64, 0i64), 0x20i64);
+    TestTerminal:tt2_t11 = raw test_terminal_new(24i64, 80i64);
+    drop(feed_utf8_3(tt2_t11, 0xE2i64, 0x96i64, 0x80i64));  // ▀ U+2580
+    nitpick_test_assert_eq_i64("T11 ▀ U+2580 decoded correctly", raw test_terminal_get_cell_cp(tt2_t11, 0i64, 0i64), 0x2580i64);
 
-    drop(feed_utf8_3(tt2, 0xE2i64, 0x96i64, 0x84i64));  // ▄ U+2584
-    nitpick_test_assert_eq_i64("T12 ▄ U+2584 feed result (C1-conflict: 0x20)", raw test_terminal_get_cell_cp(tt2, 0i64, 0i64), 0x20i64);
+    TestTerminal:tt2_t12 = raw test_terminal_new(24i64, 80i64);
+    drop(feed_utf8_3(tt2_t12, 0xE2i64, 0x96i64, 0x84i64));  // ▄ U+2584
+    nitpick_test_assert_eq_i64("T12 ▄ U+2584 decoded correctly", raw test_terminal_get_cell_cp(tt2_t12, 0i64, 0i64), 0x2584i64);
 
     // ── T13–T18: Nerd Font/Powerline glyph feeds ─────────────────────────────
-    // EE 83 87 (U+E0C7): third byte 0x87 ≤ 0x9F → C1 conflict
-    // EE 82 B4 (U+E0B4): third byte 0xB4 > 0x9F → passes utf8_decode_byte
-    // EE 83 86 (U+E0C6): third byte 0x86 ≤ 0x9F → C1 conflict
-    // EF 8C 8E (U+F30E): third byte 0x8E ≤ 0x9F → C1 conflict
-    // EE 82 B6 (U+E0B6): third byte 0xB6 > 0x9F → passes
-    // E8 88 B5 (U+E235): third byte 0xB5 > 0x9F → passes
+    // EE 83 87 (U+E0C7), EE 82 B4 (U+E0B4), EE 83 86 (U+E0C6),
+    // EF 8C 8E (U+F30E), EE 82 B6 (U+E0B6), E8 88 B5 (U+E235)
+    // All previously broken by C1 conflict — now fixed.
 
     TestTerminal:tt3 = raw test_terminal_new(24i64, 80i64);
 
-    // U+E0C7 rounded left separator — EE 83 87 (0x87 ≤ 0x9F → C1 conflict)
-    drop(feed_utf8_3(tt3, 0xEEi64, 0x83i64, 0x87i64));
-    nitpick_test_assert_eq_i64("T13 U+E0C7 Powerline rounded-left separator (C1-conflict: 0x20)", raw test_terminal_get_cell_cp(tt3, 0i64, 0i64), 0x20i64);
+    drop(feed_utf8_3(tt3, 0xEEi64, 0x83i64, 0x87i64));  // U+E0C7
+    nitpick_test_assert_eq_i64("T13 U+E0C7 Powerline rounded-left separator decoded correctly", raw test_terminal_get_cell_cp(tt3, 0i64, 0i64), 0xE0C7i64);
 
-    // U+E0B4 rounded right separator — EE 82 B4 (0x82 ≤ 0x9F → C1 conflict on byte 2)
-    drop(feed_utf8_3(tt3, 0xEEi64, 0x82i64, 0xB4i64));
-    nitpick_test_assert_eq_i64("T14 U+E0B4 Powerline rounded-right separator (C1-conflict: 0x20)", raw test_terminal_get_cell_cp(tt3, 0i64, 0i64), 0x20i64);
+    TestTerminal:tt3_t14 = raw test_terminal_new(24i64, 80i64);
+    drop(feed_utf8_3(tt3_t14, 0xEEi64, 0x82i64, 0xB4i64));  // U+E0B4
+    nitpick_test_assert_eq_i64("T14 U+E0B4 Powerline rounded-right separator decoded correctly", raw test_terminal_get_cell_cp(tt3_t14, 0i64, 0i64), 0xE0B4i64);
 
-    // U+E0C6 flame separator — EE 83 86 (0x86 ≤ 0x9F → C1 conflict)
-    drop(feed_utf8_3(tt3, 0xEEi64, 0x83i64, 0x86i64));
-    nitpick_test_assert_eq_i64("T15 U+E0C6 Powerline flame separator (C1-conflict: 0x20)", raw test_terminal_get_cell_cp(tt3, 0i64, 0i64), 0x20i64);
+    TestTerminal:tt3_t15 = raw test_terminal_new(24i64, 80i64);
+    drop(feed_utf8_3(tt3_t15, 0xEEi64, 0x83i64, 0x86i64));  // U+E0C6
+    nitpick_test_assert_eq_i64("T15 U+E0C6 Powerline flame separator decoded correctly", raw test_terminal_get_cell_cp(tt3_t15, 0i64, 0i64), 0xE0C6i64);
 
-    // U+F30E git branch icon — EF 8C 8E (0x8E ≤ 0x9F → C1 conflict)
-    drop(feed_utf8_3(tt3, 0xEFi64, 0x8Ci64, 0x8Ei64));
-    nitpick_test_assert_eq_i64("T16 U+F30E Nerd Font git branch icon (C1-conflict: 0x20)", raw test_terminal_get_cell_cp(tt3, 0i64, 0i64), 0x20i64);
+    TestTerminal:tt3_t16 = raw test_terminal_new(24i64, 80i64);
+    drop(feed_utf8_3(tt3_t16, 0xEFi64, 0x8Ci64, 0x8Ei64));  // U+F30E
+    nitpick_test_assert_eq_i64("T16 U+F30E Nerd Font git branch icon decoded correctly", raw test_terminal_get_cell_cp(tt3_t16, 0i64, 0i64), 0xF30Ei64);
 
-    // U+E0B6 rounded right soft separator — EE 82 B6 (0x82 ≤ 0x9F → C1 conflict on byte 2)
-    drop(feed_utf8_3(tt3, 0xEEi64, 0x82i64, 0xB6i64));
-    nitpick_test_assert_eq_i64("T17 U+E0B6 Powerline rounded-right soft sep (C1-conflict: 0x20)", raw test_terminal_get_cell_cp(tt3, 0i64, 0i64), 0x20i64);
+    TestTerminal:tt3_t17 = raw test_terminal_new(24i64, 80i64);
+    drop(feed_utf8_3(tt3_t17, 0xEEi64, 0x82i64, 0xB6i64));  // U+E0B6
+    nitpick_test_assert_eq_i64("T17 U+E0B6 Powerline rounded-right soft sep decoded correctly", raw test_terminal_get_cell_cp(tt3_t17, 0i64, 0i64), 0xE0B6i64);
 
-    // U+E235 python icon — E8 88 B5 (0x88 ≤ 0x9F → C1 conflict on byte 2)
-    drop(feed_utf8_3(tt3, 0xE8i64, 0x88i64, 0xB5i64));
-    nitpick_test_assert_eq_i64("T18 U+E235 Nerd Font python icon (C1-conflict: 0x20)", raw test_terminal_get_cell_cp(tt3, 0i64, 0i64), 0x20i64);
+    TestTerminal:tt3_t18 = raw test_terminal_new(24i64, 80i64);
+    drop(feed_utf8_3(tt3_t18, 0xEEi64, 0x88i64, 0xB5i64));  // U+E235 = EE 88 B5
+    nitpick_test_assert_eq_i64("T18 U+E235 Nerd Font python icon decoded correctly", raw test_terminal_get_cell_cp(tt3_t18, 0i64, 0i64), 0xE235i64);
 
     // ── T19–T22: Starship truecolor segment simulation ───────────────────────
     // Simulates: truecolor SGR + separator + git icon + ASCII branch name.
-    // Separator (U+E0C7 = 0x20 due to C1 conflict), git icon (U+F30E = 0x20).
-    // Branch name "dev-0.11.x" is pure ASCII and must land correctly.
+    // With the fix, U+E0C7 and U+F30E now decode and advance the cursor.
+    // Branch name starts at col 2 (after two glyphs, each 1-wide).
 
     TestTerminal:tt4 = raw test_terminal_new(24i64, 80i64);
 
     drop(test_terminal_feed_str(tt4, "\x1b[38;2;46;52;54m"));  // fg = #2E3436
-    drop(feed_utf8_3(tt4, 0xEEi64, 0x83i64, 0x87i64));        // U+E0C7 (C1-conflict → 0x20, no cursor advance)
+    drop(feed_utf8_3(tt4, 0xEEi64, 0x83i64, 0x87i64));         // U+E0C7 → col 0, cursor → col 1
     drop(test_terminal_feed_str(tt4, "\x1b[48;2;46;52;54;38;2;0;255;255m"));
-    drop(feed_utf8_3(tt4, 0xEFi64, 0x8Ci64, 0x8Ei64));        // U+F30E (C1-conflict → 0x20, no cursor advance)
+    drop(feed_utf8_3(tt4, 0xEFi64, 0x8Ci64, 0x8Ei64));         // U+F30E → col 1, cursor → col 2
 
-    // All glyphs (U+E0C7, U+F30E) have C1 conflicts → no cursor advance.
-    // ASCII branch name starts at col 0.
+    // Branch name starts at col 2 (after two decoded glyphs)
     drop(test_terminal_feed_str(tt4, " dev-0.11.x"));
-    int64:space_cp = raw test_terminal_get_cell_cp(tt4, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T19 space at (0,0) after C1-conflicted glyphs + branch name", space_cp, 0x20i64);
 
-    int64:d_cp = raw test_terminal_get_cell_cp(tt4, 0i64, 1i64);
-    nitpick_test_assert_eq_i64("T20 'd' at (0,1) branch name start", d_cp, 0x64i64);  // 'd'
+    // Glyphs at col 0 and col 1
+    int64:e0c7_cp = raw test_terminal_get_cell_cp(tt4, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T19 U+E0C7 at (0,0) after Starship segment", e0c7_cp, 0xE0C7i64);
 
-    int64:e_cp19 = raw test_terminal_get_cell_cp(tt4, 0i64, 2i64);
-    nitpick_test_assert_eq_i64("T21 'e' at (0,2) branch name", e_cp19, 0x65i64);  // 'e'
+    int64:f30e_cp = raw test_terminal_get_cell_cp(tt4, 0i64, 1i64);
+    nitpick_test_assert_eq_i64("T20 U+F30E at (0,1) after Starship segment", f30e_cp, 0xF30Ei64);
 
-    int64:v_cp = raw test_terminal_get_cell_cp(tt4, 0i64, 3i64);
-    nitpick_test_assert_eq_i64("T22 'v' at (0,3) branch name", v_cp, 0x76i64);  // 'v'
+    // Space and 'd' in branch name: " dev-0.11.x" starts at col 2
+    int64:space_cp = raw test_terminal_get_cell_cp(tt4, 0i64, 2i64);
+    nitpick_test_assert_eq_i64("T21 space at (0,2) start of branch name", space_cp, 0x20i64);
+
+    int64:d_cp = raw test_terminal_get_cell_cp(tt4, 0i64, 3i64);
+    nitpick_test_assert_eq_i64("T22 'd' at (0,3) branch name start", d_cp, 0x64i64);
 
     // ── T23–T25: Emoji feeds ──────────────────────────────────────────────────
-    // U+2605 ★ (E2 98 85): third byte 0x85 ≤ 0x9F → C1 conflict
-    // U+25CF ● (E2 97 8F): third byte 0x8F ≤ 0x9F → C1 conflict
-    // U+1F511 🔑 (F0 9F 94 91): 4-byte, continuation bytes differ
+    // U+2605 ★ (E2 98 85), U+25CF ● (E2 97 8F) — now decode correctly.
+    // U+1F511 🔑 (F0 9F 94 91) — 4-byte, 0x9F is continuation, now decoded.
 
     TestTerminal:tt5 = raw test_terminal_new(24i64, 80i64);
 
     drop(feed_utf8_3(tt5, 0xE2i64, 0x98i64, 0x85i64));  // ★ U+2605
-    nitpick_test_assert_eq_i64("T23 ★ U+2605 feed result (C1-conflict: 0x20)", raw test_terminal_get_cell_cp(tt5, 0i64, 0i64), 0x20i64);
+    nitpick_test_assert_eq_i64("T23 ★ U+2605 decoded correctly", raw test_terminal_get_cell_cp(tt5, 0i64, 0i64), 0x2605i64);
 
-    drop(feed_utf8_3(tt5, 0xE2i64, 0x97i64, 0x8Fi64));  // ● U+25CF
-    nitpick_test_assert_eq_i64("T24 ● U+25CF feed result (C1-conflict: 0x20)", raw test_terminal_get_cell_cp(tt5, 0i64, 0i64), 0x20i64);
+    TestTerminal:tt5_t24 = raw test_terminal_new(24i64, 80i64);
+    drop(feed_utf8_3(tt5_t24, 0xE2i64, 0x97i64, 0x8Fi64));  // ● U+25CF
+    nitpick_test_assert_eq_i64("T24 ● U+25CF decoded correctly", raw test_terminal_get_cell_cp(tt5_t24, 0i64, 0i64), 0x25CFi64);
 
-    // U+1F511 🔑 (4-byte): F0 9F 94 91
-    // 0x9F = 10011111 (continuation), IS in 0x80-0x9F range → C1 conflict on 2nd byte
-    // 4-byte sequence gets broken at byte 2 (0x9F) — result is 0x20
-    drop(feed_utf8_4(tt5, 0xF0i64, 0x9Fi64, 0x94i64, 0x91i64));
-    int64:key_cp = raw test_terminal_get_cell_cp(tt5, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T25 🔑 U+1F511 feed result (C1-conflict: 0x20)", key_cp, 0x20i64);
+    // U+1F511 🔑 (4-byte): F0 9F 94 91 — all continuation bytes including 0x9F now pass
+    TestTerminal:tt5_t25 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt5_t25, 0xF0i64));
+    drop(test_terminal_feed_byte(tt5_t25, 0x9Fi64));
+    drop(test_terminal_feed_byte(tt5_t25, 0x94i64));
+    drop(test_terminal_feed_byte(tt5_t25, 0x91i64));
+    int64:key_cp = raw test_terminal_get_cell_cp(tt5_t25, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T25 🔑 U+1F511 decoded correctly", key_cp, 0x1F511i64);
 
     // ── T26–T30: Combining characters ────────────────────────────────────────
     // 'e' + U+0301 (combining acute): UTF-8 CC 81
-    // 0xCC = start of 2-byte sequence, 0x81 = continuation (0x81 ≤ 0x9F → C1 conflict)
-    // So combining accent is also blocked. Base char 'e' at (0,0) is fine.
+    // With fix: 0x81 is now correctly routed to utf8_decode_byte as a
+    // continuation byte. The combining codepoint is emitted after 'e'.
 
     TestTerminal:tt6 = raw test_terminal_new(24i64, 80i64);
 
-    drop(test_terminal_feed_byte(tt6, 0x65i64));  // 'e'
-    drop(test_terminal_feed_byte(tt6, 0xCCi64));  // U+0301 high byte
-    drop(test_terminal_feed_byte(tt6, 0x81i64));  // U+0301 low byte — C1 conflict
+    drop(test_terminal_feed_byte(tt6, 0x65i64));  // 'e' at col 0 → cursor col 1
+    drop(test_terminal_feed_byte(tt6, 0xCCi64));  // Start of U+0301 (2-byte lead)
+    drop(test_terminal_feed_byte(tt6, 0x81i64));  // Continuation → emits U+0301
 
-    // 'e' at (0,0), cursor advanced to col 1 after 'e', combining blocked
+    // 'e' at (0,0)
     int64:e_cp = raw test_terminal_get_cell_cp(tt6, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T26 'e' at (0,0) (combining accent blocked by C1-conflict)", e_cp, 0x65i64);
+    nitpick_test_assert_eq_i64("T26 'e' at (0,0) (combining accent decoded)", e_cp, 0x65i64);
 
-    // After 'e' (cursor at col 1) + 0xCC (lead byte: 2-byte seq started, -1 pending)
-    // + 0x81 (C1 control: fires emit_execute, resets utf8 state) — cursor at col 1
+    // FIXED v0.11.1: combining chars (U+0300-U+036F) now correctly compose
+    // onto the previous cell and do NOT advance the cursor.
     int64:col_after_comb = raw test_terminal_cursor_col(tt6);
-    nitpick_test_assert("T27 cursor at col 1 after e + blocked combining", (col_after_comb <= 1i64) => int32);
+    nitpick_test_assert_eq_i64("T27 cursor stays at col 1 after e + combining accent", col_after_comb, 1i64);
 
-    // 'n' after the sequence — should land at col 1 (right after 'e')
+    // 'n' after the sequence — lands at col 1 (right after 'e', combining did not advance)
     drop(test_terminal_feed_byte(tt6, 0x6Ei64));  // 'n'
     int64:n_cp = raw test_terminal_get_cell_cp(tt6, 0i64, 1i64);
-    nitpick_test_assert_eq_i64("T28 'n' at (0,1) after blocked combining char", n_cp, 0x6Ei64);  // 'n'
+    nitpick_test_assert_eq_i64("T28 'n' at (0,1) after combining char (cursor didn't advance)", n_cp, 0x6Ei64);  // 'n'
 
-    // 'a' + U+0300 combining grave: CC 80 (0x80 ≤ 0x9F → C1 conflict)
+    // 'a' + U+0300 combining grave: CC 80
+    // 'a' at col 2, combining doesn't advance cursor, next char at col 3
     drop(test_terminal_feed_byte(tt6, 0x61i64));  // 'a' at col 2
     drop(test_terminal_feed_byte(tt6, 0xCCi64));
-    drop(test_terminal_feed_byte(tt6, 0x80i64));  // U+0300 — C1 conflict
+    drop(test_terminal_feed_byte(tt6, 0x80i64));  // U+0300 — composes onto 'a', cursor stays at 3
     int64:a_cp = raw test_terminal_get_cell_cp(tt6, 0i64, 2i64);
-    nitpick_test_assert_eq_i64("T29 'a' at (0,2) with blocked combining grave", a_cp, 0x61i64);  // 'a'
+    nitpick_test_assert_eq_i64("T29 'a' at (0,2) with combining grave decoded", a_cp, 0x61i64);  // 'a'
 
     int64:col_after_grave = raw test_terminal_cursor_col(tt6);
-    nitpick_test_assert("T30 cursor at col 3 after a + blocked grave", (col_after_grave <= 3i64) => int32);
+    nitpick_test_assert_eq_i64("T30 cursor at col 3 after a + combining grave", col_after_grave, 3i64);
 
     // ── T31–T35: CJK wide characters ─────────────────────────────────────────
-    // Continuation bytes > 0x9F → no C1 conflict → correct decoding.
-    // U+4E2D 中: E4 B8 AD (bytes: 0xB8, 0xAD — both > 0x9F ✓)
-    // U+65E5 日: E6 97 A5 (bytes: 0x97 > 0x90 ✓, 0xA5 > 0x9F ✓)
-    // U+30A2 ア: E3 82 A2 (bytes: 0x82 > 0x80, 0xA2 > 0x9F ✓)
-    //
-    // Wide-char advance: ts_print may advance cursor by 1 or 2 cols;
-    // we verify the codepoint lands at col 0 and let cursor advance naturally.
+    // All continuation bytes > 0x9F — always worked. Wide-char cursor advance
+    // now verified since 日 and ア also decode (their byte 2 is in 0x80-0x9F
+    // but is correctly routed via utf8_is_pending).
 
     TestTerminal:tt7 = raw test_terminal_new(24i64, 80i64);
 
-    drop(feed_utf8_3(tt7, 0xE4i64, 0xB8i64, 0xADi64));  // 中
+    drop(feed_utf8_3(tt7, 0xE4i64, 0xB8i64, 0xADi64));  // 中 U+4E2D
     int64:zhong_cp = raw test_terminal_get_cell_cp(tt7, 0i64, 0i64);
     nitpick_test_assert_eq_i64("T31 中 U+4E2D decoded correctly at (0,0)", zhong_cp, 0x4E2Di64);
 
-    // 日 U+65E5 = E6 97 A5: byte 0x97 = 151 < 159 (0x9F) → C1 conflict on byte 2
-    // After 中 (cursor at col 1 — narrow advance), feeding 日 hits C1 conflict
+    // 日 U+65E5 = E6 97 A5: byte2 0x97 now correctly routed via pending guard
     int64:col_after_zhong = raw test_terminal_cursor_col(tt7);
-    drop(feed_utf8_3(tt7, 0xE6i64, 0x97i64, 0xA5i64));  // 日 — C1 conflict
+    drop(feed_utf8_3(tt7, 0xE6i64, 0x97i64, 0xA5i64));  // 日
     int64:ri_cp = raw test_terminal_get_cell_cp(tt7, 0i64, col_after_zhong);
-    nitpick_test_assert_eq_i64("T32 日 U+65E5 feed result (C1-conflict: 0x20)", ri_cp, 0x20i64);
+    nitpick_test_assert_eq_i64("T32 日 U+65E5 decoded correctly", ri_cp, 0x65E5i64);
 
-    // ア U+30A2 = E3 82 A2: byte 0x82 = 130 < 159 → C1 conflict on byte 2
+    // ア U+30A2 = E3 82 A2: byte2 0x82 now correctly routed via pending guard
     int64:col_after_ri = raw test_terminal_cursor_col(tt7);
-    drop(feed_utf8_3(tt7, 0xE3i64, 0x82i64, 0xA2i64));  // ア — C1 conflict
+    drop(feed_utf8_3(tt7, 0xE3i64, 0x82i64, 0xA2i64));  // ア
     int64:a_kana = raw test_terminal_get_cell_cp(tt7, 0i64, col_after_ri);
-    nitpick_test_assert_eq_i64("T33 ア U+30A2 feed result (C1-conflict: 0x20)", a_kana, 0x20i64);
+    nitpick_test_assert_eq_i64("T33 ア U+30A2 decoded correctly", a_kana, 0x30A2i64);
 
-    // Cursor: 中 is wide (2 cols), 日 and ア both C1-conflict (blocked) → cursor at col 2
+    // T34: cursor position after 中 (2 cols wide) + 日 (2) + ア (2) = col 6
     int64:col_cjk = raw test_terminal_cursor_col(tt7);
-    nitpick_test_assert_eq_i64("T34 cursor at col 2 after wide 中 (2) + 日 blocked + ア blocked", col_cjk, 2i64);
+    nitpick_test_assert_eq_i64("T34 cursor at col 6 after three wide CJK chars", col_cjk, 6i64);
 
-    // ASCII 'X' lands at cursor position
+    // T35: ASCII 'X' lands at cursor position
     drop(test_terminal_feed_byte(tt7, 0x58i64));  // 'X'
     int64:x_after_cjk = raw test_terminal_get_cell_cp(tt7, 0i64, col_cjk);
     nitpick_test_assert_eq_i64("T35 'X' at col_cjk after CJK chars", x_after_cjk, 0x58i64);
@@ -286,8 +278,7 @@ pub func:main = int32() {
 
     drop(test_terminal_feed_byte(tt8, 0x7Fi64));   // DEL — typically ignored
     int64:col_after_del = raw test_terminal_cursor_col(tt8);
-    nitpick_test_assert("T40 cursor not advanced by DEL (0x7F)",
-        (col_after_del <= 2i64) => int32);
+    nitpick_test_assert_eq_i64("T40 cursor not advanced by DEL (0x7F)", col_after_del, 2i64);
 
     int32:rc = raw test_end();
     if (rc == 0i32) { exit 0; }

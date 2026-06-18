@@ -53,6 +53,7 @@ void nitty_render_set_fg(int64_t r, int64_t g, int64_t b);
  * @param codepoint  Unicode codepoint (U+0000 to U+10FFFF)
  */
 void nitty_render_set_cell_cp(int64_t col, int64_t row, int64_t codepoint);
+void nitty_render_append_cell_cp(int64_t col, int64_t row, int64_t codepoint);
 
 /**
  * Set a character at a specific grid position.

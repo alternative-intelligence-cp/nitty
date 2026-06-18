@@ -7,9 +7,6 @@
 //
 // Based on Unicode UAX #11 (East Asian Width) with pragmatic emoji additions.
 // Implementation uses compact sorted range tables with sequential scan.
-//
-// Combining characters (width 0) are currently treated as width 1 by ts_print()
-// because multi-codepoint cells are not yet implemented. See KNOWN_ISSUES.
 
 // ═══════════════════════════════════════════════════════════════════════
 // Range table storage

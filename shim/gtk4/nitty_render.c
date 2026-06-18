@@ -64,7 +64,7 @@ extern cairo_t *g_draw_cr;
 /* ── Grid cell structure ──────────────────────────────────────────────── */
 
 typedef struct {
-    char ch[8];       /* UTF-8 character (up to 4 bytes + NUL) */
+    char ch[16];      /* UTF-8: base char (≤4 bytes) + up to 2 combining marks (≤4 bytes each) + NUL */
     int  has_fg;      /* Non-zero if per-cell foreground is set */
     int  has_bg;      /* Non-zero if per-cell background is set */
     int  fg_r, fg_g, fg_b;  /* Per-cell foreground (fixed-point × 1000) */
@@ -726,6 +726,52 @@ void nitty_render_set_cell_cp(int64_t col, int64_t row, int64_t codepoint)
     }
 
     nitty_render_set_cell(col, row, buf);
+}
+
+/* Append a combining mark codepoint to an existing cell's ch string.
+ * The mark is encoded as UTF-8 and appended after the base character.
+ * Silently does nothing if the cell buffer is already full.
+ */
+void nitty_render_append_cell_cp(int64_t col, int64_t row, int64_t codepoint)
+{
+    if (col < 0 || col >= NITTY_MAX_COLS || row < 0 || row >= NITTY_MAX_ROWS) return;
+    GridCell *cell = &g_grid[(int)row][(int)col];
+
+    /* Find current NUL terminator position */
+    int pos = 0;
+    while (pos < (int)sizeof(cell->ch) - 1 && cell->ch[pos] != '\0') pos++;
+
+    /* Encode the combining codepoint as UTF-8 */
+    char buf[8] = {0};
+    uint32_t cp = (uint32_t)codepoint;
+    int len = 0;
+    if (cp < 0x80) {
+        buf[0] = (char)cp; len = 1;
+    } else if (cp < 0x800) {
+        buf[0] = (char)(0xC0 | (cp >> 6));
+        buf[1] = (char)(0x80 | (cp & 0x3F));
+        len = 2;
+    } else if (cp < 0x10000) {
+        buf[0] = (char)(0xE0 | (cp >> 12));
+        buf[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        buf[2] = (char)(0x80 | (cp & 0x3F));
+        len = 3;
+    } else if (cp <= 0x10FFFF) {
+        buf[0] = (char)(0xF0 | (cp >> 18));
+        buf[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        buf[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        buf[3] = (char)(0x80 | (cp & 0x3F));
+        len = 4;
+    } else {
+        return; /* Invalid — ignore */
+    }
+
+    /* Append if there's room */
+    if (pos + len < (int)sizeof(cell->ch)) {
+        int j;
+        for (j = 0; j < len; j++) cell->ch[pos + j] = buf[j];
+        cell->ch[pos + len] = '\0';
+    }
 }
 
 void nitty_render_set_cell_fg(int64_t col, int64_t row,

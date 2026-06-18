@@ -293,6 +293,10 @@ func:csi_process_byte = NIL(int64:byte) {
 func:handle_ground = NIL(int64:byte) {
     // C0 controls (0x00–0x1F)
     if (byte <= 0x1Fi64) {
+        // If we're mid-UTF-8 sequence, a C0 byte terminates it (reset decoder)
+        if (raw utf8_is_pending() == 1i64) {
+            drop(utf8_reset());
+        }
         drop(emit_execute(byte));
         pass(NIL);
     }
@@ -312,7 +316,17 @@ func:handle_ground = NIL(int64:byte) {
 
     // High bytes (0x80–0xFF) → UTF-8 / C1
     if (byte >= 0x80i64) {
-        // C1 controls (0x80–0x9F)
+        // If mid-UTF-8 sequence, all continuation bytes (0x80–0xBF) belong
+        // to the decoder — skip the C1 check entirely.
+        if (raw utf8_is_pending() == 1i64) {
+            int64:cp = raw utf8_decode_byte(byte);
+            if (cp > 0i64) {
+                drop(emit_print(cp));
+            }
+            pass(NIL);
+        }
+
+        // Not mid-sequence: C1 controls (0x80–0x9F) — only on lead bytes
         if (byte <= 0x9Fi64) {
             if (byte == 0x9Bi64) {
                 p_state = S_CSI_ENTRY;
@@ -334,7 +348,7 @@ func:handle_ground = NIL(int64:byte) {
             pass(NIL);
         }
 
-        // UTF-8 multi-byte sequence
+        // UTF-8 multi-byte sequence (lead byte 0xA0–0xFF, or 0x80–0xBF if pending)
         int64:cp = raw utf8_decode_byte(byte);
         if (cp > 0i64) {
             drop(emit_print(cp));
@@ -344,6 +358,7 @@ func:handle_ground = NIL(int64:byte) {
 
     pass(NIL);
 };
+
 
 func:handle_escape = NIL(int64:byte) {
     if (byte == 0x5Bi64) {

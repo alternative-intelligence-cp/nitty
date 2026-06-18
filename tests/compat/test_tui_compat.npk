@@ -165,44 +165,45 @@ pub func:main = int32() {
     nitpick_test_assert_eq_i64("T25 cursor visible after ?1047l+?25h", vis_final, 1i64);
 
     // ── T26–T30: htop block-character meters ─────────────────────────────────
-    // htop meter bars use: ▓ U+2593, ░ U+2591, █ U+2588 in various colors.
-    // Feed them as UTF-8 bytes.
+    // htop meter bars use: ▓ U+2593, ░ U+2591, █ U+2588, ▀ U+2580, ▄ U+2584.
+    // vt_parser fix (v0.11.1): utf8_is_pending() guard routes continuation bytes
+    // correctly — these now decode to their actual codepoints.
+    // Each char gets its own fresh terminal to avoid cursor-tracking complexity.
 
     TestTerminal:tt6 = raw test_terminal_new(24i64, 80i64);
-
-    // NOTE: Parser limitation — UTF-8 continuation bytes 0x80-0x9F are
-    // misinterpreted as C1 controls in handle_ground(). Byte-by-byte feed of
-    // box-drawing (E2 94 8x) and block chars (E2 96 8x) yields space (0x20).
-    // These assertions document actual current behavior; see COMPAT_MATRIX.md.
     drop(test_terminal_feed_byte(tt6, 0xE2i64));
     drop(test_terminal_feed_byte(tt6, 0x96i64));
     drop(test_terminal_feed_byte(tt6, 0x93i64));
     int64:dark_shade = raw test_terminal_get_cell_cp(tt6, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T26 ▓ feed result (C1-conflict: 0x20)", dark_shade, 0x20i64);
+    nitpick_test_assert_eq_i64("T26 ▓ U+2593 decoded correctly at (0,0)", dark_shade, 0x2593i64);
 
-    drop(test_terminal_feed_byte(tt6, 0xE2i64));
-    drop(test_terminal_feed_byte(tt6, 0x96i64));
-    drop(test_terminal_feed_byte(tt6, 0x91i64));
-    int64:light_shade = raw test_terminal_get_cell_cp(tt6, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T27 ░ feed result (C1-conflict: 0x20)", light_shade, 0x20i64);
+    TestTerminal:tt6b = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt6b, 0xE2i64));
+    drop(test_terminal_feed_byte(tt6b, 0x96i64));
+    drop(test_terminal_feed_byte(tt6b, 0x91i64));
+    int64:light_shade = raw test_terminal_get_cell_cp(tt6b, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T27 ░ U+2591 decoded correctly at (0,0)", light_shade, 0x2591i64);
 
-    drop(test_terminal_feed_byte(tt6, 0xE2i64));
-    drop(test_terminal_feed_byte(tt6, 0x96i64));
-    drop(test_terminal_feed_byte(tt6, 0x88i64));
-    int64:full_block = raw test_terminal_get_cell_cp(tt6, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T28 █ feed result (C1-conflict: 0x20)", full_block, 0x20i64);
+    TestTerminal:tt6c = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt6c, 0xE2i64));
+    drop(test_terminal_feed_byte(tt6c, 0x96i64));
+    drop(test_terminal_feed_byte(tt6c, 0x88i64));
+    int64:full_block = raw test_terminal_get_cell_cp(tt6c, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T28 █ U+2588 decoded correctly at (0,0)", full_block, 0x2588i64);
 
-    drop(test_terminal_feed_byte(tt6, 0xE2i64));
-    drop(test_terminal_feed_byte(tt6, 0x96i64));
-    drop(test_terminal_feed_byte(tt6, 0x80i64));
-    int64:upper_half = raw test_terminal_get_cell_cp(tt6, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T29 ▀ feed result (C1-conflict: 0x20)", upper_half, 0x20i64);
+    TestTerminal:tt6d = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt6d, 0xE2i64));
+    drop(test_terminal_feed_byte(tt6d, 0x96i64));
+    drop(test_terminal_feed_byte(tt6d, 0x80i64));
+    int64:upper_half = raw test_terminal_get_cell_cp(tt6d, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T29 ▀ U+2580 decoded correctly at (0,0)", upper_half, 0x2580i64);
 
-    drop(test_terminal_feed_byte(tt6, 0xE2i64));
-    drop(test_terminal_feed_byte(tt6, 0x96i64));
-    drop(test_terminal_feed_byte(tt6, 0x84i64));
-    int64:lower_half = raw test_terminal_get_cell_cp(tt6, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T30 ▄ feed result (C1-conflict: 0x20)", lower_half, 0x20i64);
+    TestTerminal:tt6e = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt6e, 0xE2i64));
+    drop(test_terminal_feed_byte(tt6e, 0x96i64));
+    drop(test_terminal_feed_byte(tt6e, 0x84i64));
+    int64:lower_half = raw test_terminal_get_cell_cp(tt6e, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T30 ▄ U+2584 decoded correctly at (0,0)", lower_half, 0x2584i64);
 
     // ── T31–T35: htop reverse-video function-key bar ─────────────────────────
     // htop draws " F1Help  F2Setup ... " in reverse video at bottom.
@@ -258,44 +259,44 @@ pub func:main = int32() {
     nitpick_test_assert("T40 cursor past status text", (col_status >= 9i64) => int32);
 
     // ── T41–T45: Box-drawing border characters ───────────────────────────────
-    // NOTE: Parser limitation — continuation bytes 0x80-0x9F treated as C1 controls.
-    // Box-drawing chars with bytes in that range yield 0x20 (space).
-    TestTerminal:tt9 = raw test_terminal_new(24i64, 80i64);
+    // vt_parser fix (v0.11.1): box-drawing chars now decode correctly.
+    // tmux and mc draw borders with ─ U+2500, │ U+2502, ┌ U+250C, ┘ U+2518, ═ U+2550.
+    // Each gets its own terminal for clean assertions.
 
-    // Feed ─ (U+2500) = UTF-8: E2 94 80 — third byte 0x80 → C1 conflict
+    TestTerminal:tt9 = raw test_terminal_new(24i64, 80i64);
     drop(test_terminal_feed_byte(tt9, 0xE2i64));
     drop(test_terminal_feed_byte(tt9, 0x94i64));
     drop(test_terminal_feed_byte(tt9, 0x80i64));
     int64:horiz = raw test_terminal_get_cell_cp(tt9, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T41 ─ feed result (C1-conflict: 0x20)", horiz, 0x20i64);
+    nitpick_test_assert_eq_i64("T41 ─ U+2500 decoded correctly at (0,0)", horiz, 0x2500i64);
 
-    // Feed │ (U+2502) = E2 94 82
-    drop(test_terminal_feed_byte(tt9, 0xE2i64));
-    drop(test_terminal_feed_byte(tt9, 0x94i64));
-    drop(test_terminal_feed_byte(tt9, 0x82i64));
-    int64:vert = raw test_terminal_get_cell_cp(tt9, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T42 │ feed result (C1-conflict: 0x20)", vert, 0x20i64);
+    TestTerminal:tt9b = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt9b, 0xE2i64));
+    drop(test_terminal_feed_byte(tt9b, 0x94i64));
+    drop(test_terminal_feed_byte(tt9b, 0x82i64));
+    int64:vert = raw test_terminal_get_cell_cp(tt9b, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T42 │ U+2502 decoded correctly at (0,0)", vert, 0x2502i64);
 
-    // Feed ┌ (U+250C) = E2 94 8C
-    drop(test_terminal_feed_byte(tt9, 0xE2i64));
-    drop(test_terminal_feed_byte(tt9, 0x94i64));
-    drop(test_terminal_feed_byte(tt9, 0x8Ci64));
-    int64:top_left = raw test_terminal_get_cell_cp(tt9, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T43 ┌ feed result (C1-conflict: 0x20)", top_left, 0x20i64);
+    TestTerminal:tt9c = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt9c, 0xE2i64));
+    drop(test_terminal_feed_byte(tt9c, 0x94i64));
+    drop(test_terminal_feed_byte(tt9c, 0x8Ci64));
+    int64:top_left = raw test_terminal_get_cell_cp(tt9c, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T43 ┌ U+250C decoded correctly at (0,0)", top_left, 0x250Ci64);
 
-    // Feed ┘ (U+2518) = E2 94 98
-    drop(test_terminal_feed_byte(tt9, 0xE2i64));
-    drop(test_terminal_feed_byte(tt9, 0x94i64));
-    drop(test_terminal_feed_byte(tt9, 0x98i64));
-    int64:bot_right = raw test_terminal_get_cell_cp(tt9, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T44 ┘ (U+2518) at (0,0)", bot_right, 0x20i64);
+    TestTerminal:tt9d = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt9d, 0xE2i64));
+    drop(test_terminal_feed_byte(tt9d, 0x94i64));
+    drop(test_terminal_feed_byte(tt9d, 0x98i64));
+    int64:bot_right = raw test_terminal_get_cell_cp(tt9d, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T44 ┘ U+2518 decoded correctly at (0,0)", bot_right, 0x2518i64);
 
-    // Double-line box: ═ U+2550 (E2 95 90)
-    drop(test_terminal_feed_byte(tt9, 0xE2i64));
-    drop(test_terminal_feed_byte(tt9, 0x95i64));
-    drop(test_terminal_feed_byte(tt9, 0x90i64));
-    int64:double_horiz = raw test_terminal_get_cell_cp(tt9, 0i64, 0i64);
-    nitpick_test_assert_eq_i64("T45 ═ (U+2550) at (0,0)", double_horiz, 0x20i64);
+    TestTerminal:tt9e = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt9e, 0xE2i64));
+    drop(test_terminal_feed_byte(tt9e, 0x95i64));
+    drop(test_terminal_feed_byte(tt9e, 0x90i64));
+    int64:double_horiz = raw test_terminal_get_cell_cp(tt9e, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T45 ═ U+2550 decoded correctly at (0,0)", double_horiz, 0x2550i64);
 
     // ── T46–T50: ranger multi-column navigation ───────────────────────────────
     // ranger uses absolute cursor positioning to lay out its 3-column view.

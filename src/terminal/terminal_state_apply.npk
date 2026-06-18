@@ -78,8 +78,19 @@ pub func:ts_print = NIL(int64:cp) {
 
     // v0.3.5: Get display width (0=combining, 1=normal, 2=double-wide)
     int64:w = raw unicode_width(out_cp);
-    // Width-0 combining chars: treat as width-1 for now (KNOWN_ISSUES)
-    if (w == 0i64) { w = 1i64; }
+
+    // v0.11.1: Width-0 combining chars compose onto the previous cell.
+    // Write the codepoint into the combining slot of (row, col-1) and do
+    // NOT advance the cursor. If the cursor is at column 0 there is no
+    // previous cell; the mark is silently dropped (matches xterm behavior).
+    if (w == 0i64) {
+        int64:comb_col = raw ts_get_cursor_col() - 1i64;
+        int64:comb_row = raw ts_get_cursor_row();
+        if (comb_col >= 0i64) {
+            drop(grid_set_combining_cp(comb_row, comb_col, out_cp));
+        }
+        pass(NIL);
+    }
 
     drop(ts_do_wrap());
 

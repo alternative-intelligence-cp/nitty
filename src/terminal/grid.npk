@@ -23,6 +23,7 @@ use "cell.npk".*;
 int64[40000]:grid_cp;
 int64[40000]:grid_attrs;
 int64[40000]:grid_flags;
+int64[40000]:grid_combining;   // v0.11.1: combining mark codepoint per cell (0 = none)
 
 // ═══════════════════════════════════════════════════════════════════════
 // Grid Storage — Alternate Screen
@@ -31,6 +32,7 @@ int64[40000]:grid_flags;
 int64[40000]:alt_cp;
 int64[40000]:alt_attrs;
 int64[40000]:alt_flags;
+int64[40000]:alt_combining;    // v0.11.1: combining mark codepoint per cell (0 = none)
 
 // ═══════════════════════════════════════════════════════════════════════
 // Active Grid Selection
@@ -88,6 +90,17 @@ func:raw_set_flags = NIL(int64:i, int64:v) {
     pass(NIL);
 };
 
+func:raw_get_combining = int64(int64:i) {
+    if (g_active == 0i64) { pass(grid_combining[i]); }
+    pass(alt_combining[i]);
+};
+
+func:raw_set_combining = NIL(int64:i, int64:v) {
+    if (g_active == 0i64) { grid_combining[i] = v; pass(NIL); }
+    alt_combining[i] = v;
+    pass(NIL);
+};
+
 // ═══════════════════════════════════════════════════════════════════════
 // Initialization
 // ═══════════════════════════════════════════════════════════════════════
@@ -100,6 +113,7 @@ func:grid_fill_all = NIL() {
         drop(raw_set_cp(i, raw CELL_DEFAULT_CP()));
         drop(raw_set_attrs(i, raw CELL_DEFAULT_ATTRS()));
         drop(raw_set_flags(i, raw CELL_DEFAULT_FLAGS()));
+        drop(raw_set_combining(i, 0i64));
         i = i + 1i64;
     }
     pass(NIL);
@@ -173,6 +187,28 @@ pub func:grid_set = NIL(int64:row, int64:col,
     drop(raw_set_cp(i, cp));
     drop(raw_set_attrs(i, attrs));
     drop(raw_set_flags(i, flags));
+    drop(raw_set_combining(i, 0i64));   // clear any combining mark on overwrite
+    pass(NIL);
+};
+
+/// Get combining codepoint at (row, col). Returns 0 if none or out of bounds.
+pub func:grid_get_combining_cp = int64(int64:row, int64:col) {
+    if (row < 0i64) { pass(0i64); }
+    if (col < 0i64) { pass(0i64); }
+    if (row >= g_rows) { pass(0i64); }
+    if (col >= g_cols) { pass(0i64); }
+    int64:i = raw cell_index(row, col, g_cols);
+    pass(raw raw_get_combining(i));
+};
+
+/// Set combining codepoint at (row, col). Silently ignores out-of-bounds.
+pub func:grid_set_combining_cp = NIL(int64:row, int64:col, int64:comb_cp) {
+    if (row < 0i64)    { pass(NIL); }
+    if (col < 0i64)    { pass(NIL); }
+    if (row >= g_rows) { pass(NIL); }
+    if (col >= g_cols) { pass(NIL); }
+    int64:i = raw cell_index(row, col, g_cols);
+    drop(raw_set_combining(i, comb_cp));
     pass(NIL);
 };
 
@@ -206,6 +242,7 @@ func:clear_cell = NIL(int64:i) {
     drop(raw_set_cp(i, raw CELL_DEFAULT_CP()));
     drop(raw_set_attrs(i, g_erase_attrs));
     drop(raw_set_flags(i, g_erase_flags));
+    drop(raw_set_combining(i, 0i64));
     pass(NIL);
 };
 
@@ -261,6 +298,7 @@ func:copy_row = NIL(int64:dst_row, int64:src_row) {
         drop(raw_set_cp(di, raw raw_get_cp(si)));
         drop(raw_set_attrs(di, raw raw_get_attrs(si)));
         drop(raw_set_flags(di, raw raw_get_flags(si)));
+        drop(raw_set_combining(di, raw raw_get_combining(si)));
         j = j + 1i64;
     }
     pass(NIL);

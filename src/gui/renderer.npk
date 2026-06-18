@@ -220,6 +220,17 @@ pub func:renderer_sync_frame = NIL() {
                         }
                     }
                     nitty_render_set_cell_cp(c, r, cp);
+                    // v0.11.1: Append combining mark if the active grid cell has one
+                    if (sb_idx < 0i64) {
+                        if (active_row >= 0i64) {
+                            if (active_row < rows) {
+                                int64:comb_cp = raw grid_get_combining_cp(active_row, c);
+                                if (comb_cp != 0i64) {
+                                    nitty_render_append_cell_cp(c, r, comb_cp);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             // v0.3.2: Push attribute flags
