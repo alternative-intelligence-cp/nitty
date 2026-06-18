@@ -1,0 +1,41 @@
+.TH NITTY 1 "June 2026" "Nitty 0.13.1" "User Commands"
+.SH NAME
+nitty \- Modern, fast, and feature-rich terminal emulator
+.SH SYNOPSIS
+.B nitty
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B Nitty
+is a modern terminal emulator built from the ground up for power users, written in the Nitpick programming language. It combines standard local shell capabilities with advanced features like integrated SSH connection management, a built-in encrypted credential vault, SFTP browsing, native serial port and telnet support, and a flexible plugin system.
+.SH OPTIONS
+.TP
+\fB\-\-profile\fR \fINAME\fR
+Launch Nitty directly into the saved profile identified by \fINAME\fR.
+.TP
+\fB\-\-ssh\fR \fIUSER@HOST\fR
+Launch Nitty and immediately establish a quick SSH connection to \fIUSER@HOST\fR.
+.TP
+\fB\-\-serial\fR \fIDEVICE\fR
+Launch Nitty and open a serial connection to \fIDEVICE\fR (e.g., /dev/ttyUSB0).
+.TP
+\fB\-\-config\fR \fIPATH\fR
+Use the configuration file specified by \fIPATH\fR instead of the default config.yaml.
+.SH FILES
+.TP
+\fI~/.config/nitty/config.yaml\fR
+The primary configuration file containing terminal, appearance, and hotkey settings.
+.TP
+\fI~/.config/nitty/profiles/\fR
+Directory containing saved SSH, Serial, and Telnet profile configurations.
+.TP
+\fI~/.config/nitty/plugins/\fR
+Directory containing user-installed plugins.
+.SH ENVIRONMENT
+.TP
+\fBNITTY_CONFIG_DIR\fR
+If set, overrides the default configuration directory path (~/.config/nitty).
+.TP
+\fBEDITOR\fR
+Used as the default fallback editor when opening files via plugins.
+.SH SEE ALSO
+The comprehensive Nitty User Manual is available in the documentation directory, typically located at \fB/usr/share/doc/nitty/user-manual/\fR.
