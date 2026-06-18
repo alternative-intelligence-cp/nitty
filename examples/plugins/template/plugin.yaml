@@ -1,0 +1,28 @@
+# ── Plugin Manifest Template ──────────────────────────────────────────────────
+#
+# Replace every value that starts with PLACEHOLDER_ with your actual values.
+# The 'name' field must be globally unique in kebab-case (lowercase, hyphens).
+# See docs/plugin-manifest.md for the full manifest specification.
+
+name: PLACEHOLDER_NAME        # e.g., my-awesome-plugin (kebab-case, required)
+version: 0.1.0                # semver (required)
+api_version: "0.10"           # Nitty API version required (required)
+entry_module: main.npk        # compiled Nitpick source filename (required)
+
+author: "PLACEHOLDER_AUTHOR"  # Your name or email (optional)
+description: "PLACEHOLDER_DESCRIPTION"  # Short description (optional)
+
+# Dependencies on other Nitty plugins (optional, remove if unused)
+# deps_count: 0
+# deps_names: ""
+# deps_versions: ""
+
+# Extension point tags your plugin provides (informational, optional)
+# provides:
+#   - TerminalDecorator
+#   - SettingsPanel
+#   - HotkeyProvider
+#   - ContextMenuProvider
+#   - ToolbarButton
+#   - TabHeader
+#   - ConnectionProvider

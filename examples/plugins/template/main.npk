@@ -1,0 +1,172 @@
+// examples/plugins/template/main.npk
+//
+// Nitty Plugin Template
+// =====================
+// Replace PLACEHOLDER_NAME throughout with your plugin's name.
+//
+// This template provides:
+//   - The required plugin_init / plugin_destroy entry points
+//   - A failsafe error handler (required for all Nitpick binaries)
+//   - Example registration for each extension point (all commented out)
+//   - Logging patterns
+//
+// To use this template:
+//   1. Copy this directory to ~/.config/nitty/plugins/your-plugin-name/
+//   2. Rename 'PLACEHOLDER_NAME' everywhere to 'your-plugin-name'
+//   3. Uncomment and fill in the extension points you need
+//   4. Compile: nitpickc main.npk -o main
+//   5. Restart Nitty
+//
+// For detailed documentation, see docs/plugin-development-guide.md
+
+use "../../../src/plugin/api.npk".*;
+
+// ── Optional extension point imports ──────────────────────────────────────────
+// Uncomment the ones you need:
+
+// use "../../../src/plugin/ext_hotkey.npk".*;
+// use "../../../src/plugin/ext_toolbar.npk".*;
+// use "../../../src/plugin/ext_tab_header.npk".*;
+// use "../../../src/plugin/ext_context_menu.npk".*;
+// use "../../../src/plugin/ext_terminal.npk".*;
+// use "../../../src/plugin/ext_connection.npk".*;
+// use "../../../src/plugin/ext_settings.npk".*;
+// use "../../../src/plugin/event_bus.npk".*;
+// use "../../../src/plugin/plugin_registry.npk".*;
+
+// ── Callback IDs ──────────────────────────────────────────────────────────────
+// Choose arbitrary unique integers for each callback type your plugin handles.
+// These identify your handlers in the event/hotkey/menu dispatch system.
+
+// pub fixed int64:MY_PLUGIN_CB_HOTKEY  = 1i64;
+// pub fixed int64:MY_PLUGIN_CB_MENU    = 2i64;
+// pub fixed int64:MY_PLUGIN_CB_TOOLBAR = 3i64;
+// pub fixed int64:MY_PLUGIN_CB_EVENT   = 4i64;
+
+// ── Module state ──────────────────────────────────────────────────────────────
+// Store your plugin's runtime state as module-level globals.
+// Nitpick module globals are initialized at binary load time.
+
+int64:g_plugin_slot = -1i64;   // set in plugin_init, used in plugin_destroy
+
+// ── plugin_init ───────────────────────────────────────────────────────────────
+//
+// Called by the Nitty plugin loader after your manifest passes validation.
+// - Receives a PluginAPI handle configured for this plugin's registry slot.
+// - Register all extension points here.
+// - Return NIL (do not return an error code — log and continue on failure).
+
+pub func:plugin_init = NIL(PluginAPI:api) {
+    g_plugin_slot = raw api_get_slot(api);
+
+    drop(api_log(api, "info", "PLACEHOLDER_NAME: initializing"));
+
+    // ── Example: Register a hotkey ─────────────────────────────────────────
+    // Uncomment and customize:
+    //
+    // int64:hk = raw api_register_hotkey(api,
+    //     "plugin.PLACEHOLDER_NAME.my-action",   // unique namespaced action
+    //     "Ctrl+Shift+G",                        // default key chord
+    //     "Do the thing",                        // description in Settings UI
+    //     MY_PLUGIN_CB_HOTKEY);                  // your callback ID
+    // if (hk < 0i64) {
+    //     drop(api_log(api, "warn", "PLACEHOLDER_NAME: hotkey conflict, skipping"));
+    // }
+
+    // ── Example: Register a toolbar button ────────────────────────────────
+    // Uncomment and customize:
+    //
+    // int64:tb = raw api_register_toolbar_button(api,
+    //     "PLACEHOLDER_NAME.run",   // unique button id
+    //     "▶",                      // icon (unicode or named)
+    //     "Run my plugin",          // tooltip
+    //     "right",                  // position: "left" | "right"
+    //     MY_PLUGIN_CB_TOOLBAR);    // your callback ID
+    // if (tb < 0i64) {
+    //     drop(api_log(api, "warn", "PLACEHOLDER_NAME: toolbar registration failed"));
+    // }
+
+    // ── Example: Register a context menu item ────────────────────────────
+    // Uncomment and customize:
+    //
+    // int64:cm = raw api_register_context_menu_item(api,
+    //     "PLACEHOLDER_NAME.action",  // unique item id
+    //     "My Plugin Action",          // display label
+    //     "",                          // icon ("" = no icon)
+    //     "custom",                    // group: "edit" | "session" | "custom"
+    //     MY_PLUGIN_CB_MENU);         // your callback ID
+    // if (cm < 0i64) {
+    //     drop(api_log(api, "warn", "PLACEHOLDER_NAME: context menu registration failed"));
+    // }
+
+    // ── Example: Register a terminal decorator ────────────────────────────
+    // Uncomment and customize:
+    //
+    // int64:dec = raw api_register_terminal_decorator(api, MY_PLUGIN_CB_DECORATOR);
+    // if (dec < 0i64) {
+    //     drop(api_log(api, "warn", "PLACEHOLDER_NAME: decorator registration failed"));
+    // }
+
+    // ── Example: Register settings ────────────────────────────────────────
+    // Uncomment and customize:
+    //
+    // drop(api_register_setting(api,
+    //     "PLACEHOLDER_NAME",           // plugin_name (match manifest 'name')
+    //     "PLACEHOLDER_NAME.my-key",    // setting key
+    //     "My Setting Label",           // human-readable label
+    //     "string",                     // type: "string" | "bool" | "int" | "select"
+    //     "default-value"));            // default value
+
+    // ── Example: Subscribe to events ─────────────────────────────────────
+    // Uncomment and customize:
+    //
+    // int64:sub = raw api_subscribe(api, "nitty.config.changed", MY_PLUGIN_CB_EVENT);
+    // if (sub < 0i64) {
+    //     drop(api_log(api, "warn", "PLACEHOLDER_NAME: event subscription failed"));
+    // }
+
+    drop(api_log(api, "info", "PLACEHOLDER_NAME: initialized successfully"));
+    pass(NIL);
+};
+
+// ── plugin_destroy ────────────────────────────────────────────────────────────
+//
+// Called before the plugin is disabled or Nitty exits.
+// Unregister all extension points to prevent dangling callbacks.
+// Event bus subscriptions and ext_registry records are cleaned up
+// automatically by the plugin manager after this function returns.
+
+pub func:plugin_destroy = NIL() {
+    if (g_plugin_slot < 0i64) { pass(NIL); }
+
+    // PluginAPI:api = raw api_make(g_plugin_slot);
+    //
+    // Uncomment unregistration calls matching what you registered in plugin_init:
+    // drop(api_unregister_hotkey(api, "plugin.PLACEHOLDER_NAME.my-action"));
+    // drop(api_unregister_toolbar_button(api, "PLACEHOLDER_NAME.run"));
+    // drop(api_unregister_context_menu_item(api, "PLACEHOLDER_NAME.action"));
+    // drop(api_unregister_terminal_decorator(api));
+
+    g_plugin_slot = -1i64;
+    pass(NIL);
+};
+
+// ── Event handler (optional) ──────────────────────────────────────────────────
+//
+// If you subscribed to events, implement your handler here.
+// The C shim dispatcher routes events based on callback_id (v0.10.3+).
+
+// pub func:my_plugin_handle_event = NIL(string:event_type, string:data) {
+//     if (event_type == "nitty.config.changed") {
+//         // Reload config
+//     }
+//     pass(NIL);
+// };
+
+// ── Required binary entry points ──────────────────────────────────────────────
+
+/// Called by the runtime on unhandled errors — always implement this.
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+/// Main entry point (not used by the plugin loader, but required by Nitpick).
+func:main = int32() { exit 0i32; };
