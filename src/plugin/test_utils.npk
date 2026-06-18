@@ -1,0 +1,235 @@
+// src/plugin/test_utils.npk — Plugin Test Utilities
+//
+// v0.10.5: Provides helpers for testing plugins in isolation without a
+// running GTK4 window.
+//
+// This module wraps the real ext_* registries (which are already headless-safe)
+// and adds lightweight mock-query functions for use in test assertions.
+//
+// The "mock" approach: rather than intercepting API calls, we allow plugins to
+// register against the real ext_* registries, then query the registry state to
+// verify that expected registrations occurred. This keeps tests close to real
+// runtime behaviour without requiring a display or event loop.
+//
+// Usage pattern:
+//
+//   use "../../src/plugin/test_utils.npk".*;
+//
+//   // In test setup:
+//   drop(mock_reset());
+//   drop(ext_connection_init());
+//   drop(ext_hotkey_init());
+//   drop(ext_settings_init());
+//   drop(ext_terminal_init());
+//   drop(ext_context_menu_init());
+//   drop(ext_toolbar_init());
+//   drop(ext_tab_header_init());
+//   drop(event_bus_init());
+//
+//   // Create a mock PluginAPI handle:
+//   PluginAPI:api = raw mock_api_new(0i64);
+//
+//   // Call your plugin init:
+//   drop(plugin_init(api));
+//
+//   // Assert registrations:
+//   int64:n = raw mock_get_registered_decorator_count();
+//   // n == 1 if a TerminalDecorator was registered
+//
+// Public API:
+//   mock_api_new(slot)                           → PluginAPI
+//   mock_reset()                                 → NIL
+//   mock_get_registered_decorator_count()        → int64
+//   mock_get_registered_hotkey_count()           → int64
+//   mock_get_registered_hotkey_id(i)             → string
+//   mock_get_registered_toolbar_count()          → int64
+//   mock_get_registered_toolbar_id(i)            → string
+//   mock_get_registered_menu_count()             → int64
+//   mock_get_registered_menu_label(i)            → string
+//   mock_get_registered_menu_id(i)               → string
+//   mock_get_registered_tab_header_count()       → int64
+//   mock_get_registered_setting_count(name)      → int64
+//   mock_get_registered_setting_key(name, j)     → string
+//   mock_get_registered_setting_default(name, j) → string
+//   mock_get_registered_event_sub_count()        → int64
+//   mock_get_registered_event_type(i)            → string
+//   mock_simulate_event(event_type, data)        → NIL
+//   mock_log_count()                             → int64   (always 0 in v0.10)
+
+use "./api.npk".*;
+use "./ext_terminal.npk".*;
+use "./ext_hotkey.npk".*;
+use "./ext_toolbar.npk".*;
+use "./ext_tab_header.npk".*;
+use "./ext_context_menu.npk".*;
+use "./ext_settings.npk".*;
+use "./event_bus.npk".*;
+
+// ── Snapshot storage ──────────────────────────────────────────────────────────
+//
+// mock_reset() saves a "before" baseline of the registry counts so that
+// mock_get_registered_* can report counts added since the last reset.
+//
+// This means: mock_reset() MUST be called before calling plugin_init().
+
+int64:g_mock_base_decorator    = 0i64;
+int64:g_mock_base_hotkey       = 0i64;
+int64:g_mock_base_toolbar      = 0i64;
+int64:g_mock_base_tab_header   = 0i64;
+int64:g_mock_base_menu         = 0i64;
+int64:g_mock_base_event_sub    = 0i64;
+
+// Per-slot settings baseline: index by plugin_name (not slot) via ext_settings
+// We store the baseline count-for the last plugin_name queried.
+// (Limitation: only reliable when all test registrations use a single name)
+string:g_mock_settings_plugin  = "";
+int64:g_mock_base_settings     = 0i64;
+
+// ── Public: Construction ──────────────────────────────────────────────────────
+
+/// Create a PluginAPI handle for the given registry slot.
+/// Delegates to api_make — this is a thin naming alias for test clarity.
+pub func:mock_api_new = PluginAPI(int64:slot) {
+    pass(raw api_make(slot));
+};
+
+// ── Public: Reset ─────────────────────────────────────────────────────────────
+
+/// Snapshot the current state of all registries as a "before" baseline.
+/// Call this BEFORE calling plugin_init() in your test setup.
+/// All subsequent mock_get_registered_* queries return counts relative to this baseline.
+pub func:mock_reset = NIL() {
+    g_mock_base_decorator  = raw ext_terminal_decorator_count();
+    g_mock_base_hotkey     = raw ext_hotkey_count();
+    g_mock_base_toolbar    = raw ext_toolbar_count();
+    g_mock_base_tab_header = raw ext_tab_header_count();
+    g_mock_base_menu       = raw ext_context_menu_count();
+    g_mock_base_event_sub  = raw event_bus_total_count();
+    pass(NIL);
+};
+
+// ── Public: TerminalDecorator queries ────────────────────────────────────────
+
+/// Returns the number of TerminalDecorators registered since mock_reset().
+pub func:mock_get_registered_decorator_count = int64() {
+    int64:total = raw ext_terminal_decorator_count();
+    pass(total - g_mock_base_decorator);
+};
+
+// ── Public: Hotkey queries ────────────────────────────────────────────────────
+
+/// Returns the number of hotkeys registered since mock_reset().
+pub func:mock_get_registered_hotkey_count = int64() {
+    int64:total = raw ext_hotkey_count();
+    pass(total - g_mock_base_hotkey);
+};
+
+/// Returns the action string of the i-th hotkey registered since mock_reset().
+/// i is 0-indexed relative to the baseline.
+pub func:mock_get_registered_hotkey_id = string(int64:i) {
+    int64:real_idx = g_mock_base_hotkey + i;
+    pass(raw ext_hotkey_get_action(real_idx));
+};
+
+// ── Public: Toolbar queries ───────────────────────────────────────────────────
+
+/// Returns the number of toolbar buttons registered since mock_reset().
+pub func:mock_get_registered_toolbar_count = int64() {
+    int64:total = raw ext_toolbar_count();
+    pass(total - g_mock_base_toolbar);
+};
+
+/// Returns the id of the i-th toolbar button registered since mock_reset().
+pub func:mock_get_registered_toolbar_id = string(int64:i) {
+    int64:real_idx = g_mock_base_toolbar + i;
+    pass(raw ext_toolbar_get_id(real_idx));
+};
+
+// ── Public: Tab Header queries ────────────────────────────────────────────────
+
+/// Returns the number of tab header widgets registered since mock_reset().
+pub func:mock_get_registered_tab_header_count = int64() {
+    int64:total = raw ext_tab_header_count();
+    pass(total - g_mock_base_tab_header);
+};
+
+// ── Public: Context Menu queries ──────────────────────────────────────────────
+
+/// Returns the number of context menu items registered since mock_reset().
+pub func:mock_get_registered_menu_count = int64() {
+    int64:total = raw ext_context_menu_count();
+    pass(total - g_mock_base_menu);
+};
+
+/// Returns the display label of the i-th context menu item registered since mock_reset().
+pub func:mock_get_registered_menu_label = string(int64:i) {
+    int64:real_idx = g_mock_base_menu + i;
+    pass(raw ext_context_menu_get_label(real_idx));
+};
+
+/// Returns the id of the i-th context menu item registered since mock_reset().
+pub func:mock_get_registered_menu_id = string(int64:i) {
+    int64:real_idx = g_mock_base_menu + i;
+    pass(raw ext_context_menu_get_id(real_idx));
+};
+
+// ── Public: Settings queries ──────────────────────────────────────────────────
+
+/// Returns the number of settings registered for plugin_name since mock_reset().
+/// Sets an internal baseline for subsequent mock_get_registered_setting_* calls.
+pub func:mock_get_registered_setting_count = int64(string:plugin_name) {
+    pass(raw ext_settings_get_count_for(plugin_name));
+};
+
+/// Returns the key of the j-th setting for plugin_name (0-indexed).
+pub func:mock_get_registered_setting_key = string(string:plugin_name, int64:j) {
+    pass(raw ext_settings_get_key(plugin_name, j));
+};
+
+/// Returns the default value of the j-th setting for plugin_name (0-indexed).
+pub func:mock_get_registered_setting_default = string(string:plugin_name, int64:j) {
+    pass(raw ext_settings_get_default(plugin_name, j));
+};
+
+/// Returns the type of the j-th setting for plugin_name (0-indexed).
+pub func:mock_get_registered_setting_type = string(string:plugin_name, int64:j) {
+    pass(raw ext_settings_get_type(plugin_name, j));
+};
+
+/// Returns the label of the j-th setting for plugin_name (0-indexed).
+pub func:mock_get_registered_setting_label = string(string:plugin_name, int64:j) {
+    pass(raw ext_settings_get_label(plugin_name, j));
+};
+
+// ── Public: Event bus queries ─────────────────────────────────────────────────
+
+/// Returns the number of event subscriptions registered since mock_reset().
+pub func:mock_get_registered_event_sub_count = int64() {
+    int64:total = raw event_bus_total_count();
+    pass(total - g_mock_base_event_sub);
+};
+
+/// Returns the event_type of the i-th subscription registered since mock_reset().
+pub func:mock_get_registered_event_type = string(int64:i) {
+    int64:real_idx = g_mock_base_event_sub + i;
+    pass(raw event_bus_get_event_type(real_idx));
+};
+
+// ── Public: Event simulation ──────────────────────────────────────────────────
+
+/// Simulate an event being emitted. In v0.10.x, event_bus_emit_named is a stub
+/// that logs subscriber count. Use this to verify subscription counts and
+/// that subscriptions were correctly registered.
+pub func:mock_simulate_event = NIL(string:event_type, string:data) {
+    drop(event_bus_emit_named("mock", event_type, data));
+    pass(NIL);
+};
+
+// ── Public: Log stub ──────────────────────────────────────────────────────────
+
+/// Returns count of captured log messages.
+/// In v0.10.x, api_log writes directly to stdout (no capture).
+/// This returns 0 as a placeholder for future log capture support.
+pub func:mock_log_count = int64() {
+    pass(0i64);
+};
