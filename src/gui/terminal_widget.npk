@@ -281,7 +281,12 @@ func:dispatch_action = NIL(string:action, int64:rows, int64:cols) {
         // v0.8.3: Connection Manager toggle
         ("connection.manager") { drop(cm_toggle()); },
         // v0.10.4: Plugin Manager
-        ("plugins.manager") { drop(pmu_toggle()); },
+        ("plugins.manager") {
+            drop(pmu_toggle());
+            // Wire sidebar visibility here (terminal_widget links gtk4_shim; pmu module does not)
+            int64:pmu_vis = is (raw pmu_is_open() != 0i64) : 1i32 : 0i32;
+            nitty_gtk4_sidebar_set_visible(pmu_vis => int32);
+        },
         // v0.8.5: SFTP browser toggle
         ("sftp.browser") {
             int64:sftp_active_pane = raw split_tree_get_active();

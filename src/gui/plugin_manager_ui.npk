@@ -22,8 +22,8 @@
 //   Buttons: Enable / Disable / Uninstall / Open Settings
 //
 // Scoping notes (v0.10.4):
-//   - Install from archive (.zip/.tar.gz) deferred to v0.10.5 (needs new shim)
-//   - Settings save stubbed -- config parser bug blocks writing config.yaml
+//   - Install from archive (.zip/.tar.gz) deferred to v0.15 (needs GTK4 file-chooser shim)
+//   - Settings save deferred to v0.15 (needs cfg_set_plugin_setting + config write path)
 //   - Built-in plugins shown as a synthetic section (not in plugin_registry)
 //
 // Usage:
@@ -132,9 +132,9 @@ pub func:pmu_open = NIL() {
     nitty_gtk4_button_set_sensitive(g_pmu_btn_uninstall, 0i32);
     nitty_gtk4_button_set_sensitive(g_pmu_btn_settings,  0i32);
 
-    // Show via sidebar attach
-    // TODO(v0.10.5): nitty_gtk4_sidebar_set_visible(1i32) when shim is updated
-    // For now the panel is managed as an overlay notification-driven state machine
+    // Sidebar show/hide: driven by the app's action dispatch layer (app.npk),
+    // which IS linked with gtk4_shim and calls nitty_gtk4_sidebar_set_visible(1i32).
+    // Calling it here would require gtk4_shim in every test binary that imports this module.
     g_pmu_open = 1i64;
 
     // Populate list
@@ -147,7 +147,7 @@ pub func:pmu_open = NIL() {
 /// Close (hide) the plugin manager panel.
 pub func:pmu_close = NIL() {
     if (g_pmu_open == 0i64) { pass(NIL); }
-    // TODO(v0.10.5): nitty_gtk4_sidebar_set_visible(0i32) when shim is updated
+    // Sidebar hide: see pmu_open -- delegated to app action dispatch layer.
     g_pmu_open        = 0i64;
     g_pmu_sel_slot    = -1i64;
     g_pmu_sel_builtin = -1i64;
@@ -541,10 +541,15 @@ func:_pmu_do_uninstall = NIL(int64:slot) {
     // Get plugin directory for deletion
     if (mslot >= 0i64) {
         string:dir = raw manifest_get_dir(mslot);
-        // TODO(v0.10.5): actually delete the directory via nitpick-fs rmdir_recursive
-        // For now, notify the user and clear the registry entry
-        drop(nitty_gtk4_show_notification(string_concat(
-            "Uninstall: plugin disabled. Directory removal requires restart: ", dir)));
+        // Remove the plugin directory. fs_rmdir removes a single (empty-ish) dir;
+        // deep recursive deletion deferred to v0.15 (needs rmdir_recursive shim).
+        int32:rm_ok = fs_rmdir(dir);
+        if (rm_ok == 0i32) {
+            drop(nitty_gtk4_show_notification(string_concat("Uninstalled: ", string_concat(name, " (restart to complete)"))));
+        } else {
+            drop(nitty_gtk4_show_notification(string_concat(
+                "Disabled (dir not empty, remove manually): ", dir)));
+        }
     } else {
         drop(nitty_gtk4_show_notification(string_concat("Uninstalled: ", name)));
     }
@@ -560,7 +565,8 @@ func:_pmu_do_uninstall = NIL(int64:slot) {
 
 /// Open settings form for a plugin or built-in.
 /// Renders the SettingDefinition list into the detail label.
-/// TODO(v0.10.5): persist changes to config.yaml via cfg_set_plugin_setting.
+/// TODO(v0.15): persist changes to config.yaml via cfg_set_plugin_setting.
+/// Blocked on: cfg_set_plugin_setting API + config write roundtrip (v0.15).
 func:_pmu_do_open_settings = NIL(int64:slot, int64:is_builtin) {
     if (g_pmu_detail_label == 0i64) { pass(NIL); }
 
@@ -592,7 +598,7 @@ func:_pmu_do_open_settings = NIL(int64:slot, int64:is_builtin) {
         si = si + 1i64;
     }
     text = string_concat(text,
-        "[Settings editing deferred to v0.10.5 -- config parser fix needed]");
+        "[Settings editing deferred to v0.15 -- needs cfg_set_plugin_setting + config write]");
     nitty_gtk4_label_set_text(g_pmu_detail_label, text);
 
     drop(nitty_gtk4_show_notification(
