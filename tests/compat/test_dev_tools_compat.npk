@@ -1,0 +1,324 @@
+// tests/compat/test_dev_tools_compat.npk — Nitty v0.11.1 Developer Tool Compatibility Tests
+//
+// Tests VT sequences emitted by git, make, python3 REPL, less, man, curl, top.
+// All sequences replayed through the headless pipeline — no live processes.
+//
+// Coverage:
+//   T01–T05: git log --oneline --graph --color (yellow asterisk, colored pipes)
+//   T06–T10: git diff --color (green additions, red deletions)
+//   T11–T15: git status --color (bold-green modified, red untracked)
+//   T16–T20: gcc color diagnostic output (bold error line, caret)
+//   T21–T25: python3 REPL prompts (>>>, ...) and ANSI passthrough
+//   T26–T30: less pager (alt screen, status bar, search highlight)
+//   T31–T35: man page bold/underline rendering
+//   T36–T40: curl progress bar (\r overwrite, percentage digits)
+//   T41–T45: top full-screen refresh (ESC[2J + repaint pattern)
+//   T46–T50: general ANSI passthrough and SGR edge cases
+
+use "../e2e/framework.npk".*;
+
+pub func:main = int32() {
+    nitpick_test_begin("dev_tools_compat");
+
+    // ── T01–T05: git log --oneline --graph --color ────────────────────────────
+    // git emits colored graph lines like:
+    //   \e[33m*\e[m \e[33m<hash>\e[m commit message
+    //   \e[31m|\e[m continuation
+
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+
+    // Yellow asterisk: ESC[33m * ESC[m
+    drop(test_terminal_feed_str(tt, "\x1b[33m*\x1b[m "));
+    int64:fg_after_yellow = raw test_terminal_attrs_fg(tt);
+    // After reset, fg cleared
+    nitpick_test_assert_eq_i64("T01 fg cleared after git log yellow reset", fg_after_yellow, 0i64);
+
+    int64:ast_cp = raw test_terminal_get_cell_cp(tt, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T02 '*' at (0,0) git log graph", ast_cp, 0x2Ai64);  // '*'
+
+    // Hash abbrev in yellow: ESC[33m abc1234 ESC[m
+    drop(test_terminal_feed_str(tt, "\x1b[33mabc1234\x1b[m"));
+    int64:a_cp = raw test_terminal_get_cell_cp(tt, 0i64, 2i64);
+    nitpick_test_assert_eq_i64("T03 'a' of hash at (0,2)", a_cp, 0x61i64);  // 'a'
+
+    // Red pipe: ESC[31m | ESC[m
+    drop(test_terminal_feed_str(tt, "\r\n\x1b[31m|\x1b[m"));
+    int64:pipe_cp = raw test_terminal_get_cell_cp(tt, 1i64, 0i64);
+    nitpick_test_assert_eq_i64("T04 '|' at (1,0) git graph pipe", pipe_cp, 0x7Ci64);  // '|'
+
+    // Cyan branch name in parentheses: ESC[1;36m (HEAD -> main) ESC[m
+    drop(test_terminal_feed_str(tt, " \x1b[1;36m(HEAD -> main)\x1b[m"));
+    int64:paren_cp = raw test_terminal_get_cell_cp(tt, 1i64, 2i64);
+    nitpick_test_assert_eq_i64("T05 '(' at (1,2) branch name", paren_cp, 0x28i64);  // '('
+
+    // ── T06–T10: git diff --color ─────────────────────────────────────────────
+    // Added lines: ESC[32m + line ESC[m
+    // Deleted lines: ESC[31m - line ESC[m
+    // Header: ESC[1m --- a/file ESC[m
+
+    TestTerminal:tt2 = raw test_terminal_new(24i64, 80i64);
+
+    // Diff header in bold
+    drop(test_terminal_feed_str(tt2, "\x1b[1m--- a/main.c\x1b[0m\r\n"));
+    int64:bold_header = raw test_terminal_attrs_bold(tt2);
+    nitpick_test_assert_eq_i64("T06 bold cleared after diff header reset", bold_header, 0i64);
+
+    int64:dash_cp = raw test_terminal_get_cell_cp(tt2, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T07 '-' at (0,0) diff header", dash_cp, 0x2Di64);  // '-'
+
+    // Added line in green
+    drop(test_terminal_feed_str(tt2, "\x1b[32m+    int x = 42;\x1b[0m\r\n"));
+    int64:plus_cp = raw test_terminal_get_cell_cp(tt2, 1i64, 0i64);
+    nitpick_test_assert_eq_i64("T08 '+' at (1,0) added line", plus_cp, 0x2Bi64);  // '+'
+
+    // Deleted line in red
+    drop(test_terminal_feed_str(tt2, "\x1b[31m-    int x = 0;\x1b[0m\r\n"));
+    int64:minus_cp = raw test_terminal_get_cell_cp(tt2, 2i64, 0i64);
+    nitpick_test_assert_eq_i64("T09 '-' at (2,0) deleted line", minus_cp, 0x2Di64);  // '-'
+
+    // Context line (no color)
+    drop(test_terminal_feed_str(tt2, " void main() {\r\n"));
+    int64:space_ctx = raw test_terminal_get_cell_cp(tt2, 3i64, 0i64);
+    nitpick_test_assert_eq_i64("T10 space at (3,0) context line", space_ctx, 0x20i64);
+
+    // ── T11–T15: git status --color ───────────────────────────────────────────
+    // git status shows:
+    //   ESC[1;32m M  main.c ESC[m  (bold green modified in index)
+    //   ESC[31m?? ESC[m untracked.c (red untracked)
+
+    TestTerminal:tt3 = raw test_terminal_new(24i64, 80i64);
+
+    drop(test_terminal_feed_str(tt3, "\x1b[1;32m M  main.c\x1b[0m\r\n"));
+    int64:bold_mod = raw test_terminal_attrs_bold(tt3);
+    nitpick_test_assert_eq_i64("T11 bold cleared after modified file reset", bold_mod, 0i64);
+
+    // space at (0,0), 'M' at (0,1)
+    int64:m_cp = raw test_terminal_get_cell_cp(tt3, 0i64, 1i64);
+    nitpick_test_assert_eq_i64("T12 'M' at (0,1) modified indicator", m_cp, 0x4Di64);  // 'M'
+
+    // Untracked: ?? in red
+    drop(test_terminal_feed_str(tt3, "\x1b[31m?? untracked.c\x1b[0m\r\n"));
+    int64:q1_cp = raw test_terminal_get_cell_cp(tt3, 1i64, 0i64);
+    nitpick_test_assert_eq_i64("T13 '?' at (1,0) untracked", q1_cp, 0x3Fi64);  // '?'
+
+    int64:q2_cp = raw test_terminal_get_cell_cp(tt3, 1i64, 1i64);
+    nitpick_test_assert_eq_i64("T14 '?' at (1,1) untracked second", q2_cp, 0x3Fi64);  // '?'
+
+    // Branch name: ESC[1;32mOn branch main\e[0m
+    drop(test_terminal_feed_str(tt3, "\x1b[1;32mOn branch main\x1b[0m"));
+    int64:o_cp = raw test_terminal_get_cell_cp(tt3, 2i64, 0i64);
+    nitpick_test_assert_eq_i64("T15 'O' at (2,0) branch line", o_cp, 0x4Fi64);  // 'O'
+
+    // ── T16–T20: gcc/clang color diagnostic output ────────────────────────────
+    // gcc --color emits: ESC[1mfile.c:10:5: ESC[1;31merror:ESC[m message
+    // followed by source line and: ESC[1;32m    ^~~~~ESC[m caret
+
+    TestTerminal:tt4 = raw test_terminal_new(24i64, 80i64);
+
+    // Bold filename + location
+    drop(test_terminal_feed_str(tt4, "\x1b[1mfile.c:10:5: \x1b[0m"));
+    int64:f_gcc = raw test_terminal_get_cell_cp(tt4, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T16 'f' at (0,0) gcc filename", f_gcc, 0x66i64);  // 'f'
+
+    // Bold red "error:"
+    drop(test_terminal_feed_str(tt4, "\x1b[1;31merror:\x1b[0m use of undeclared identifier\r\n"));
+    int64:e_cp = raw test_terminal_get_cell_cp(tt4, 0i64, 13i64);
+    nitpick_test_assert_eq_i64("T17 'e' of 'error:' at (0,13)", e_cp, 0x65i64);  // 'e'
+
+    // Source line (plain)
+    drop(test_terminal_feed_str(tt4, "    foo();\r\n"));
+    int64:space_src = raw test_terminal_get_cell_cp(tt4, 1i64, 0i64);
+    nitpick_test_assert_eq_i64("T18 space at (1,0) source indent", space_src, 0x20i64);
+
+    // Caret line in bold green: ESC[1;32m    ^~~~~ESC[m
+    drop(test_terminal_feed_str(tt4, "\x1b[1;32m    ^~~~~\x1b[0m\r\n"));
+    int64:caret_cp = raw test_terminal_get_cell_cp(tt4, 2i64, 4i64);
+    nitpick_test_assert_eq_i64("T19 '^' at (2,4) gcc caret", caret_cp, 0x5Ei64);  // '^'
+
+    int64:tilde_cp = raw test_terminal_get_cell_cp(tt4, 2i64, 5i64);
+    nitpick_test_assert_eq_i64("T20 '~' at (2,5) gcc squiggle", tilde_cp, 0x7Ei64);  // '~'
+
+    // ── T21–T25: python3 REPL prompts and ANSI passthrough ───────────────────
+
+    TestTerminal:tt5 = raw test_terminal_new(24i64, 80i64);
+
+    // Python REPL primary prompt ">>> "
+    drop(test_terminal_feed_str(tt5, ">>> "));
+    int64:gt1 = raw test_terminal_get_cell_cp(tt5, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T21 '>' at (0,0) python prompt", gt1, 0x3Ei64);  // '>'
+
+    int64:gt2 = raw test_terminal_get_cell_cp(tt5, 0i64, 1i64);
+    nitpick_test_assert_eq_i64("T22 '>' at (0,1) python prompt", gt2, 0x3Ei64);
+
+    int64:gt3 = raw test_terminal_get_cell_cp(tt5, 0i64, 2i64);
+    nitpick_test_assert_eq_i64("T23 '>' at (0,2) python prompt", gt3, 0x3Ei64);
+
+    // Continuation prompt "... "
+    drop(test_terminal_feed_str(tt5, "def f():\r\n... "));
+    int64:dot1 = raw test_terminal_get_cell_cp(tt5, 1i64, 0i64);
+    nitpick_test_assert_eq_i64("T24 '.' at (1,0) continuation prompt", dot1, 0x2Ei64);  // '.'
+
+    // ANSI passthrough: print("\x1b[31mred\x1b[0m") — red "red" appears in grid
+    drop(test_terminal_feed_str(tt5, "\r\n\x1b[31mred\x1b[0m\r\n"));
+    int64:r_red = raw test_terminal_get_cell_cp(tt5, 2i64, 0i64);
+    nitpick_test_assert_eq_i64("T25 'r' of red text at (2,0)", r_red, 0x72i64);  // 'r'
+
+    // ── T26–T30: less pager ───────────────────────────────────────────────────
+    // less opens alt screen, draws content, status bar at bottom
+
+    TestTerminal:tt6 = raw test_terminal_new(24i64, 80i64);
+
+    // less entry: alt screen
+    drop(test_terminal_feed_str(tt6, "\x1b[?1049h\x1b[2J\x1b[H"));
+    int64:less_alt = raw test_terminal_mode_alt(tt6);
+    nitpick_test_assert_eq_i64("T26 less uses alt screen", less_alt, 1i64);
+
+    // File content
+    drop(test_terminal_feed_str(tt6, "Line 1: Hello world\r\nLine 2: Foo bar\r\n"));
+    int64:l_less = raw test_terminal_get_cell_cp(tt6, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T27 'L' at (0,0) less content", l_less, 0x4Ci64);  // 'L'
+
+    // Status bar at bottom: bold filename + line%
+    drop(test_terminal_feed_str(tt6, "\x1b[24;1H\x1b[1mfile.txt (END)\x1b[0m"));
+    int64:f_status = raw test_terminal_get_cell_cp(tt6, 23i64, 0i64);
+    nitpick_test_assert_eq_i64("T28 'f' at (23,0) less status bar", f_status, 0x66i64);  // 'f'
+
+    // Search highlight in reverse video: /foo → \e[7mfoo\e[27m
+    drop(test_terminal_feed_str(tt6, "\x1b[1;1H"));
+    drop(test_terminal_feed_str(tt6, "Line 1: Hello \x1b[7mworld\x1b[27m\r\n"));
+    // 'w' of "world" is at col 14 (after "Line 1: Hello ") = 14 chars
+    int64:w_cp = raw test_terminal_get_cell_cp(tt6, 0i64, 14i64);
+    nitpick_test_assert_eq_i64("T29 'w' of highlighted 'world' at (0,14)", w_cp, 0x77i64);  // 'w'
+
+    // After ESC[27m (remove reverse), attrs back to normal
+    int64:inv_after_27 = raw test_terminal_attrs_inverse(tt6);
+    nitpick_test_assert_eq_i64("T30 inverse cleared by SGR 27", inv_after_27, 0i64);
+
+    // ── T31–T35: man page bold and underline ──────────────────────────────────
+    // man uses overstriking: char+BS+char=bold, _+BS+char=underline
+    // Modern man with groff also uses ANSI: ESC[1m bold, ESC[4m underline
+
+    TestTerminal:tt7 = raw test_terminal_new(24i64, 80i64);
+
+    // Bold section header via SGR 1
+    drop(test_terminal_feed_str(tt7, "\x1b[1mNAME\x1b[0m\r\n"));
+    int64:n_cp = raw test_terminal_get_cell_cp(tt7, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T31 'N' at (0,0) man NAME header", n_cp, 0x4Ei64);  // 'N'
+
+    // Underlined option: ESC[4m--help ESC[24m
+    drop(test_terminal_feed_str(tt7, "\x1b[4m--help\x1b[24m\r\n"));
+    int64:ul_after = raw test_terminal_attrs_underline(tt7);
+    nitpick_test_assert_eq_i64("T32 underline cleared by SGR 24", ul_after, 0i64);
+
+    int64:dash_man = raw test_terminal_get_cell_cp(tt7, 1i64, 0i64);
+    nitpick_test_assert_eq_i64("T33 '-' at (1,0) underlined option", dash_man, 0x2Di64);
+
+    // Bold+underline combination: ESC[1;4m text ESC[0m
+    drop(test_terminal_feed_str(tt7, "\x1b[1;4mIMPORTANT\x1b[0m"));
+    int64:i_cp = raw test_terminal_get_cell_cp(tt7, 2i64, 0i64);
+    nitpick_test_assert_eq_i64("T34 'I' at (2,0) bold+underlined text", i_cp, 0x49i64);  // 'I'
+
+    // After reset both cleared
+    int64:bold_man = raw test_terminal_attrs_bold(tt7);
+    nitpick_test_assert_eq_i64("T35 bold cleared after SGR 0", bold_man, 0i64);
+
+    // ── T36–T40: curl progress bar (\r overwrite) ─────────────────────────────
+    // curl writes "  % Total  ... Received..." then uses \r to overwrite
+    // with updated percentages each tick.
+
+    TestTerminal:tt8 = raw test_terminal_new(24i64, 80i64);
+
+    // First tick: 10%
+    drop(test_terminal_feed_str(tt8, " 10  1234  1234  1234    0    0 --:-- 0:00:01\r"));
+    // CR returns to col 0
+    int64:col_cr = raw test_terminal_cursor_col(tt8);
+    nitpick_test_assert_eq_i64("T36 cursor at col 0 after CR", col_cr, 0i64);
+
+    // Second tick overwrites: 50%
+    drop(test_terminal_feed_str(tt8, " 50  6170  6170  6170    0    0  100K 0:00:01\r"));
+    // '5' at (0,1)
+    int64:five_cp = raw test_terminal_get_cell_cp(tt8, 0i64, 1i64);
+    nitpick_test_assert_eq_i64("T37 '5' of 50% at (0,1)", five_cp, 0x35i64);  // '5'
+
+    // 100%
+    drop(test_terminal_feed_str(tt8, "100  9999  9999  9999    0    0  110K 0:00:01\r\n"));
+    int64:one_cp = raw test_terminal_get_cell_cp(tt8, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T38 '1' of 100% at (0,0)", one_cp, 0x31i64);  // '1'
+
+    // After CR+LF, cursor on row 1
+    int64:row_done = raw test_terminal_cursor_row(tt8);
+    nitpick_test_assert_eq_i64("T39 cursor on row 1 after download", row_done, 1i64);
+
+    // Curl with color: \e[?25l (hide cursor during progress)
+    drop(test_terminal_feed_str(tt8, "\x1b[?25l"));
+    int64:vis_curl = raw test_terminal_mode_cursor_visible(tt8);
+    nitpick_test_assert_eq_i64("T40 cursor hidden during curl progress", vis_curl, 0i64);
+
+    // ── T41–T45: top full-screen refresh ─────────────────────────────────────
+    // top uses ESC[2J ESC[H to clear and repaint each cycle.
+
+    TestTerminal:tt9 = raw test_terminal_new(24i64, 80i64);
+
+    // top entry: alt screen
+    drop(test_terminal_feed_str(tt9, "\x1b[?1049h\x1b[?25l"));
+
+    // First frame: header lines
+    drop(test_terminal_feed_str(tt9, "\x1b[2J\x1b[H"));
+    drop(test_terminal_feed_str(tt9, "top - 02:53:00 up 5 days\r\n"));
+    drop(test_terminal_feed_str(tt9, "Tasks: 142 total,   1 running\r\n"));
+
+    int64:t_cp = raw test_terminal_get_cell_cp(tt9, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T41 't' at (0,0) top header", t_cp, 0x74i64);  // 't'
+
+    // top column header in reverse video
+    drop(test_terminal_feed_str(tt9, "\x1b[7m  PID USER      PR\x1b[m\r\n"));
+    int64:inv_top = raw test_terminal_attrs_inverse(tt9);
+    nitpick_test_assert_eq_i64("T42 inverse cleared after column header", inv_top, 0i64);
+
+    // Second refresh: ESC[2J + ESC[H + new content
+    drop(test_terminal_feed_str(tt9, "\x1b[2J\x1b[H"));
+    drop(test_terminal_feed_str(tt9, "top - 02:53:01 up 5 days\r\n"));
+
+    // Old content at (1,0) should be cleared (2J clears entire screen)
+    int64:clear_check = raw test_terminal_get_cell_cp(tt9, 1i64, 0i64);
+    nitpick_test_assert_eq_i64("T43 (1,0) blank after top refresh", clear_check, 0x20i64);
+
+    // New timestamp at (0,7): '0' from "02:53:01"  (after "top - ")
+    int64:zero_ts = raw test_terminal_get_cell_cp(tt9, 0i64, 6i64);
+    nitpick_test_assert_eq_i64("T44 '0' at (0,6) top timestamp", zero_ts, 0x30i64);  // '0'
+
+    // top process line: \e[1;32m 1234 root\e[0m (highlighted selected process)
+    drop(test_terminal_feed_str(tt9, "\x1b[1;32m 1234 root      20\x1b[0m\r\n"));
+    int64:space_pid = raw test_terminal_get_cell_cp(tt9, 1i64, 0i64);
+    nitpick_test_assert_eq_i64("T45 space at (1,0) before PID", space_pid, 0x20i64);
+
+    // ── T46–T50: General ANSI passthrough and SGR edge cases ─────────────────
+
+    TestTerminal:tt10 = raw test_terminal_new(24i64, 80i64);
+
+    // Multiple SGR params in single sequence: ESC[1;4;31m
+    drop(test_terminal_feed_str(tt10, "\x1b[1;4;31mX\x1b[0m"));
+    int64:bold_multi = raw test_terminal_attrs_bold(tt10);
+    // After reset
+    nitpick_test_assert_eq_i64("T46 bold cleared after multi-SGR reset", bold_multi, 0i64);
+
+    int64:x_multi = raw test_terminal_get_cell_cp(tt10, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T47 'X' at (0,0) with bold+underline+red", x_multi, 0x58i64);
+
+    // ESC[m with no params = same as ESC[0m (reset)
+    drop(test_terminal_feed_str(tt10, "\x1b[1mBold\x1b[m"));
+    int64:bold_empty_sgr = raw test_terminal_attrs_bold(tt10);
+    nitpick_test_assert_eq_i64("T48 bold cleared by ESC[m (no param)", bold_empty_sgr, 0i64);
+
+    // Strikethrough: ESC[9m text ESC[29m
+    drop(test_terminal_feed_str(tt10, "\x1b[9mstruck\x1b[29m"));
+    int64:strike_after = raw test_terminal_attrs_strike(tt10);
+    nitpick_test_assert_eq_i64("T49 strike cleared by SGR 29", strike_after, 0i64);
+
+    int64:s_struck = raw test_terminal_get_cell_cp(tt10, 0i64, 5i64);
+    nitpick_test_assert_eq_i64("T50 's' at (0,5) strikethrough text", s_struck, 0x73i64);  // 's'
+
+    int32:rc = raw test_end();
+    if (rc == 0i32) { exit 0; }
+    exit 1;
+};

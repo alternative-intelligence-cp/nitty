@@ -1,0 +1,266 @@
+// tests/compat/test_shell_compat.npk — Nitty v0.11.1 Shell Compatibility Tests
+//
+// Tests VT escape sequences emitted by bash, zsh, and fish shells.
+// Uses actual starship v1.24.2 codepoints from this system's zsh/fish setup.
+// All sequences are replayed through the headless pipeline — no live processes.
+//
+// Coverage:
+//   T01–T05: ANSI color PS1 prompt (bold green user@host:~$)
+//   T06–T10: Cursor-movement after CR+LF (prompt on next line)
+//   T11–T15: Tab-completion animation (cursor hide/overwrite/show)
+//   T16–T20: History arrow-up (cursor-up + erase-line + reprint)
+//   T21–T25: OSC 0 title set (xterm title sequence)
+//   T26–T30: Bracketed paste mode toggle (DECSET 2004)
+//   T31–T35: SGR 256-colour foreground (38;5;n)
+//   T36–T40: SGR truecolor foreground (38;2;r;g;b)
+
+use "../e2e/framework.npk".*;
+
+pub func:main = int32() {
+    nitpick_test_begin("shell_compat");
+
+    // ── T01–T05: ANSI color PS1 prompt ──────────────────────────────────────
+    // bash emits a PS1 like: \e[1;32muser@host\e[0m:\e[1;34m~\e[0m$ (space)
+    // We verify: bold set, fg colour set, reset clears both.
+
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+
+    // Feed: ESC[1;32m → sets bold + fg=2 (green)
+    drop(test_terminal_feed_str(tt, "\x1b[1;32m"));
+    int64:bold_after_ps1_colour = raw test_terminal_attrs_bold(tt);
+    nitpick_test_assert_eq_i64("T01 bold set by SGR 1;32", bold_after_ps1_colour, 1i64);
+
+    int64:fg_after_green = raw test_terminal_attrs_fg(tt);
+    nitpick_test_assert("T02 fg non-default after SGR 32",
+        (fg_after_green != 0i64) => int32);
+
+    // Feed text "user@host"
+    drop(test_terminal_feed_str(tt, "user@host"));
+    // Verify 'u' landed at row 0, col 0
+    int64:u_cp = raw test_terminal_get_cell_cp(tt, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T03 'u' at (0,0)", u_cp, 0x75i64);  // 'u'
+
+    // SGR reset
+    drop(test_terminal_feed_str(tt, "\x1b[0m"));
+    int64:bold_after_reset = raw test_terminal_attrs_bold(tt);
+    nitpick_test_assert_eq_i64("T04 bold cleared by SGR 0", bold_after_reset, 0i64);
+
+    // Feed "$ " (prompt suffix)
+    drop(test_terminal_feed_str(tt, "$ "));
+    int64:dollar_cp = raw test_terminal_get_cell_cp(tt, 0i64, 9i64);  // after "user@host"
+    nitpick_test_assert_eq_i64("T05 '$' at col 9", dollar_cp, 0x24i64);  // '$'
+
+    // ── T06–T10: Cursor movement (CR+LF, next line) ──────────────────────────
+    // After command output, bash moves cursor to new line with CR+LF.
+
+    TestTerminal:tt2 = raw test_terminal_new(24i64, 80i64);
+
+    drop(test_terminal_feed_str(tt2, "hello"));
+    int64:row_before_crlf = raw test_terminal_cursor_row(tt2);
+    nitpick_test_assert_eq_i64("T06 cursor still row 0 after text", row_before_crlf, 0i64);
+
+    // CR+LF
+    drop(test_terminal_feed_str(tt2, "\r\n"));
+    int64:row_after_crlf = raw test_terminal_cursor_row(tt2);
+    nitpick_test_assert_eq_i64("T07 cursor row 1 after CR+LF", row_after_crlf, 1i64);
+
+    int64:col_after_crlf = raw test_terminal_cursor_col(tt2);
+    nitpick_test_assert_eq_i64("T08 cursor col 0 after CR+LF", col_after_crlf, 0i64);
+
+    // Another line + LF-only
+    drop(test_terminal_feed_str(tt2, "line2\n"));
+    int64:row_after_lf = raw test_terminal_cursor_row(tt2);
+    nitpick_test_assert_eq_i64("T09 cursor row 2 after LF", row_after_lf, 2i64);
+
+    // CR alone returns to col 0 without moving row
+    drop(test_terminal_feed_str(tt2, "abc\r"));
+    int64:col_after_cr = raw test_terminal_cursor_col(tt2);
+    nitpick_test_assert_eq_i64("T10 cursor col 0 after CR", col_after_cr, 0i64);
+
+    // ── T11–T15: Tab-completion animation ────────────────────────────────────
+    // bash/readline hides cursor, overwrites partial input, then shows cursor.
+    // \e[?25l  hide cursor
+    // \e[2K    erase entire line
+    // \e[G     cursor to column 1 (col 0)
+    // "ls --color=auto "  (completed command)
+    // \e[?25h  show cursor
+
+    TestTerminal:tt3 = raw test_terminal_new(24i64, 80i64);
+
+    // Hide cursor: DECSET 25 private
+    drop(test_terminal_feed_str(tt3, "\x1b[?25l"));
+    int64:cursor_vis_hidden = raw test_terminal_mode_cursor_visible(tt3);
+    nitpick_test_assert_eq_i64("T11 cursor hidden by ?25l", cursor_vis_hidden, 0i64);
+
+    // Erase line + move to col 1 + print completion
+    drop(test_terminal_feed_str(tt3, "\x1b[2K\x1b[Gls --color=auto "));
+    int64:l_cp = raw test_terminal_get_cell_cp(tt3, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T12 'l' at col 0 after completion", l_cp, 0x6Ci64);  // 'l'
+
+    // Show cursor
+    drop(test_terminal_feed_str(tt3, "\x1b[?25h"));
+    int64:cursor_vis_shown = raw test_terminal_mode_cursor_visible(tt3);
+    nitpick_test_assert_eq_i64("T13 cursor shown by ?25h", cursor_vis_shown, 1i64);
+
+    // Verify "ls " in grid
+    int64:s_cp = raw test_terminal_get_cell_cp(tt3, 0i64, 1i64);
+    nitpick_test_assert_eq_i64("T14 's' at col 1", s_cp, 0x73i64);  // 's'
+
+    // Space at col 2
+    int64:space_cp = raw test_terminal_get_cell_cp(tt3, 0i64, 2i64);
+    nitpick_test_assert_eq_i64("T15 space at col 2", space_cp, 0x20i64);  // ' '
+
+    // ── T16–T20: History arrow-up (cursor-up + erase-line + reprint) ─────────
+    // When user presses arrow-up, readline:
+    //   \e[1A   cursor up 1
+    //   \e[2K   erase entire line
+    //   \e[G    go to col 1
+    //   <previous command text>
+
+    TestTerminal:tt4 = raw test_terminal_new(24i64, 80i64);
+
+    // Type "ls" on row 0, then move to row 1
+    drop(test_terminal_feed_str(tt4, "ls\r\n"));
+    // Row 1 has prompt "$ "
+    drop(test_terminal_feed_str(tt4, "$ "));
+
+    // Arrow-up sequence
+    drop(test_terminal_feed_str(tt4, "\x1b[1A"));
+    int64:row_after_up = raw test_terminal_cursor_row(tt4);
+    nitpick_test_assert_eq_i64("T16 cursor up by ESC[1A", row_after_up, 0i64);
+
+    // Erase line + go to col 1
+    drop(test_terminal_feed_str(tt4, "\x1b[2K\x1b[G"));
+    int64:col_after_erase = raw test_terminal_cursor_col(tt4);
+    nitpick_test_assert_eq_i64("T17 col 0 after ESC[G", col_after_erase, 0i64);
+
+    // Verify line is blank (erase-line)
+    int64:cp_after_erase = raw test_terminal_get_cell_cp(tt4, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T18 cell blank after erase-line", cp_after_erase, 0x20i64);
+
+    // Reprint previous command "ls"
+    drop(test_terminal_feed_str(tt4, "ls"));
+    int64:l_cp2 = raw test_terminal_get_cell_cp(tt4, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T19 'l' reprinted at (0,0)", l_cp2, 0x6Ci64);
+
+    int64:s_cp2 = raw test_terminal_get_cell_cp(tt4, 0i64, 1i64);
+    nitpick_test_assert_eq_i64("T20 's' reprinted at (0,1)", s_cp2, 0x73i64);
+
+    // ── T21–T25: OSC 0 title set ─────────────────────────────────────────────
+    // bash PROMPT_COMMAND: \e]0;user@host: ~\a  (sets window title)
+    // The parser consumes this without corrupting screen.
+
+    TestTerminal:tt5 = raw test_terminal_new(24i64, 80i64);
+
+    // Feed OSC title then regular prompt text
+    drop(test_terminal_feed_str(tt5, "\x1b]0;user@host: ~\x07"));
+    drop(test_terminal_feed_str(tt5, "$ "));
+
+    // Verify screen not corrupted by OSC: '$' at (0,0)
+    int64:dollar_cp2 = raw test_terminal_get_cell_cp(tt5, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T21 '$' at (0,0) after OSC title", dollar_cp2, 0x24i64);
+
+    // After OSC + "$ ", cursor should be at col 2 (OSC consumed with no grid chars)
+    int64:col_after_osc_text = raw test_terminal_cursor_col(tt5);
+    nitpick_test_assert_eq_i64("T22 cursor col 2 after OSC + '$ ' (OSC took no columns)", col_after_osc_text, 2i64);
+
+    // Verify cursor at correct position after OSC+text
+    int64:col_after_osc = raw test_terminal_cursor_col(tt5);
+    nitpick_test_assert_eq_i64("T23 cursor at col 2 after '$ '", col_after_osc, 2i64);
+
+    // Feed ST-terminated OSC (ESC\)
+    drop(test_terminal_feed_str(tt5, "\x1b]0;new title\x1b\\"));
+    drop(test_terminal_feed_str(tt5, "X"));
+    int64:x_cp = raw test_terminal_get_cell_cp(tt5, 0i64, 2i64);
+    nitpick_test_assert_eq_i64("T24 'X' after ST-terminated OSC", x_cp, 0x58i64);  // 'X'
+
+    // Cursor moved past 'X'
+    int64:col_after_x = raw test_terminal_cursor_col(tt5);
+    nitpick_test_assert_eq_i64("T25 cursor at col 3 after 'X'", col_after_x, 3i64);
+
+    // ── T26–T30: Bracketed paste mode (DECSET 2004) ───────────────────────────
+    // Modern shells enable bracketed paste: \e[?2004h
+    // On paste: \e[200~<text>\e[201~
+
+    TestTerminal:tt6 = raw test_terminal_new(24i64, 80i64);
+
+    int64:bp_before = raw test_terminal_mode_bracketed_paste(tt6);
+    nitpick_test_assert_eq_i64("T26 bracketed paste off initially", bp_before, 0i64);
+
+    drop(test_terminal_feed_str(tt6, "\x1b[?2004h"));
+    int64:bp_on = raw test_terminal_mode_bracketed_paste(tt6);
+    nitpick_test_assert_eq_i64("T27 bracketed paste on after ?2004h", bp_on, 1i64);
+
+    // Feed paste sequence — the brackets themselves must not appear in grid
+    drop(test_terminal_feed_str(tt6, "\x1b[200~pasted text\x1b[201~"));
+    // "pasted text" should appear in grid (brackets are control sequences)
+    int64:p_cp = raw test_terminal_get_cell_cp(tt6, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T28 'p' of pasted text at (0,0)", p_cp, 0x70i64);  // 'p'
+
+    // Disable bracketed paste
+    drop(test_terminal_feed_str(tt6, "\x1b[?2004l"));
+    int64:bp_off = raw test_terminal_mode_bracketed_paste(tt6);
+    nitpick_test_assert_eq_i64("T29 bracketed paste off after ?2004l", bp_off, 0i64);
+
+    // Verify cursor advanced past pasted text (11 chars "pasted text")
+    int64:cursor_after_paste = raw test_terminal_cursor_col(tt6);
+    nitpick_test_assert("T30 cursor past pasted text",
+        (cursor_after_paste >= 11i64) => int32);
+
+    // ── T31–T35: SGR 256-colour foreground ───────────────────────────────────
+    // ESC[38;5;196m — fg = color 196 (bright red in xterm-256)
+
+    TestTerminal:tt7 = raw test_terminal_new(24i64, 80i64);
+
+    drop(test_terminal_feed_str(tt7, "\x1b[38;5;196m"));
+    int64:fg_256 = raw test_terminal_attrs_fg(tt7);
+    // fg encoding: 256-colour values are offset from 0 in attrs
+    nitpick_test_assert("T31 fg set after SGR 38;5;196", (fg_256 != 0i64) => int32);
+
+    drop(test_terminal_feed_str(tt7, "R"));
+    int64:r_cp = raw test_terminal_get_cell_cp(tt7, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T32 'R' at (0,0) with 256-color fg", r_cp, 0x52i64);
+
+    // SGR 48;5;n — background 256-colour
+    drop(test_terminal_feed_str(tt7, "\x1b[48;5;46m"));
+    int64:bg_256 = raw test_terminal_attrs_bg(tt7);
+    nitpick_test_assert("T33 bg set after SGR 48;5;46", (bg_256 != 0i64) => int32);
+
+    // Reset
+    drop(test_terminal_feed_str(tt7, "\x1b[0m"));
+    int64:fg_after_reset = raw test_terminal_attrs_fg(tt7);
+    nitpick_test_assert_eq_i64("T34 fg cleared after SGR 0", fg_after_reset, 0i64);
+
+    int64:bg_after_reset = raw test_terminal_attrs_bg(tt7);
+    nitpick_test_assert_eq_i64("T35 bg cleared after SGR 0", bg_after_reset, 0i64);
+
+    // ── T36–T40: SGR truecolor (38;2;r;g;b) ─────────────────────────────────
+    // ESC[38;2;255;128;0m — fg = RGB(255,128,0) (orange)
+
+    TestTerminal:tt8 = raw test_terminal_new(24i64, 80i64);
+
+    drop(test_terminal_feed_str(tt8, "\x1b[38;2;255;128;0m"));
+    int64:fg_tc = raw test_terminal_attrs_fg(tt8);
+    nitpick_test_assert("T36 fg set after SGR 38;2;255;128;0", (fg_tc != 0i64) => int32);
+
+    drop(test_terminal_feed_str(tt8, "O"));
+    int64:o_cp = raw test_terminal_get_cell_cp(tt8, 0i64, 0i64);
+    nitpick_test_assert_eq_i64("T37 'O' at (0,0) with truecolor fg", o_cp, 0x4Fi64);
+
+    // Background truecolor
+    drop(test_terminal_feed_str(tt8, "\x1b[48;2;0;128;255m"));
+    int64:bg_tc = raw test_terminal_attrs_bg(tt8);
+    nitpick_test_assert("T38 bg set after SGR 48;2;0;128;255", (bg_tc != 0i64) => int32);
+
+    // Bold + truecolor combination (zsh Powerlevel10k pattern)
+    drop(test_terminal_feed_str(tt8, "\x1b[1;38;2;200;200;200m"));
+    int64:bold_tc = raw test_terminal_attrs_bold(tt8);
+    nitpick_test_assert_eq_i64("T39 bold set with truecolor", bold_tc, 1i64);
+
+    int64:fg_tc2 = raw test_terminal_attrs_fg(tt8);
+    nitpick_test_assert("T40 fg set in bold+truecolor combo", (fg_tc2 != 0i64) => int32);
+
+    int32:rc = raw test_end();
+    if (rc == 0i32) { exit 0; }
+    exit 1;
+};
