@@ -1,0 +1,283 @@
+// examples/plugins/word-highlighter/main.npk
+//
+// Word Highlighter Plugin — v1.0.0
+// Demonstrates: TerminalDecorator, SettingsPanel, ContextMenuProvider, Event Bus
+//
+// This plugin scans terminal output lines for configured keywords and wraps
+// matches in ANSI color escape sequences (bold yellow by default).
+//
+// Extension points registered:
+//   - TerminalDecorator    (callback_id = WH_CB_DECORATOR)
+//   - ContextMenuProvider  (callback_id = WH_CB_MENU_ADD)
+//   - SettingsPanel        (3 settings: keywords, color, enabled)
+//   - Event bus subscriber (nitty.config.changed → reload keyword list)
+//
+// Architecture:
+//   - Keywords stored in a global string array (max 32, pipe-separated in config)
+//   - _wh_highlight_line(text) → scans text, wraps matches with ANSI codes
+//   - _wh_str_contains(haystack, needle) → simple substring search
+//   - plugin_init: register extension points, load default keywords
+//   - plugin_destroy: unregister all extension points
+
+use "../../../src/plugin/api.npk".*;
+use "../../../src/plugin/ext_terminal.npk".*;
+use "../../../src/plugin/ext_context_menu.npk".*;
+use "../../../src/plugin/ext_settings.npk".*;
+use "../../../src/plugin/event_bus.npk".*;
+use "../../../src/plugin/plugin_registry.npk".*;
+
+// ── Callback IDs ─────────────────────────────────────────────────────────────
+//
+// These are arbitrary integers chosen by this plugin for dispatch identification.
+// Use a unique, non-overlapping range within your plugin.
+
+pub fixed int64:WH_CB_DECORATOR    = 1i64;  // TerminalDecorator callback
+pub fixed int64:WH_CB_MENU_ADD     = 2i64;  // ContextMenu "Add to Highlights"
+pub fixed int64:WH_CB_CONFIG_EVENT = 3i64;  // nitty.config.changed subscriber
+
+// ── ANSI color codes ──────────────────────────────────────────────────────────
+//
+// ESC = \033 = 0x1B as string. Nitpick has no hex char literals in strings,
+// so we use the escape_char approach from the renderer module.
+
+// Default highlight: bold + yellow
+pub fixed string:WH_ANSI_HIGHLIGHT = "\033[1;33m";  // bold yellow
+pub fixed string:WH_ANSI_RESET     = "\033[0m";      // reset all attributes
+
+// ── Keyword storage ──────────────────────────────────────────────────────────
+//
+// Store keywords as a parallel flat array (up to 32 keywords).
+// Loaded from settings at init, reloaded on config.changed events.
+
+pub fixed int64:WH_MAX_KEYWORDS = 32i64;
+
+string[32]:g_wh_keywords;
+int64:g_wh_keyword_count = 0i64;
+int64:g_wh_enabled       = 1i64;   // 1 = highlights active
+
+// ── Module-level slot ─────────────────────────────────────────────────────────
+
+int64:g_wh_slot = -1i64;  // set at module init
+
+// ── Internal: substring search ───────────────────────────────────────────────
+
+/// Returns 1 if haystack contains needle, 0 otherwise.
+/// Uses simple O(n*m) linear scan — suitable for short terminal lines.
+pub func:_wh_str_contains = int64(string:haystack, string:needle) {
+    int64:hlen = string_length(haystack);
+    int64:nlen = string_length(needle);
+    if (nlen == 0i64)      { pass(1i64); }
+    if (nlen > hlen)       { pass(0i64); }
+    int64:i = 0i64;
+    while (i <= hlen - nlen) {
+        string:sub = string_substring(haystack, i, i + nlen);
+        if (sub == needle) { pass(1i64); }
+        i = i + 1i64;
+    }
+    pass(0i64);
+};
+
+// ── Internal: highlight one keyword in text ──────────────────────────────────
+
+/// Wrap all occurrences of `keyword` in `text` with ANSI highlight/reset.
+/// Returns the transformed string.
+/// This is a single-pass scan inserting escape sequences around each match.
+pub func:_wh_highlight_keyword = string(string:text, string:keyword) {
+    int64:tlen   = string_length(text);
+    int64:klen   = string_length(keyword);
+    if (klen == 0i64) { pass(text); }
+
+    string:result = "";
+    int64:pos     = 0i64;
+
+    while (pos <= tlen - klen) {
+        string:sub = string_substring(text, pos, pos + klen);
+        if (sub == keyword) {
+            // Append highlight + keyword + reset
+            result = string_concat(result,
+                     string_concat(WH_ANSI_HIGHLIGHT,
+                     string_concat(keyword, WH_ANSI_RESET)));
+            pos = pos + klen;
+        }
+        if (sub != keyword) {
+            // Append single character and advance
+            result = string_concat(result, string_substring(text, pos, pos + 1i64));
+            pos = pos + 1i64;
+        }
+    }
+
+    // Append any trailing characters (when pos > tlen - klen but pos < tlen)
+    if (pos < tlen) {
+        result = string_concat(result, string_substring(text, pos, tlen));
+    }
+
+    pass(result);
+};
+
+/// Apply all registered keyword highlights to a line of terminal text.
+/// Processes keywords in order; each pass may produce new matches in earlier
+/// output (safe since ANSI codes contain no keyword text).
+pub func:_wh_highlight_line = string(string:text) {
+    if (g_wh_enabled == 0i64) { pass(text); }
+    if (g_wh_keyword_count == 0i64) { pass(text); }
+
+    string:result = text;
+    int64:i = 0i64;
+    while (i < g_wh_keyword_count) {
+        result = raw _wh_highlight_keyword(result, g_wh_keywords[i]);
+        i = i + 1i64;
+    }
+    pass(result);
+};
+
+// ── Internal: parse comma-separated keyword string ───────────────────────────
+
+/// Load keywords from a comma-separated string into g_wh_keywords[].
+/// Clears existing keywords first.
+/// Trims leading/trailing whitespace from each keyword.
+/// Skips empty tokens.
+pub func:_wh_load_keywords = NIL(string:csv) {
+    g_wh_keyword_count = 0i64;
+
+    int64:clen = string_length(csv);
+    if (clen == 0i64) { pass(NIL); }
+
+    int64:start = 0i64;
+    int64:i     = 0i64;
+
+    while (i <= clen) {
+        // At comma or end of string — extract token
+        string:ch = is (i < clen) : string_substring(csv, i, i + 1i64) : ",";
+        if (ch == ",") {
+            if (i > start) {
+                string:token = string_trim(string_substring(csv, start, i));
+                if (string_length(token) > 0i64) {
+                    if (g_wh_keyword_count < WH_MAX_KEYWORDS) {
+                        g_wh_keywords[g_wh_keyword_count] = token;
+                        g_wh_keyword_count = g_wh_keyword_count + 1i64;
+                    }
+                }
+            }
+            start = i + 1i64;
+        }
+        i = i + 1i64;
+    }
+
+    pass(NIL);
+};
+
+// ── plugin_init ───────────────────────────────────────────────────────────────
+
+/// Called by the plugin loader after the manifest is validated.
+/// Receives a PluginAPI handle configured for this plugin's registry slot.
+pub func:plugin_init = NIL(PluginAPI:api) {
+    g_wh_slot = raw api_get_slot(api);
+
+    drop(api_log(api, "info", "word-highlighter: initializing"));
+
+    // ── Register TerminalDecorator ────────────────────────────────────────────
+    int64:dec_idx = raw api_register_terminal_decorator(api, WH_CB_DECORATOR);
+    if (dec_idx < 0i64) {
+        drop(api_log(api, "warn",
+            "word-highlighter: terminal decorator registration failed (slot conflict?)"));
+        // Continue loading — other extension points still functional
+    }
+
+    // ── Register ContextMenu item ─────────────────────────────────────────────
+    int64:cm_idx = raw api_register_context_menu_item(api,
+        "word-highlighter.add-word",   // unique id
+        "Add Word to Highlights",       // label
+        "✨",                           // icon
+        "custom",                       // group
+        WH_CB_MENU_ADD);
+    if (cm_idx < 0i64) {
+        drop(api_log(api, "warn", "word-highlighter: context menu registration failed"));
+    }
+
+    // ── Register Settings ─────────────────────────────────────────────────────
+    //
+    // Three settings: keywords list, highlight color (reserved), enabled flag.
+    // plugin_name matches the manifest 'name' field.
+
+    drop(api_register_setting(api,
+        "word-highlighter",
+        "word-highlighter.keywords",
+        "Highlight Keywords (comma-separated)",
+        "string",
+        "error,warn,todo,fixme,bug"));
+
+    drop(api_register_setting(api,
+        "word-highlighter",
+        "word-highlighter.enabled",
+        "Enable highlighting",
+        "bool",
+        "true"));
+
+    drop(api_register_setting(api,
+        "word-highlighter",
+        "word-highlighter.color",
+        "Highlight Color (ANSI code, e.g. 1;33 = bold yellow)",
+        "string",
+        "1;33"));
+
+    // ── Subscribe to config.changed event ────────────────────────────────────
+    int64:sub_idx = raw api_subscribe(api, "nitty.config.changed", WH_CB_CONFIG_EVENT);
+    if (sub_idx < 0i64) {
+        drop(api_log(api, "warn",
+            "word-highlighter: config.changed subscription failed"));
+    }
+
+    // ── Load default keywords ─────────────────────────────────────────────────
+    // api_get_config is a stub in v0.10 — use the hard-coded default.
+    // When api_get_config is implemented, replace "error,warn,todo,fixme,bug"
+    // with: raw api_get_config(api, "word-highlighter.keywords")
+    drop(_wh_load_keywords("error,warn,todo,fixme,bug"));
+
+    drop(api_log(api, "info",
+        string_concat("word-highlighter: loaded ",
+        string_concat(string_from_int(g_wh_keyword_count), " keyword(s)"))));
+
+    pass(NIL);
+};
+
+// ── plugin_destroy ────────────────────────────────────────────────────────────
+
+/// Called by the plugin manager before the plugin is disabled or unloaded.
+/// Must unregister all extension points to prevent dangling callbacks.
+pub func:plugin_destroy = NIL() {
+    if (g_wh_slot < 0i64) { pass(NIL); }
+    PluginAPI:api = raw api_make(g_wh_slot);
+    drop(api_unregister_terminal_decorator(api));
+    drop(api_unregister_context_menu_item(api, "word-highlighter.add-word"));
+    // Settings are removed automatically by the plugin manager via ext_registry.
+    // Event bus subscriptions are cleaned up by event_bus_remove_plugin(slot).
+    g_wh_slot     = -1i64;
+    g_wh_enabled  = 0i64;
+    pass(NIL);
+};
+
+// ── Event handler (called by dispatcher via callback_id) ──────────────────────
+
+/// Handle an incoming plugin event.
+/// The C shim dispatcher will route events here based on callback_id.
+/// In v0.10.x the dispatcher is a stub — this function is here for
+/// documentation and future use.
+pub func:wh_handle_event = NIL(string:event_type, string:data) {
+    if (event_type == "nitty.config.changed") {
+        // Reload keyword list from updated config.
+        // Real: raw api_get_config(api, "word-highlighter.keywords")
+        // Stub: re-apply the default (data field unused in v0.10 stub)
+        PluginAPI:api = raw api_make(g_wh_slot);
+        string:new_keywords = raw api_get_config(api, "word-highlighter.keywords");
+        if (string_length(new_keywords) > 0i64) {
+            drop(_wh_load_keywords(new_keywords));
+            drop(api_log(api, "info", "word-highlighter: keywords reloaded from config"));
+        }
+    }
+    pass(NIL);
+};
+
+// ── Note: No entry points here ────────────────────────────────────────────────
+// main.npk is a library module loaded by the plugin system.
+// When compiled standalone for testing, the test file provides main/failsafe.
+// When compiled as a plugin binary, the loader's runtime provides the entry point.

@@ -1,0 +1,246 @@
+// examples/plugins/word-highlighter/test_highlighter.npk
+//
+// Tests for the word-highlighter example plugin.
+// Exercises plugin_init registrations, _wh_highlight_line logic, settings,
+// and event subscription using test_utils.npk.
+//
+// 15 assertions covering:
+//   T01-T03: plugin_init registers 1 decorator, 1 menu item, 3 settings
+//   T04: event subscription for nitty.config.changed
+//   T05-T07: _wh_highlight_line highlights known keywords
+//   T08-T09: _wh_highlight_line passthrough on no match
+//   T10: _wh_str_contains exact match
+//   T11: _wh_str_contains no match
+//   T12: _wh_str_contains empty needle = always match
+//   T13-T15: settings keys / types / defaults
+
+use "../../../src/plugin/ext_connection.npk".*;
+use "../../../src/plugin/ext_hotkey.npk".*;
+use "../../../src/plugin/ext_settings.npk".*;
+use "../../../src/plugin/ext_terminal.npk".*;
+use "../../../src/plugin/ext_context_menu.npk".*;
+use "../../../src/plugin/ext_toolbar.npk".*;
+use "../../../src/plugin/ext_tab_header.npk".*;
+use "../../../src/plugin/event_bus.npk".*;
+use "../../../src/plugin/plugin_registry.npk".*;
+use "../../../src/plugin/manifest.npk".*;
+use "../../../src/plugin/api.npk".*;
+use "../../../src/plugin/test_utils.npk".*;
+use "./main.npk".*;
+
+// ── Test infrastructure ───────────────────────────────────────────────────────
+
+int64:T_PASS   = 0i64;
+int64:T_FAIL   = 0i64;
+int64:T_STDOUT = 1i64;
+
+func:_tw = NIL(string:msg) {
+    int64:l = string_length(msg);
+    drop(sys(WRITE, T_STDOUT, msg, l));
+    pass(NIL);
+};
+
+func:t_ok = NIL(string:label) {
+    T_PASS = T_PASS + 1i64;
+    drop(_tw(string_concat("  PASS: ", string_concat(label, "\n"))));
+    pass(NIL);
+};
+
+func:t_fail = NIL(string:label) {
+    T_FAIL = T_FAIL + 1i64;
+    drop(_tw(string_concat("  FAIL: ", string_concat(label, "\n"))));
+    pass(NIL);
+};
+
+func:t_assert_int = NIL(string:label, int64:got, int64:expected) {
+    if (got == expected) { drop(t_ok(label)); pass(NIL); }
+    drop(t_fail(string_concat(label, string_concat(" (got=",
+        string_concat(string_from_int(got), string_concat(" want=",
+        string_concat(string_from_int(expected), ")")))))));
+    pass(NIL);
+};
+
+func:t_assert_str_nonempty = NIL(string:label, string:got) {
+    if (string_length(got) > 0i64) { drop(t_ok(label)); pass(NIL); }
+    drop(t_fail(string_concat(label, " (got empty string)")));
+    pass(NIL);
+};
+
+func:t_assert_contains = NIL(string:label, string:haystack, string:needle) {
+    int64:hlen = string_length(haystack);
+    int64:nlen = string_length(needle);
+    if (nlen == 0i64) { drop(t_ok(label)); pass(NIL); }
+    if (nlen > hlen)  { drop(t_fail(string_concat(label, " (needle longer)"))); pass(NIL); }
+    int64:i = 0i64;
+    while (i <= hlen - nlen) {
+        string:sub = string_substring(haystack, i, i + nlen);
+        if (sub == needle) { drop(t_ok(label)); pass(NIL); }
+        i = i + 1i64;
+    }
+    drop(t_fail(string_concat(label, string_concat(" ('",
+        string_concat(needle, string_concat("' not in '",
+        string_concat(haystack, "'")))))));
+    pass(NIL);
+};
+
+func:log_section = NIL(string:name) {
+    drop(_tw(string_concat("\n[", string_concat(name, "]\n"))));
+    pass(NIL);
+};
+
+func:print_summary = NIL() {
+    drop(_tw(string_concat("\nResults: ",
+        string_concat(string_from_int(T_PASS), string_concat(" passed, ",
+        string_concat(string_from_int(T_FAIL), " failed\n"))))));
+    pass(NIL);
+};
+
+// ── Setup ─────────────────────────────────────────────────────────────────────
+
+func:setup = NIL() {
+    drop(ext_connection_init());
+    drop(ext_hotkey_init());
+    drop(ext_settings_init());
+    drop(ext_terminal_init());
+    drop(ext_context_menu_init());
+    drop(ext_toolbar_init());
+    drop(ext_tab_header_init());
+    drop(event_bus_init());
+    drop(plugin_registry_init());
+    drop(manifest_init());
+
+    // Snapshot baselines before plugin_init
+    drop(mock_reset());
+
+    // Call the plugin's init with slot 0
+    PluginAPI:api = raw mock_api_new(0i64);
+    drop(plugin_init(api));
+
+    pass(NIL);
+};
+
+// ── T01-T03: Registration counts ─────────────────────────────────────────────
+
+func:test_registration_counts = NIL() {
+    drop(log_section("T01-T03: Registration Counts"));
+
+    // T01: exactly 1 TerminalDecorator registered
+    drop(t_assert_int("T01 registers 1 TerminalDecorator",
+        raw mock_get_registered_decorator_count(), 1i64));
+
+    // T02: exactly 1 context menu item registered
+    drop(t_assert_int("T02 registers 1 context menu item",
+        raw mock_get_registered_menu_count(), 1i64));
+
+    // T03: exactly 3 settings registered (keywords, enabled, color)
+    drop(t_assert_int("T03 registers 3 settings",
+        raw mock_get_registered_setting_count("word-highlighter"), 3i64));
+
+    pass(NIL);
+};
+
+// ── T04: Event subscription ───────────────────────────────────────────────────
+
+func:test_event_subscription = NIL() {
+    drop(log_section("T04: Event Subscription"));
+
+    // T04: subscribed to nitty.config.changed
+    int64:sub_count = raw mock_get_registered_event_sub_count();
+    drop(t_assert_int("T04 subscribed to 1 event (nitty.config.changed)", sub_count, 1i64));
+
+    // Bonus: verify the event type
+    if (sub_count > 0i64) {
+        string:etype = raw mock_get_registered_event_type(0i64);
+        drop(t_assert_contains("T04b event type is nitty.config.changed",
+            etype, "config"));
+    }
+
+    pass(NIL);
+};
+
+// ── T05-T09: Highlight logic ──────────────────────────────────────────────────
+
+func:test_highlight_logic = NIL() {
+    drop(log_section("T05-T09: Highlight Logic"));
+
+    // T05: line containing "error" gets highlighted (ANSI escape present)
+    string:line_err = raw _wh_highlight_line("error: connection refused");
+    drop(t_assert_contains("T05 'error' keyword highlighted with ANSI",
+        line_err, "\033["));
+
+    // T06: line containing "warn" gets highlighted
+    string:line_warn = raw _wh_highlight_line("warn: disk space low");
+    drop(t_assert_contains("T06 'warn' keyword highlighted with ANSI", line_warn, "\033["));
+
+    // T07: line containing "todo" gets highlighted
+    string:line_todo = raw _wh_highlight_line("todo: fix this later");
+    drop(t_assert_contains("T07 'todo' keyword highlighted with ANSI", line_todo, "\033["));
+
+    // T08: line with no matching keywords passes through unchanged
+    string:line_ok = raw _wh_highlight_line("connection established");
+    int64:no_escape = 1i64;
+    if (raw _wh_str_contains(line_ok, "\033[") == 1i64) { no_escape = 0i64; }
+    drop(t_assert_int("T08 non-matching line has no ANSI escape", no_escape, 1i64));
+
+    // T09: empty line passes through unchanged
+    string:line_empty = raw _wh_highlight_line("");
+    drop(t_assert_int("T09 empty line returns empty string",
+        string_length(line_empty), 0i64));
+
+    pass(NIL);
+};
+
+// ── T10-T12: _wh_str_contains ────────────────────────────────────────────────
+
+func:test_str_contains = NIL() {
+    drop(log_section("T10-T12: _wh_str_contains"));
+
+    drop(t_assert_int("T10 exact match returns 1",
+        raw _wh_str_contains("error: foo", "error"), 1i64));
+
+    drop(t_assert_int("T11 no match returns 0",
+        raw _wh_str_contains("all good", "error"), 0i64));
+
+    drop(t_assert_int("T12 empty needle always returns 1",
+        raw _wh_str_contains("anything", ""), 1i64));
+
+    pass(NIL);
+};
+
+// ── T13-T15: Settings content ─────────────────────────────────────────────────
+
+func:test_settings_content = NIL() {
+    drop(log_section("T13-T15: Settings Content"));
+
+    // T13: first setting key contains "keywords"
+    string:key0 = raw mock_get_registered_setting_key("word-highlighter", 0i64);
+    drop(t_assert_contains("T13 setting[0] key contains 'keywords'", key0, "keywords"));
+
+    // T14: second setting (enabled) type is "bool"
+    string:type1 = raw mock_get_registered_setting_type("word-highlighter", 1i64);
+    drop(t_assert_int("T14 setting[1] type is 'bool'",
+        is (type1 == "bool") : 1i64 : 0i64, 1i64));
+
+    // T15: first setting default contains "error" (default keyword list)
+    string:def0 = raw mock_get_registered_setting_default("word-highlighter", 0i64);
+    drop(t_assert_contains("T15 setting[0] default contains 'error'", def0, "error"));
+
+    pass(NIL);
+};
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+func:main = int32() {
+    drop(_tw("test_highlighter -- Word Highlighter Plugin (v0.10.5)\n"));
+    drop(setup());
+    drop(test_registration_counts());
+    drop(test_event_subscription());
+    drop(test_highlight_logic());
+    drop(test_str_contains());
+    drop(test_settings_content());
+    drop(print_summary());
+    if (T_FAIL > 0i64) { exit 1i32; }
+    exit 0i32;
+};

@@ -1,0 +1,10 @@
+name: word-highlighter
+version: 1.0.0
+api_version: "0.10"
+author: "Nitty Team"
+description: "Highlights configured keywords in terminal output with ANSI colors"
+entry_module: main.npk
+provides:
+  - TerminalDecorator
+  - SettingsPanel
+  - ContextMenuProvider
