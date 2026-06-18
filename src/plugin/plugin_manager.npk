@@ -40,6 +40,7 @@ use "./ext_connection.npk".*;
 use "./event_bus.npk".*;
 use "./api.npk".*;
 use "../../plugins/builtin/register.npk".*;
+use "../gui/gtk4_ffi.npk".*;   // v0.10.4: nitty_gtk4_show_notification for error alerts
 
 // fd 1 = stdout
 int64:PM_STDOUT = 1i64;
@@ -150,6 +151,14 @@ pub func:plugin_manager_init = NIL() {
         string_concat(string_from_int(active), " active, "))));
     drop(_pm_log(string_concat(string_from_int(errored), " error(s), ")));
     drop(_pm_log(string_concat(string_from_int(no_reg), " not compiled in\n")));
+
+    // v0.10.4: Notify user if any plugins failed to load
+    if (errored > 0i64) {
+        string:emsg = string_concat("Plugin Manager: ",
+            string_concat(string_from_int(errored),
+            " plugin(s) failed to load. Open Plugin Manager (Ctrl+Shift+P) for details."));
+        drop(nitty_gtk4_show_notification(emsg));
+    }
 
     pass(NIL);
 };

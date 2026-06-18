@@ -339,6 +339,10 @@ pub func:hotkeys_init_defaults = NIL() {
     // Ctrl+Shift+` = serial.send_break (backtick=96, mods=3)
     drop(_hk_add("serial.send_break",  96i64, 3i64, 0i64, 0i64, 1i64));
 
+    // Plugin Manager (v0.10.4)
+    // Ctrl+Shift+P = plugins.manager  (p=112, mods=3)
+    drop(_hk_add("plugins.manager",    112i64, 3i64, 0i64, 0i64, 1i64));
+
     pass(NIL);
 };
 

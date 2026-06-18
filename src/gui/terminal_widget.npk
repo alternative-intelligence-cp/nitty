@@ -79,6 +79,7 @@ use "../terminal/activity.npk".*;    // v0.7.4: background tab activity monitor
 use "../terminal/process_monitor.npk".*; // v0.7.4: process completion notifications
 use "connection_manager.npk".*;          // v0.8.3: connection manager sidebar
 use "profile_editor.npk".*;              // v0.8.3: profile editor dialog
+use "plugin_manager_ui.npk".*;           // v0.10.4: plugin manager panel
 use "../ssh/ssh_session.npk".{ssh_poll_read, ssh_get_state}; // v0.8.3: SSH data poll
 use "../ssh/ssh_forward.npk".{fwd_local_tick, fwd_dynamic_tick}; // v0.8.4: port forward relay
 use "../ssh/ssh_jump.npk".{jump_relay_tick, jump_is_active};      // v0.8.4: jump host relay
@@ -279,6 +280,8 @@ func:dispatch_action = NIL(string:action, int64:rows, int64:cols) {
         ("app.quit")     { drop(nitty_gtk4_window_close(nitty_gtk4_get_main_window())); },
         // v0.8.3: Connection Manager toggle
         ("connection.manager") { drop(cm_toggle()); },
+        // v0.10.4: Plugin Manager
+        ("plugins.manager") { drop(pmu_toggle()); },
         // v0.8.5: SFTP browser toggle
         ("sftp.browser") {
             int64:sftp_active_pane = raw split_tree_get_active();
@@ -349,6 +352,8 @@ pub func:tw_on_draw = NIL() {
 
     // v0.8.3 Step 0c: Poll connection manager sidebar events each frame
     drop(cm_tick());
+    // v0.10.4 Step 0c2: Poll plugin manager panel events each frame
+    drop(pmu_tick());
 
     // v0.8.5 Step 0d: Advance SFTP session + transfer state machines for active SSH pane
     int64:sftp_pane_id = raw split_tree_get_active();

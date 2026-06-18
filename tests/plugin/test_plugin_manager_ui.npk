@@ -1,0 +1,273 @@
+// tests/plugin/test_plugin_manager_ui.npk -- v0.10.4 plugin manager UI tests
+//
+// Tests the plugin_manager_ui module's state management, list building,
+// search filtering, and detail text generation.
+//
+// Does NOT require a running GTK4 window -- tests target headless/data-only
+// paths (list population, search, settings form, state logic).
+// GTK4 widget calls are present in the module but only execute when
+// g_pmu_list_widget != 0. Tests exercise the logic gates safely.
+//
+// 22 assertions.
+
+use "../../src/plugin/ext_connection.npk".*;
+use "../../src/plugin/ext_hotkey.npk".*;
+use "../../src/plugin/ext_settings.npk".*;
+use "../../src/plugin/ext_terminal.npk".*;
+use "../../src/plugin/ext_registry.npk".*;
+use "../../src/plugin/plugin_registry.npk".*;
+use "../../src/plugin/manifest.npk".*;
+use "../../src/plugin/api.npk".*;
+use "../../plugins/builtin/register.npk".*;
+use "../../src/gui/plugin_manager_ui.npk".*;
+
+// ── Test infrastructure ───────────────────────────────────────────────────────
+
+int64:T_PASS   = 0i64;
+int64:T_FAIL   = 0i64;
+int64:T_STDOUT = 1i64;
+
+func:_tw = NIL(string:msg) {
+    int64:l = string_length(msg);
+    drop(sys(WRITE, T_STDOUT, msg, l));
+    pass(NIL);
+};
+
+func:t_ok = NIL(string:label) {
+    T_PASS = T_PASS + 1i64;
+    drop(_tw(string_concat("  PASS: ", string_concat(label, "\n"))));
+    pass(NIL);
+};
+
+func:t_fail = NIL(string:label) {
+    T_FAIL = T_FAIL + 1i64;
+    drop(_tw(string_concat("  FAIL: ", string_concat(label, "\n"))));
+    pass(NIL);
+};
+
+func:t_assert_int = NIL(string:label, int64:got, int64:expected) {
+    if (got == expected) { drop(t_ok(label)); pass(NIL); }
+    drop(t_fail(string_concat(label, string_concat(" (got=",
+        string_concat(string_from_int(got), string_concat(" want=",
+        string_concat(string_from_int(expected), ")")))))));
+    pass(NIL);
+};
+
+func:t_assert_str_nonempty = NIL(string:label, string:got) {
+    if (string_length(got) > 0i64) { drop(t_ok(label)); pass(NIL); }
+    drop(t_fail(string_concat(label, " (got empty string)")));
+    pass(NIL);
+};
+
+func:t_assert_contains = NIL(string:label, string:haystack, string:needle) {
+    // Simple contains check
+    int64:hlen = string_length(haystack);
+    int64:nlen = string_length(needle);
+    if (nlen == 0i64) { drop(t_ok(label)); pass(NIL); }
+    if (nlen > hlen)  { drop(t_fail(string_concat(label, string_concat(" (needle longer than haystack: '", string_concat(needle, "'"))))); pass(NIL); }
+    int64:i = 0i64;
+    while (i <= hlen - nlen) {
+        string:sub = string_substring(haystack, i, i + nlen);
+        if (sub == needle) { drop(t_ok(label)); pass(NIL); }
+        i = i + 1i64;
+    }
+    drop(t_fail(string_concat(label, string_concat(" ('", string_concat(needle, string_concat("' not in '", string_concat(haystack, "'")))))));
+    pass(NIL);
+};
+
+func:log_section = NIL(string:name) {
+    drop(_tw(string_concat("\n[", string_concat(name, "]\n"))));
+    pass(NIL);
+};
+
+func:print_summary = NIL() {
+    drop(_tw(string_concat("\nResults: ",
+        string_concat(string_from_int(T_PASS), string_concat(" passed, ",
+        string_concat(string_from_int(T_FAIL), " failed\n"))))));
+    pass(NIL);
+};
+
+// ── Setup: initialise registries (headless -- no gtk window) ──────────────────
+
+func:setup = NIL() {
+    drop(ext_connection_init());
+    drop(ext_hotkey_init());
+    drop(ext_settings_init());
+    drop(ext_terminal_init());
+    drop(plugin_registry_init());
+    drop(manifest_init());
+    PluginAPI:api = raw api_make(-1i64);
+    drop(register_builtin_plugins(api));
+    drop(pmu_init());
+    pass(NIL);
+};
+
+// ── T01-T03: Init state ───────────────────────────────────────────────────────
+
+func:test_init_state = NIL() {
+    drop(log_section("T01-T03: Init State"));
+
+    // T01: pmu_is_open() = 0 after init
+    drop(t_assert_int("T01 pmu_is_open() = 0 after init", raw pmu_is_open(), 0i64));
+
+    // T02: built-in count from ext_connection = 3
+    drop(t_assert_int("T02 ext_connection_type_count() = 3", raw ext_connection_type_count(), 3i64));
+
+    // T03: plugin_registry empty (no disk plugins in test)
+    drop(t_assert_int("T03 plugin_registry_count() = 0 (no disk plugins)", raw plugin_registry_count(), 0i64));
+
+    pass(NIL);
+};
+
+// ── T04-T06: Built-in row label ───────────────────────────────────────────────
+
+func:test_builtin_row_labels = NIL() {
+    drop(log_section("T04-T06: Built-in Row Labels"));
+
+    // T04: slot 0 (SSH) label is non-empty
+    string:row0 = raw _pmu_builtin_row_label(0i64);
+    drop(t_assert_str_nonempty("T04 ssh row label non-empty", row0));
+
+    // T05: slot 0 label contains "SSH" or "ssh"
+    int64:has_ssh = 0i64;
+    if (raw _pmu_str_contains(row0, "SSH") == 1i64)  { has_ssh = 1i64; }
+    if (raw _pmu_str_contains(row0, "ssh") == 1i64)  { has_ssh = 1i64; }
+    drop(t_assert_int("T05 ssh row contains 'SSH' or 'ssh'", has_ssh, 1i64));
+
+    // T06: slot 0 label contains "[B]"
+    drop(t_assert_contains("T06 ssh row contains '[B]'", row0, "[B]"));
+
+    pass(NIL);
+};
+
+// ── T07-T09: Built-in row labels for serial and telnet ───────────────────────
+
+func:test_serial_telnet_labels = NIL() {
+    drop(log_section("T07-T09: Serial/Telnet Row Labels"));
+
+    string:row1 = raw _pmu_builtin_row_label(1i64);
+    string:row2 = raw _pmu_builtin_row_label(2i64);
+
+    // T07: serial row non-empty
+    drop(t_assert_str_nonempty("T07 serial row label non-empty", row1));
+
+    // T08: serial row contains "Serial" or "serial"
+    int64:has_ser = 0i64;
+    if (raw _pmu_str_contains(row1, "Serial") == 1i64) { has_ser = 1i64; }
+    if (raw _pmu_str_contains(row1, "serial") == 1i64) { has_ser = 1i64; }
+    drop(t_assert_int("T08 serial row contains 'serial'", has_ser, 1i64));
+
+    // T09: telnet row contains "Telnet" or "telnet"
+    int64:has_tel = 0i64;
+    if (raw _pmu_str_contains(row2, "Telnet") == 1i64) { has_tel = 1i64; }
+    if (raw _pmu_str_contains(row2, "telnet") == 1i64) { has_tel = 1i64; }
+    drop(t_assert_int("T09 telnet row contains 'telnet'", has_tel, 1i64));
+
+    pass(NIL);
+};
+
+// ── T10-T12: Search filter (_pmu_str_contains) ───────────────────────────────
+
+func:test_search_filter = NIL() {
+    drop(log_section("T10-T12: Search Filter Logic"));
+
+    // T10: exact match
+    drop(t_assert_int("T10 exact match returns 1",
+        raw _pmu_str_contains("SSH Connection", "SSH"), 1i64));
+
+    // T11: no match
+    drop(t_assert_int("T11 no match returns 0",
+        raw _pmu_str_contains("SSH Connection", "Telnet"), 0i64));
+
+    // T12: empty needle = always match
+    drop(t_assert_int("T12 empty needle always matches",
+        raw _pmu_str_contains("anything", ""), 1i64));
+
+    pass(NIL);
+};
+
+// ── T13-T15: SSH settings form rendering ─────────────────────────────────────
+
+func:test_ssh_settings = NIL() {
+    drop(log_section("T13-T15: SSH Settings (from ext_settings)"));
+
+    // T13: SSH has 3 registered settings
+    drop(t_assert_int("T13 ssh has 3 settings",
+        raw ext_settings_get_count_for("ssh"), 3i64));
+
+    // T14: first SSH setting key is non-empty
+    string:key0 = raw ext_settings_get_key("ssh", 0i64);
+    drop(t_assert_str_nonempty("T14 ssh setting[0] key non-empty", key0));
+
+    // T15: first SSH setting label is non-empty
+    string:label0 = raw ext_settings_get_label("ssh", 0i64);
+    drop(t_assert_str_nonempty("T15 ssh setting[0] label non-empty", label0));
+
+    pass(NIL);
+};
+
+// ── T16-T18: Serial settings form rendering ──────────────────────────────────
+
+func:test_serial_settings = NIL() {
+    drop(log_section("T16-T18: Serial Settings"));
+
+    // T16: serial has 4 registered settings
+    drop(t_assert_int("T16 serial has 4 settings",
+        raw ext_settings_get_count_for("serial"), 4i64));
+
+    // T17: first serial setting key contains "serial"
+    string:ser_key0 = raw ext_settings_get_key("serial", 0i64);
+    int64:ser_key_ok = 0i64;
+    if (raw _pmu_str_contains(ser_key0, "serial") == 1i64) { ser_key_ok = 1i64; }
+    drop(t_assert_int("T17 serial setting[0] key contains 'serial'", ser_key_ok, 1i64));
+
+    // T18: serial setting types are non-empty
+    string:ser_type0 = raw ext_settings_get_type("serial", 0i64);
+    drop(t_assert_str_nonempty("T18 serial setting[0] type non-empty", ser_type0));
+
+    pass(NIL);
+};
+
+// ── T19-T22: Telnet settings + pmu_toggle state ──────────────────────────────
+
+func:test_telnet_and_toggle = NIL() {
+    drop(log_section("T19-T22: Telnet Settings + Toggle State"));
+
+    // T19: telnet has 3 registered settings
+    drop(t_assert_int("T19 telnet has 3 settings",
+        raw ext_settings_get_count_for("telnet"), 3i64));
+
+    // T20: telnet setting defaults are non-empty
+    string:tel_def0 = raw ext_settings_get_default("telnet", 0i64);
+    drop(t_assert_str_nonempty("T20 telnet setting[0] default non-empty", tel_def0));
+
+    // T21: pmu_is_open() = 0 after pmu_init() (called in setup)
+    // pmu_init() resets the open flag to 0. We verify it's still 0 here
+    // (the panel has not been opened -- GTK4 is not running in test).
+    drop(t_assert_int("T21 pmu_is_open() = 0 (not opened)", raw pmu_is_open(), 0i64));
+
+    // T22: after pmu_close() when already closed, still 0 (idempotent)
+    drop(pmu_close());
+    drop(t_assert_int("T22 pmu_close() when already closed = still 0", raw pmu_is_open(), 0i64));
+
+    pass(NIL);
+};
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+func:main = int32() {
+    drop(_tw("test_plugin_manager_ui -- Plugin Manager UI (v0.10.4)\n"));
+    drop(setup());
+    drop(test_init_state());
+    drop(test_builtin_row_labels());
+    drop(test_serial_telnet_labels());
+    drop(test_search_filter());
+    drop(test_ssh_settings());
+    drop(test_serial_settings());
+    drop(test_telnet_and_toggle());
+    drop(print_summary());
+    if (T_FAIL > 0i64) { exit 1i32; }
+    exit 0i32;
+};

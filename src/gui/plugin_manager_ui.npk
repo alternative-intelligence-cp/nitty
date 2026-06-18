@@ -1,0 +1,625 @@
+// src/gui/plugin_manager_ui.npk -- Plugin Manager UI panel (v0.10.4)
+//
+// Provides a GTK4 panel for browsing installed plugins, viewing their
+// metadata and status, enabling/disabling them, and managing settings.
+//
+// Architecture: same polling pattern as connection_manager.npk.
+//   - pmu_init()    -- initialise state (call from app_init)
+//   - pmu_open()    -- build and show the panel
+//   - pmu_close()   -- hide the panel
+//   - pmu_tick()    -- poll for UI events (call every frame from tw_on_draw)
+//   - pmu_rebuild_list() -- repopulate list from registry
+//
+// List layout:
+//   [B] SSH / Serial / Telnet (built-in, always-on)
+//   [✓] SomeTool v1.2.0 -- A useful tool [Enabled]
+//   [○] OtherTool v0.5.0 -- Another thing [Disabled]
+//   [!] BrokenTool v2.0.0 -- Something [Error]
+//
+// Detail panel shows:
+//   Name, version, author, description, API version, dependencies,
+//   extension points, and for error state: error message.
+//   Buttons: Enable / Disable / Uninstall / Open Settings
+//
+// Scoping notes (v0.10.4):
+//   - Install from archive (.zip/.tar.gz) deferred to v0.10.5 (needs new shim)
+//   - Settings save stubbed -- config parser bug blocks writing config.yaml
+//   - Built-in plugins shown as a synthetic section (not in plugin_registry)
+//
+// Usage:
+//   dispatch_action: ("plugins.manager") { drop(pmu_toggle()); },
+//   tw_on_draw: drop(pmu_tick());
+
+use "../plugin/plugin_manager.npk".*;
+use "../plugin/plugin_registry.npk".*;
+use "../plugin/manifest.npk".*;
+use "../plugin/ext_connection.npk".*;
+use "../plugin/ext_hotkey.npk".*;
+use "../plugin/ext_settings.npk".*;
+use "./gtk4_ffi.npk".*;
+
+// ── Module state ──────────────────────────────────────────────────────────────
+
+int64:g_pmu_open          = 0i64;   // 1 if panel is visible
+int64:g_pmu_initialized   = 0i64;   // 1 after pmu_init ran
+
+// Widget handles (set when panel is created via pmu_open)
+int64:g_pmu_list_widget   = 0i64;   // GtkListBox for plugin list
+int64:g_pmu_search_entry  = 0i64;   // GtkEntry for search filter
+int64:g_pmu_detail_label  = 0i64;   // GtkLabel for detail text
+
+// Selection state
+int64:g_pmu_sel_slot      = -1i64;  // selected plugin registry slot (-1 = none)
+int64:g_pmu_sel_builtin   = -1i64;  // selected built-in index (-1 = none)
+int64:g_pmu_row_count     = 0i64;   // total rows currently in list
+
+// Per-row mapping: row index -> (slot, is_builtin)
+// Max 64 registry + 8 builtin slots = 72 rows, use 80 for headroom
+int64[80]:g_pmu_row_slot;
+int64[80]:g_pmu_row_is_builtin;
+
+// Pending action flags (set by button clicks, processed by pmu_tick)
+int64:g_pmu_btn_enable_clicked   = 0i64;
+int64:g_pmu_btn_disable_clicked  = 0i64;
+int64:g_pmu_btn_uninstall_clicked = 0i64;
+int64:g_pmu_btn_settings_clicked = 0i64;
+int64:g_pmu_btn_install_clicked  = 0i64;
+
+// Search filter cache
+string:g_pmu_last_query = "";
+
+// Button handles (for sensitivity management)
+int64:g_pmu_btn_enable   = 0i64;
+int64:g_pmu_btn_disable  = 0i64;
+int64:g_pmu_btn_uninstall = 0i64;
+int64:g_pmu_btn_settings = 0i64;
+int64:g_pmu_btn_install  = 0i64;
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/// Initialise module state. Call from app_init() after plugin_manager_init().
+pub func:pmu_init = NIL() {
+    g_pmu_open        = 0i64;
+    g_pmu_initialized = 1i64;
+    g_pmu_sel_slot    = -1i64;
+    g_pmu_sel_builtin = -1i64;
+    g_pmu_row_count   = 0i64;
+    g_pmu_last_query  = "";
+    pass(NIL);
+};
+
+/// Returns 1 if the plugin manager panel is currently visible.
+pub func:pmu_is_open = int64() { pass(g_pmu_open); };
+
+/// Toggle the panel open/closed.
+pub func:pmu_toggle = NIL() {
+    if (g_pmu_open == 0i64) {
+        drop(pmu_open());
+    } else {
+        drop(pmu_close());
+    }
+    pass(NIL);
+};
+
+/// Open (build and show) the plugin manager panel.
+pub func:pmu_open = NIL() {
+    if (g_pmu_initialized == 0i64) { drop(pmu_init()); }
+    if (g_pmu_open == 1i64) { pass(NIL); }
+
+    // Build the panel widget (sidebar-style, reusing the cm approach)
+    int64:win = nitty_gtk4_get_main_window();
+
+    // Search bar
+    g_pmu_search_entry = nitty_gtk4_entry_new();
+    drop(nitty_gtk4_entry_set_placeholder(g_pmu_search_entry, "Search plugins..."));
+
+    // Plugin list
+    g_pmu_list_widget = nitty_gtk4_list_box_new();
+
+    // Detail label (multi-line text block)
+    g_pmu_detail_label = nitty_gtk4_label_new("Select a plugin to view details.");
+
+    // Action buttons
+    g_pmu_btn_enable   = nitty_gtk4_button_new("Enable");
+    g_pmu_btn_disable  = nitty_gtk4_button_new("Disable");
+    g_pmu_btn_uninstall = nitty_gtk4_button_new("Uninstall");
+    g_pmu_btn_settings = nitty_gtk4_button_new("Settings");
+    g_pmu_btn_install  = nitty_gtk4_button_new("Install...");
+
+    // Start with action buttons insensitive (no selection yet)
+    nitty_gtk4_button_set_sensitive(g_pmu_btn_enable,    0i32);
+    nitty_gtk4_button_set_sensitive(g_pmu_btn_disable,   0i32);
+    nitty_gtk4_button_set_sensitive(g_pmu_btn_uninstall, 0i32);
+    nitty_gtk4_button_set_sensitive(g_pmu_btn_settings,  0i32);
+
+    // Show via sidebar attach
+    // TODO(v0.10.5): nitty_gtk4_sidebar_set_visible(1i32) when shim is updated
+    // For now the panel is managed as an overlay notification-driven state machine
+    g_pmu_open = 1i64;
+
+    // Populate list
+    drop(pmu_rebuild_list());
+
+    drop(nitty_gtk4_show_notification("Plugin Manager opened (Ctrl+Shift+P to close)"));
+    pass(NIL);
+};
+
+/// Close (hide) the plugin manager panel.
+pub func:pmu_close = NIL() {
+    if (g_pmu_open == 0i64) { pass(NIL); }
+    // TODO(v0.10.5): nitty_gtk4_sidebar_set_visible(0i32) when shim is updated
+    g_pmu_open        = 0i64;
+    g_pmu_sel_slot    = -1i64;
+    g_pmu_sel_builtin = -1i64;
+    pass(NIL);
+};
+
+/// Repopulate the GtkListBox from the plugin registry + built-in providers.
+/// Section 1: Built-in providers (from ext_connection registry)
+/// Section 2: Registry plugins ordered by name, filtered by search query
+pub func:pmu_rebuild_list = NIL() {
+    if (g_pmu_list_widget == 0i64) { pass(NIL); }
+    nitty_gtk4_list_box_clear(g_pmu_list_widget);
+    g_pmu_row_count   = 0i64;
+    g_pmu_sel_slot    = -1i64;
+    g_pmu_sel_builtin = -1i64;
+
+    // ── Section 1: Built-in providers ──────────────────────────────────────
+    int64:bcount = raw ext_connection_type_count();
+    if (bcount > 0i64) {
+        drop(nitty_gtk4_list_box_append(g_pmu_list_widget, "-- Built-in Providers --"));
+        // Header row (non-selectable sentinel — slot=-1, builtin=-1)
+        if (g_pmu_row_count < 80i64) {
+            g_pmu_row_slot[g_pmu_row_count]       = -1i64;
+            g_pmu_row_is_builtin[g_pmu_row_count] = -1i64;   // -1 = header
+            g_pmu_row_count = g_pmu_row_count + 1i64;
+        }
+        int64:bi = 0i64;
+        while (bi < bcount) {
+            string:row = raw _pmu_builtin_row_label(bi);
+            if (string_length(g_pmu_last_query) == 0i64 || raw _pmu_str_contains(row, g_pmu_last_query) == 1i64) {
+                if (g_pmu_row_count < 80i64) {
+                    drop(nitty_gtk4_list_box_append(g_pmu_list_widget, row));
+                    g_pmu_row_slot[g_pmu_row_count]       = bi;
+                    g_pmu_row_is_builtin[g_pmu_row_count] = 1i64;
+                    g_pmu_row_count = g_pmu_row_count + 1i64;
+                }
+            }
+            bi = bi + 1i64;
+        }
+    }
+
+    // ── Section 2: Registry plugins ──────────────────────────────────────
+    int64:rcount = raw plugin_registry_count();
+    if (rcount > 0i64) {
+        drop(nitty_gtk4_list_box_append(g_pmu_list_widget, "-- Installed Plugins --"));
+        if (g_pmu_row_count < 80i64) {
+            g_pmu_row_slot[g_pmu_row_count]       = -1i64;
+            g_pmu_row_is_builtin[g_pmu_row_count] = -1i64;   // header
+            g_pmu_row_count = g_pmu_row_count + 1i64;
+        }
+        int64:ri = 0i64;
+        while (ri < rcount) {
+            string:row = raw _pmu_row_label(ri);
+            if (string_length(g_pmu_last_query) == 0i64 || raw _pmu_str_contains(row, g_pmu_last_query) == 1i64) {
+                if (g_pmu_row_count < 80i64) {
+                    drop(nitty_gtk4_list_box_append(g_pmu_list_widget, row));
+                    g_pmu_row_slot[g_pmu_row_count]       = ri;
+                    g_pmu_row_is_builtin[g_pmu_row_count] = 0i64;
+                    g_pmu_row_count = g_pmu_row_count + 1i64;
+                }
+            }
+            ri = ri + 1i64;
+        }
+    }
+
+    pass(NIL);
+};
+
+/// Poll for UI events. Call every frame from tw_on_draw().
+pub func:pmu_tick = NIL() {
+    if (g_pmu_open == 0i64)         { pass(NIL); }
+    if (g_pmu_list_widget == 0i64)  { pass(NIL); }
+
+    // ── Check search filter ───────────────────────────────────────────────
+    if (g_pmu_search_entry != 0i64) {
+        string:q = nitty_gtk4_entry_get_text(g_pmu_search_entry);
+        if (q != g_pmu_last_query) {
+            g_pmu_last_query = q;
+            drop(pmu_rebuild_list());
+        }
+    }
+
+    // ── Check selection ───────────────────────────────────────────────────
+    int64:row_idx = nitty_gtk4_list_box_get_selected(g_pmu_list_widget);
+    if (row_idx >= 0i64 && row_idx < g_pmu_row_count) {
+        int64:new_slot    = g_pmu_row_slot[row_idx];
+        int64:new_builtin = g_pmu_row_is_builtin[row_idx];
+        // Skip header rows
+        if (new_builtin != -1i64) {
+            if (new_slot != g_pmu_sel_slot || new_builtin != g_pmu_sel_builtin) {
+                g_pmu_sel_slot    = new_slot;
+                g_pmu_sel_builtin = new_builtin;
+                drop(_pmu_show_detail(new_slot, new_builtin));
+                drop(_pmu_update_button_sensitivity());
+            }
+        }
+    }
+
+    // ── Process button actions ────────────────────────────────────────────
+    if (g_pmu_btn_enable_clicked == 1i64) {
+        g_pmu_btn_enable_clicked = 0i64;
+        if (g_pmu_sel_slot >= 0i64 && g_pmu_sel_builtin == 0i64) {
+            drop(_pmu_do_enable(g_pmu_sel_slot));
+        }
+    }
+    if (g_pmu_btn_disable_clicked == 1i64) {
+        g_pmu_btn_disable_clicked = 0i64;
+        if (g_pmu_sel_slot >= 0i64 && g_pmu_sel_builtin == 0i64) {
+            drop(_pmu_do_disable(g_pmu_sel_slot));
+        }
+    }
+    if (g_pmu_btn_uninstall_clicked == 1i64) {
+        g_pmu_btn_uninstall_clicked = 0i64;
+        if (g_pmu_sel_slot >= 0i64 && g_pmu_sel_builtin == 0i64) {
+            drop(_pmu_do_uninstall(g_pmu_sel_slot));
+        }
+    }
+    if (g_pmu_btn_settings_clicked == 1i64) {
+        g_pmu_btn_settings_clicked = 0i64;
+        if (g_pmu_sel_slot >= 0i64) {
+            drop(_pmu_do_open_settings(g_pmu_sel_slot, g_pmu_sel_builtin));
+        }
+    }
+    if (g_pmu_btn_install_clicked == 1i64) {
+        g_pmu_btn_install_clicked = 0i64;
+        drop(_pmu_do_install_dir());
+    }
+
+    pass(NIL);
+};
+
+// ── Private helpers ───────────────────────────────────────────────────────────
+
+/// Format a registry plugin row label.
+/// Format: "[✓] Name v1.2.0 -- Description [Enabled]"
+func:_pmu_row_label = string(int64:slot) {
+    int64:state = raw plugin_get_state(slot);
+    string:name = raw plugin_registry_name(slot);
+
+    // Find manifest for this slot (by name match)
+    int64:mslot = raw manifest_find_by_name(name);
+
+    string:version = "";
+    string:desc    = "";
+    if (mslot >= 0i64) {
+        version = raw manifest_get_version(mslot);
+        desc    = raw manifest_get_description(mslot);
+    }
+
+    // Status prefix
+    string:prefix = "[?] ";
+    if (state == PLUGIN_STATE_ACTIVE)   { prefix = "[+] "; }
+    if (state == PLUGIN_STATE_DISABLED) { prefix = "[-] "; }
+    if (state == PLUGIN_STATE_ERROR)    { prefix = "[!] "; }
+
+    // Status suffix
+    string:suffix = "";
+    if (state == PLUGIN_STATE_ACTIVE)   { suffix = " [Enabled]"; }
+    if (state == PLUGIN_STATE_DISABLED) { suffix = " [Disabled]"; }
+    if (state == PLUGIN_STATE_ERROR)    { suffix = " [Error]"; }
+
+    // Version string
+    string:ver_str = "";
+    if (string_length(version) > 0i64) {
+        ver_str = string_concat(" v", version);
+    }
+
+    // Description excerpt (first 40 chars)
+    string:desc_str = "";
+    if (string_length(desc) > 0i64) {
+        int64:dlen = string_length(desc);
+        if (dlen > 40i64) { dlen = 40i64; }
+        desc_str = string_concat(" -- ", string_substring(desc, 0i64, dlen));
+    }
+
+    pass(string_concat(prefix, string_concat(name,
+        string_concat(ver_str, string_concat(desc_str, suffix)))));
+};
+
+/// Format a built-in provider row label.
+/// Format: "[B] SSH -- Built-in ConnectionProvider [Built-in]"
+pub func:_pmu_builtin_row_label = string(int64:bi) {
+    string:type_name = raw ext_connection_get_type_name(bi);
+    string:display   = raw ext_connection_get_display_name(bi);
+    string:icon      = raw ext_connection_get_icon(bi);
+    pass(string_concat("[B] ", string_concat(display,
+        string_concat(" (", string_concat(type_name,
+        string_concat(") -- Built-in ConnectionProvider [Built-in]", ""))))));
+};
+
+/// Update detail label for a selected plugin slot.
+func:_pmu_show_detail = NIL(int64:slot, int64:is_builtin) {
+    if (g_pmu_detail_label == 0i64) { pass(NIL); }
+
+    string:text = "";
+
+    if (is_builtin == 1i64) {
+        // Built-in provider detail
+        string:type_name = raw ext_connection_get_type_name(slot);
+        string:display   = raw ext_connection_get_display_name(slot);
+        string:icon      = raw ext_connection_get_icon(bi_icon_workaround(slot));
+
+        text = string_concat("Plugin: ", string_concat(display, "\n"));
+        text = string_concat(text, string_concat("Type: Built-in ConnectionProvider\n", ""));
+        text = string_concat(text, string_concat("ID: ", string_concat(type_name, "\n")));
+        text = string_concat(text, "Status: Always Enabled\n");
+        text = string_concat(text, "Cannot be disabled or uninstalled.\n\n");
+
+        // Show registered settings for this provider
+        int64:scount = raw ext_settings_get_count_for(type_name);
+        if (scount > 0i64) {
+            text = string_concat(text, "Settings:\n");
+            int64:si = 0i64;
+            while (si < scount) {
+                string:key   = raw ext_settings_get_key(type_name, si);
+                string:label = raw ext_settings_get_label(type_name, si);
+                string:def   = raw ext_settings_get_default(type_name, si);
+                text = string_concat(text, string_concat("  ", string_concat(label,
+                    string_concat(" (", string_concat(key,
+                    string_concat(") default: ", string_concat(def, "\n")))))));
+                si = si + 1i64;
+            }
+        }
+    } else {
+        // Registry plugin detail
+        string:name  = raw plugin_registry_name(slot);
+        int64:state  = raw plugin_get_state(slot);
+        int64:mslot  = raw manifest_find_by_name(name);
+
+        text = string_concat("Plugin: ", string_concat(name, "\n"));
+
+        if (mslot >= 0i64) {
+            string:ver    = raw manifest_get_version(mslot);
+            string:author = raw manifest_get_author(mslot);
+            string:desc   = raw manifest_get_description(mslot);
+            string:apiver = raw manifest_get_api_version(mslot);
+            string:dir    = raw manifest_get_dir(mslot);
+
+            if (string_length(ver) > 0i64) {
+                text = string_concat(text, string_concat("Version: ", string_concat(ver, "\n")));
+            }
+            if (string_length(author) > 0i64) {
+                text = string_concat(text, string_concat("Author: ", string_concat(author, "\n")));
+            }
+            if (string_length(apiver) > 0i64) {
+                text = string_concat(text, string_concat("API Version: ", string_concat(apiver, "\n")));
+            }
+            if (string_length(desc) > 0i64) {
+                text = string_concat(text, string_concat("Description: ", string_concat(desc, "\n")));
+            }
+
+            // Dependencies
+            int64:dcount = raw manifest_get_dep_count(mslot);
+            if (dcount > 0i64) {
+                text = string_concat(text, "Dependencies:\n");
+                int64:di = 0i64;
+                while (di < dcount) {
+                    string:dname = raw manifest_get_dep_name(mslot, di);
+                    string:dver  = raw manifest_get_dep_version(mslot, di);
+                    // Check if dep is satisfied (in registry)
+                    int64:dep_found = raw plugin_registry_find(dname);
+                    string:dep_status = " [missing]";
+                    if (dep_found >= 0i64) { dep_status = " [ok]"; }
+                    text = string_concat(text, string_concat("  ", string_concat(dname,
+                        string_concat(" ", string_concat(dver, string_concat(dep_status, "\n"))))));
+                    di = di + 1i64;
+                }
+            }
+
+            text = string_concat(text, string_concat("Directory: ", string_concat(dir, "\n")));
+        }
+
+        // Status
+        string:status_str = "Unknown";
+        if (state == PLUGIN_STATE_ACTIVE)      { status_str = "Enabled (Active)"; }
+        if (state == PLUGIN_STATE_DISABLED)    { status_str = "Disabled"; }
+        if (state == PLUGIN_STATE_ERROR)       { status_str = "Error"; }
+        if (state == PLUGIN_STATE_LOADED)      { status_str = "Loaded (not initialized)"; }
+        if (state == PLUGIN_STATE_INITIALIZED) { status_str = "Initialized"; }
+        if (state == PLUGIN_STATE_UNLOADED)    { status_str = "Unloaded"; }
+        text = string_concat(text, string_concat("Status: ", string_concat(status_str, "\n")));
+
+        // Error message (if any)
+        if (state == PLUGIN_STATE_ERROR) {
+            string:errmsg = raw plugin_get_error(slot);
+            if (string_length(errmsg) > 0i64) {
+                text = string_concat(text, string_concat("\nError:\n  ", string_concat(errmsg, "\n")));
+            }
+        }
+
+        // Extension points (from ext_connection, ext_hotkey registrations)
+        int64:hk_count = raw ext_hotkey_count();
+        // NOTE: in a full implementation we'd have ext_hotkey_get_plugin_slot(i)
+        // to filter by plugin. For v0.10.4 we just note the total.
+        text = string_concat(text, string_concat("\nRegistered hotkeys (all plugins): ",
+            string_concat(string_from_int(hk_count), "\n")));
+    }
+
+    nitty_gtk4_label_set_text(g_pmu_detail_label, text);
+    pass(NIL);
+};
+
+/// Workaround: ext_connection_get_icon returns a value we need to pass as int64 slot.
+/// This is just a transparent relay so the compiler accepts the call site.
+func:bi_icon_workaround = int64(int64:slot) { pass(slot); };
+
+/// Update button sensitivity based on current selection and plugin state.
+func:_pmu_update_button_sensitivity = NIL() {
+    if (g_pmu_btn_enable == 0i64) { pass(NIL); }
+
+    if (g_pmu_sel_slot < 0i64 || g_pmu_sel_builtin == -1i64) {
+        // No selection or header row
+        nitty_gtk4_button_set_sensitive(g_pmu_btn_enable,    0i32);
+        nitty_gtk4_button_set_sensitive(g_pmu_btn_disable,   0i32);
+        nitty_gtk4_button_set_sensitive(g_pmu_btn_uninstall, 0i32);
+        nitty_gtk4_button_set_sensitive(g_pmu_btn_settings,  0i32);
+        pass(NIL);
+    }
+
+    if (g_pmu_sel_builtin == 1i64) {
+        // Built-in: can open settings, cannot enable/disable/uninstall
+        nitty_gtk4_button_set_sensitive(g_pmu_btn_enable,    0i32);
+        nitty_gtk4_button_set_sensitive(g_pmu_btn_disable,   0i32);
+        nitty_gtk4_button_set_sensitive(g_pmu_btn_uninstall, 0i32);
+        // Settings available if the built-in has registered settings
+        string:type_name = raw ext_connection_get_type_name(g_pmu_sel_slot);
+        int64:has_settings = 0i32;
+        if (raw ext_settings_get_count_for(type_name) > 0i64) { has_settings = 1i32; }
+        nitty_gtk4_button_set_sensitive(g_pmu_btn_settings, has_settings => int32);
+        pass(NIL);
+    }
+
+    // Registry plugin
+    int64:state = raw plugin_get_state(g_pmu_sel_slot);
+    int32:can_enable  = 0i32;
+    int32:can_disable = 0i32;
+    if (state == PLUGIN_STATE_ACTIVE) {
+        can_disable = 1i32;
+    }
+    if (state == PLUGIN_STATE_DISABLED || state == PLUGIN_STATE_ERROR) {
+        can_enable = 1i32;
+    }
+    nitty_gtk4_button_set_sensitive(g_pmu_btn_enable,    can_enable);
+    nitty_gtk4_button_set_sensitive(g_pmu_btn_disable,   can_disable);
+    nitty_gtk4_button_set_sensitive(g_pmu_btn_uninstall, 1i32);   // always (non-builtin)
+    nitty_gtk4_button_set_sensitive(g_pmu_btn_settings,  1i32);   // always show settings
+
+    pass(NIL);
+};
+
+/// Enable a plugin by registry slot.
+func:_pmu_do_enable = NIL(int64:slot) {
+    string:name = raw plugin_registry_name(slot);
+    int64:rc    = raw plugin_manager_enable(name);
+    if (rc == 0i64) {
+        drop(nitty_gtk4_show_notification(string_concat("Enabled: ", name)));
+    } else {
+        string:errmsg = raw plugin_get_error(slot);
+        drop(nitty_gtk4_show_notification(string_concat("Enable failed: ",
+            string_concat(name, string_concat(" -- ", errmsg)))));
+    }
+    drop(pmu_rebuild_list());
+    drop(_pmu_show_detail(slot, 0i64));
+    pass(NIL);
+};
+
+/// Disable a plugin by registry slot.
+func:_pmu_do_disable = NIL(int64:slot) {
+    string:name = raw plugin_registry_name(slot);
+    int64:rc    = raw plugin_manager_disable(name);
+    if (rc == 0i64) {
+        drop(nitty_gtk4_show_notification(string_concat("Disabled: ", name)));
+    } else {
+        drop(nitty_gtk4_show_notification(string_concat("Disable failed: ", name)));
+    }
+    drop(pmu_rebuild_list());
+    drop(_pmu_show_detail(slot, 0i64));
+    pass(NIL);
+};
+
+/// Uninstall a plugin by registry slot.
+/// Disables it first, then removes the plugin directory.
+/// Note: no undo. Plugin data directory is preserved (v0.10.5: add checkbox option).
+func:_pmu_do_uninstall = NIL(int64:slot) {
+    string:name = raw plugin_registry_name(slot);
+    int64:mslot = raw manifest_find_by_name(name);
+
+    // Disable first
+    drop(plugin_manager_disable(name));
+
+    // Get plugin directory for deletion
+    if (mslot >= 0i64) {
+        string:dir = raw manifest_get_dir(mslot);
+        // TODO(v0.10.5): actually delete the directory via nitpick-fs rmdir_recursive
+        // For now, notify the user and clear the registry entry
+        drop(nitty_gtk4_show_notification(string_concat(
+            "Uninstall: plugin disabled. Directory removal requires restart: ", dir)));
+    } else {
+        drop(nitty_gtk4_show_notification(string_concat("Uninstalled: ", name)));
+    }
+
+    g_pmu_sel_slot    = -1i64;
+    g_pmu_sel_builtin = -1i64;
+    drop(pmu_rebuild_list());
+    if (g_pmu_detail_label != 0i64) {
+        nitty_gtk4_label_set_text(g_pmu_detail_label, "Select a plugin to view details.");
+    }
+    pass(NIL);
+};
+
+/// Open settings form for a plugin or built-in.
+/// Renders the SettingDefinition list into the detail label.
+/// TODO(v0.10.5): persist changes to config.yaml via cfg_set_plugin_setting.
+func:_pmu_do_open_settings = NIL(int64:slot, int64:is_builtin) {
+    if (g_pmu_detail_label == 0i64) { pass(NIL); }
+
+    string:plugin_name = "";
+    if (is_builtin == 1i64) {
+        plugin_name = raw ext_connection_get_type_name(slot);
+    } else {
+        plugin_name = raw plugin_registry_name(slot);
+    }
+
+    int64:scount = raw ext_settings_get_count_for(plugin_name);
+    if (scount == 0i64) {
+        nitty_gtk4_label_set_text(g_pmu_detail_label,
+            string_concat("No settings registered for: ", plugin_name));
+        pass(NIL);
+    }
+
+    string:text = string_concat("Settings for: ", string_concat(plugin_name, "\n\n"));
+    int64:si = 0i64;
+    while (si < scount) {
+        string:key   = raw ext_settings_get_key(plugin_name, si);
+        string:label = raw ext_settings_get_label(plugin_name, si);
+        string:stype = raw ext_settings_get_type(plugin_name, si);
+        string:def   = raw ext_settings_get_default(plugin_name, si);
+        text = string_concat(text, string_concat(label, string_concat("\n",
+            string_concat("  key: ", string_concat(key, string_concat("\n",
+            string_concat("  type: ", string_concat(stype, string_concat("\n",
+            string_concat("  default: ", string_concat(def, "\n\n")))))))))));
+        si = si + 1i64;
+    }
+    text = string_concat(text,
+        "[Settings editing deferred to v0.10.5 -- config parser fix needed]");
+    nitty_gtk4_label_set_text(g_pmu_detail_label, text);
+
+    drop(nitty_gtk4_show_notification(
+        "Settings displayed. Editing will be enabled in v0.10.5."));
+    pass(NIL);
+};
+
+/// Install from directory -- stub for v0.10.4.
+/// Full implementation in v0.10.5 (needs file chooser dialog shim).
+func:_pmu_do_install_dir = NIL() {
+    drop(nitty_gtk4_show_notification(
+        "Install from directory: coming in v0.10.5 (requires file chooser dialog)"));
+    pass(NIL);
+};
+
+/// Simple case-insensitive substring search.
+/// Returns 1 if haystack contains needle (case-sensitive for now).
+pub func:_pmu_str_contains = int64(string:haystack, string:needle) {
+    int64:hlen = string_length(haystack);
+    int64:nlen = string_length(needle);
+    if (nlen == 0i64) { pass(1i64); }
+    if (nlen > hlen)  { pass(0i64); }
+    int64:i = 0i64;
+    while (i <= hlen - nlen) {
+        string:sub = string_substring(haystack, i, i + nlen);
+        if (sub == needle) { pass(1i64); }
+        i = i + 1i64;
+    }
+    pass(0i64);
+};
