@@ -1,0 +1,274 @@
+// tests/e2e/test_tabs_panes.npk — Tab and Pane Management E2E Tests
+//
+// v0.11.0: Tests tab_manager.npk, split_tree.npk, and pane.npk coordination
+// at the data layer. No GTK4 required — pure logical structure tests.
+//
+// Test groups:
+//   P01: Tab creation — tm_add_tab → count increases
+//   P02: Tab switching — tm_activate changes active id
+//   P03: Tab close — tm_remove_tab → count decreases, adjacent activates
+//   P04: Tab title — tm_set_active_title → tm_get_title_at reflects change
+//   P05: Multiple tabs — activate each, verify active tracking
+//   P06: Split horizontal — split_tree_split(id, 0) → 2 panes
+//   P07: Split vertical — split_tree_split(id, 1) → 3 panes
+//   P08: Pane close → split_tree_remove → pane_count decreases
+//   P09: Nested splits → 4 panes
+//   P10: Layout geometry — no overlaps, full area covered
+//   P11: Pane data integrity — pane_create → pane_find_by_id → getters
+//   P12: Active pane tracking — split_tree_set_active → get_active
+
+use "../../src/core/tab_manager.npk".*;
+use "../../src/core/split_tree.npk".*;
+use "../../src/core/pane.npk".*;
+use "./test_utils.npk".*;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// Reset tab manager and split tree to a clean state.
+// tab_manager uses module-global state; tm_init resets it.
+func:reset_all = NIL() {
+    drop(tm_init());
+    drop(split_tree_init());
+    pass(NIL);
+};
+
+// ── Test cases ────────────────────────────────────────────────────────────────
+
+func:test_tab_create = NIL() {
+    drop(reset_all());
+
+    // P01: Add two tabs, count increases
+    int64:id1 = raw tm_add_tab(-1i64, -1i64);  // pty_fd=-1, pid=-1 (headless)
+    int64:id2 = raw tm_add_tab(-1i64, -1i64);
+    drop(test_assert_gt_i64("P01 id1>0", id1, 0i64));
+    drop(test_assert_gt_i64("P01 id2>0", id2, 0i64));
+    drop(test_assert_eq_i64("P01 count=2", raw tm_count(), 2i64));
+
+    pass(NIL);
+};
+
+func:test_tab_switch = NIL() {
+    drop(reset_all());
+
+    int64:id1 = raw tm_add_tab(-1i64, -1i64);
+    int64:id2 = raw tm_add_tab(-1i64, -1i64);
+    int64:id3 = raw tm_add_tab(-1i64, -1i64);
+
+    // P02: Activate each tab in sequence
+    drop(tm_activate(id1));
+    drop(test_assert_eq_i64("P02 active=id1", raw tm_get_active_id(), id1));
+    drop(tm_activate(id3));
+    drop(test_assert_eq_i64("P02 active=id3", raw tm_get_active_id(), id3));
+    drop(tm_activate(id2));
+    drop(test_assert_eq_i64("P02 active=id2", raw tm_get_active_id(), id2));
+
+    pass(NIL);
+};
+
+func:test_tab_close = NIL() {
+    drop(reset_all());
+
+    int64:id1 = raw tm_add_tab(-1i64, -1i64);
+    int64:id2 = raw tm_add_tab(-1i64, -1i64);
+    int64:id3 = raw tm_add_tab(-1i64, -1i64);
+    drop(test_assert_eq_i64("P03 initial count=3", raw tm_count(), 3i64));
+
+    // P03: Remove middle tab
+    drop(tm_activate(id2));
+    drop(tm_remove_tab(id2));
+    drop(test_assert_eq_i64("P03 count=2 after remove", raw tm_count(), 2i64));
+
+    pass(NIL);
+};
+
+func:test_tab_title = NIL() {
+    drop(reset_all());
+
+    int64:id1 = raw tm_add_tab(-1i64, -1i64);
+    drop(tm_activate(id1));
+
+    // P04: Set title on active tab, read it back at index 0
+    drop(tm_set_active_title("My Custom Tab"));
+    string:got = raw tm_get_title_at(0i64);
+    drop(test_assert_eq_str("P04 title set/get", got, "My Custom Tab"));
+
+    pass(NIL);
+};
+
+func:test_tab_ordering = NIL() {
+    drop(reset_all());
+
+    int64:id1 = raw tm_add_tab(-1i64, -1i64);
+    int64:id2 = raw tm_add_tab(-1i64, -1i64);
+    int64:id3 = raw tm_add_tab(-1i64, -1i64);
+
+    // P05: Activate by index
+    drop(tm_activate_index(0i64));
+    drop(test_assert_eq_i64("P05 activate index 0 → id1",
+        raw tm_get_active_id(), id1));
+    drop(tm_activate_index(2i64));
+    drop(test_assert_eq_i64("P05 activate index 2 → id3",
+        raw tm_get_active_id(), id3));
+    drop(test_assert_eq_i64("P05 active_index=2",
+        raw tm_get_active_index(), 2i64));
+
+    pass(NIL);
+};
+
+func:test_split_horizontal = NIL() {
+    drop(reset_all());
+
+    // P06: split_tree_split with dir=0 (horizontal) → 2 panes
+    // split_tree starts with 1 implicit root pane (id = NEXT_PANE_ID start)
+    // We need to get the initial pane id from the tree's internal counter.
+    // After split_tree_init(), next_pane_id = 1, so root pane = 1.
+    int64:root_pane = 0i64;
+    int64:new_pane = raw split_tree_split(root_pane, 0i32);  // 0 = Horizontal
+    drop(test_assert_gt_i64("P06 new_pane > 0", new_pane, 0i64));
+    drop(test_assert_eq_i64("P06 pane_count=2",
+        raw split_tree_pane_count(), 2i64));
+
+    pass(NIL);
+};
+
+func:test_split_vertical = NIL() {
+    drop(reset_all());
+
+    int64:root_pane = 0i64;
+    int64:p2 = raw split_tree_split(root_pane, 0i32);  // horizontal → 2 panes
+    int64:p3 = raw split_tree_split(p2, 1i32);         // vertical   → 3 panes
+    drop(test_assert_eq_i64("P07 pane_count=3",
+        raw split_tree_pane_count(), 3i64));
+
+    pass(NIL);
+};
+
+func:test_pane_remove = NIL() {
+    drop(reset_all());
+
+    int64:root_pane = 0i64;
+    int64:p2 = raw split_tree_split(root_pane, 0i32);
+    drop(test_assert_eq_i64("P08 pre-remove pane_count=2",
+        raw split_tree_pane_count(), 2i64));
+
+    int32:result = raw split_tree_remove(p2);
+    drop(test_assert_eq_i32("P08 remove returns ok (0 or -1)",
+        is (result >= -1i32) : 1i32 : 0i32, 1i32));
+    drop(test_assert_eq_i64("P08 pane_count=1 after remove",
+        raw split_tree_pane_count(), 1i64));
+
+    pass(NIL);
+};
+
+func:test_nested_splits = NIL() {
+    drop(reset_all());
+
+    // P09: 3 splits → 4 panes
+    int64:p1 = 0i64;
+    int64:p2 = raw split_tree_split(p1, 0i32);
+    int64:p3 = raw split_tree_split(p1, 1i32);
+    int64:p4 = raw split_tree_split(p2, 1i32);
+    drop(test_assert_eq_i64("P09 4 panes after 3 splits",
+        raw split_tree_pane_count(), 4i64));
+
+    pass(NIL);
+};
+
+func:test_layout_geometry = NIL() {
+    drop(reset_all());
+
+    // P10: After layout, pane rects are non-zero and non-overlapping
+    int64:p1 = 0i64;
+    int64:p2 = raw split_tree_split(p1, 0i32);
+    drop(split_tree_layout(0i64, 0i64, 800i64, 600i64));
+
+    int64:count = raw split_tree_get_layout_count();
+    drop(test_assert_eq_i64("P10 layout count=2", count, 2i64));
+
+    // Both panes should have positive width and height
+    int64:w0 = raw split_tree_get_layout_w(0i64);
+    int64:h0 = raw split_tree_get_layout_h(0i64);
+    int64:w1 = raw split_tree_get_layout_w(1i64);
+    int64:h1 = raw split_tree_get_layout_h(1i64);
+    drop(test_assert_gt_i64("P10 pane[0] w>0", w0, 0i64));
+    drop(test_assert_gt_i64("P10 pane[0] h>0", h0, 0i64));
+    drop(test_assert_gt_i64("P10 pane[1] w>0", w1, 0i64));
+    drop(test_assert_gt_i64("P10 pane[1] h>0", h1, 0i64));
+
+    // For horizontal split, widths should add up to ~800
+    int64:total_w = w0 + w1;
+    drop(test_assert_gt_i64("P10 total width ~800", total_w, 700i64));
+
+    pass(NIL);
+};
+
+func:test_pane_data = NIL() {
+    // P11: pane_create + pane_find_by_id + getters
+    int64:pane_id = 42i64;
+    int64:pty_fd  = -1i64;   // headless
+    int64:pid     = -1i64;
+    int64:rows    = 24i64;
+    int64:cols    = 80i64;
+
+    int64:slot = raw pane_create(pane_id, pty_fd, pid, rows, cols);
+    drop(test_assert_gt_i64("P11 slot >= 0", slot + 1i64, 0i64));
+
+    int64:found = raw pane_find_by_id(pane_id);
+    drop(test_assert_eq_i64("P11 find_by_id = slot", found, slot));
+
+    int64:got_rows = raw pane_get_rows(slot);
+    int64:got_cols = raw pane_get_cols(slot);
+    drop(test_assert_eq_i64("P11 pane rows=24", got_rows, 24i64));
+    drop(test_assert_eq_i64("P11 pane cols=80", got_cols, 80i64));
+
+    // Type default is PANE_TYPE_LOCAL = 0
+    int64:ptype = raw PANE_TYPE_LOCAL();
+    drop(test_assert_eq_i64("P11 type=LOCAL", ptype, 0i64));
+
+    drop(pane_destroy(slot));
+    int64:after = raw pane_find_by_id(pane_id);
+    drop(test_assert_eq_i64("P11 find after destroy = -1", after, -1i64));
+
+    pass(NIL);
+};
+
+func:test_active_pane = NIL() {
+    drop(reset_all());
+
+    // P12: split_tree_set_active → split_tree_get_active
+    int64:p1 = 0i64;
+    int64:p2 = raw split_tree_split(p1, 0i32);
+
+    drop(split_tree_set_active(p1));
+    drop(test_assert_eq_i64("P12 active=p1", raw split_tree_get_active(), p1));
+
+    drop(split_tree_set_active(p2));
+    drop(test_assert_eq_i64("P12 active=p2", raw split_tree_get_active(), p2));
+
+    pass(NIL);
+};
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+func:main = int32() {
+    drop(test_begin("Tab and Pane Management"));
+
+    drop(test_tab_create());
+    drop(test_tab_switch());
+    drop(test_tab_close());
+    drop(test_tab_title());
+    drop(test_tab_ordering());
+    drop(test_split_horizontal());
+    drop(test_split_vertical());
+    drop(test_pane_remove());
+    drop(test_nested_splits());
+    drop(test_layout_geometry());
+    drop(test_pane_data());
+    drop(test_active_pane());
+
+    int32:rc = raw test_end();
+    if (rc == 0i32) { exit 0; }
+    exit 1;
+};

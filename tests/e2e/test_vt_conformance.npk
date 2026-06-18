@@ -1,0 +1,493 @@
+// tests/e2e/test_vt_conformance.npk — VT Sequence Conformance Tests
+//
+// v0.11.0: End-to-end VT conformance suite using the headless pipeline.
+// Feeds raw VT bytes through pipeline_feed → dispatch → grid/state, then
+// asserts on grid_get_cp, ts_get_cursor_*, ts_get_mode_*, attrs_get_*.
+//
+// Test groups:
+//   V01–V05: Cursor movement (CUU, CUD, CUF, CUB, CUP)
+//   V06–V08: Erase operations (ED 2J, EL 0K, EL 1K)
+//   V09:     Scroll region (DECSTBM)
+//   V10–V16: SGR attributes (bold, italic, underline, inverse, dim, strike, reset)
+//   V17–V19: Colors (16 ANSI, 256-palette, 24-bit RGB)
+//   V20–V21: Alternate screen (DECSET 1049, DECRST 1049)
+//   V22:     Auto-wrap at right margin
+//   V23:     DECAWM off — no wrap
+//   V24:     Bracketed paste mode (DECSET 2004)
+//   V25:     Cursor visibility (DECTCEM)
+//   V26:     Cursor shape (DECSCUSR)
+//   V27:     UTF-8 multi-byte codepoint
+//   V28:     CR/LF cursor movement
+//   V29:     Backspace cursor movement
+//   V30:     Tab character advances cursor
+
+use "./framework.npk".*;
+use "../../src/terminal/terminal_state.npk".*;
+use "../../src/terminal/attributes.npk".*;
+use "../../src/terminal/grid.npk".*;
+use "./test_utils.npk".*;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// Feed the byte sequence for ESC [ (CSI)
+func:feed_csi = NIL(TestTerminal:tt) {
+    drop(test_terminal_feed_byte(tt, 0x1Bi64));  // ESC
+    drop(test_terminal_feed_byte(tt, 0x5Bi64));  // [
+    pass(NIL);
+};
+
+// Feed ESC [ ? (CSI ?)
+func:feed_csi_q = NIL(TestTerminal:tt) {
+    drop(feed_csi(tt));
+    drop(test_terminal_feed_byte(tt, 0x3Fi64));  // ?
+    pass(NIL);
+};
+
+// Feed a decimal number as individual digit bytes
+func:feed_num = NIL(TestTerminal:tt, int64:n) {
+    if (n >= 1000i64) {
+        drop(test_terminal_feed_byte(tt, 0x30i64 + n / 1000i64));
+        drop(test_terminal_feed_byte(tt, 0x30i64 + (n / 100i64) % 10i64));
+        drop(test_terminal_feed_byte(tt, 0x30i64 + (n / 10i64) % 10i64));
+        drop(test_terminal_feed_byte(tt, 0x30i64 + n % 10i64));
+        pass(NIL);
+    }
+    if (n >= 100i64) {
+        drop(test_terminal_feed_byte(tt, 0x30i64 + n / 100i64));
+        drop(test_terminal_feed_byte(tt, 0x30i64 + (n / 10i64) % 10i64));
+        drop(test_terminal_feed_byte(tt, 0x30i64 + n % 10i64));
+        pass(NIL);
+    }
+    if (n >= 10i64) {
+        drop(test_terminal_feed_byte(tt, 0x30i64 + n / 10i64));
+        drop(test_terminal_feed_byte(tt, 0x30i64 + n % 10i64));
+        pass(NIL);
+    }
+    drop(test_terminal_feed_byte(tt, 0x30i64 + n));
+    pass(NIL);
+};
+
+
+// Feed CUP (cursor position): ESC [ row ; col H  (1-based)
+func:feed_cup = NIL(TestTerminal:tt, int64:row1, int64:col1) {
+    drop(feed_csi(tt));
+    drop(feed_num(tt, row1));
+    drop(test_terminal_feed_byte(tt, 0x3Bi64));  // ;
+    drop(feed_num(tt, col1));
+    drop(test_terminal_feed_byte(tt, 0x48i64));  // H
+    pass(NIL);
+};
+
+// ESC [ n A  (cursor up n)
+func:feed_cuu = NIL(TestTerminal:tt, int64:n) {
+    drop(feed_csi(tt));
+    drop(feed_num(tt, n));
+    drop(test_terminal_feed_byte(tt, 0x41i64));  // A
+    pass(NIL);
+};
+
+// ESC [ n B  (cursor down n)
+func:feed_cud = NIL(TestTerminal:tt, int64:n) {
+    drop(feed_csi(tt));
+    drop(feed_num(tt, n));
+    drop(test_terminal_feed_byte(tt, 0x42i64));  // B
+    pass(NIL);
+};
+
+// ESC [ n C  (cursor forward n)
+func:feed_cuf = NIL(TestTerminal:tt, int64:n) {
+    drop(feed_csi(tt));
+    drop(feed_num(tt, n));
+    drop(test_terminal_feed_byte(tt, 0x43i64));  // C
+    pass(NIL);
+};
+
+// ESC [ n D  (cursor backward n)
+func:feed_cub = NIL(TestTerminal:tt, int64:n) {
+    drop(feed_csi(tt));
+    drop(feed_num(tt, n));
+    drop(test_terminal_feed_byte(tt, 0x44i64));  // D
+    pass(NIL);
+};
+
+// ESC [ n J  (erase display)
+func:feed_ed = NIL(TestTerminal:tt, int64:n) {
+    drop(feed_csi(tt));
+    drop(feed_num(tt, n));
+    drop(test_terminal_feed_byte(tt, 0x4Ai64));  // J
+    pass(NIL);
+};
+
+// ESC [ n K  (erase line)
+func:feed_el = NIL(TestTerminal:tt, int64:n) {
+    drop(feed_csi(tt));
+    drop(feed_num(tt, n));
+    drop(test_terminal_feed_byte(tt, 0x4Bi64));  // K
+    pass(NIL);
+};
+
+// ESC [ top ; bottom r  (DECSTBM)
+func:feed_decstbm = NIL(TestTerminal:tt, int64:top1, int64:bot1) {
+    drop(feed_csi(tt));
+    drop(feed_num(tt, top1));
+    drop(test_terminal_feed_byte(tt, 0x3Bi64));  // ;
+    drop(feed_num(tt, bot1));
+    drop(test_terminal_feed_byte(tt, 0x72i64));  // r
+    pass(NIL);
+};
+
+// ESC [ n m  (SGR)
+func:feed_sgr = NIL(TestTerminal:tt, int64:n) {
+    drop(feed_csi(tt));
+    drop(feed_num(tt, n));
+    drop(test_terminal_feed_byte(tt, 0x6Di64));  // m
+    pass(NIL);
+};
+
+// ESC [ ? n h  (DECSET — private mode set)
+func:feed_decset = NIL(TestTerminal:tt, int64:mode) {
+    drop(feed_csi_q(tt));
+    drop(feed_num(tt, mode));
+    drop(test_terminal_feed_byte(tt, 0x68i64));  // h
+    pass(NIL);
+};
+
+// ESC [ ? n l  (DECRST — private mode reset)
+func:feed_decrst = NIL(TestTerminal:tt, int64:mode) {
+    drop(feed_csi_q(tt));
+    drop(feed_num(tt, mode));
+    drop(test_terminal_feed_byte(tt, 0x6Ci64));  // l
+    pass(NIL);
+};
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+func:test_cursor_movement = NIL() {
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+
+    // V01: CUP → row 5 col 10 (1-based → 0-based: row=4, col=9)
+    drop(feed_cup(tt, 5i64, 10i64));
+    drop(test_assert_eq_i64("V01 CUP row=4", raw test_terminal_cursor_row(tt), 4i64));
+    drop(test_assert_eq_i64("V01 CUP col=9", raw test_terminal_cursor_col(tt), 9i64));
+
+    // V02: CUU 2 → row 2
+    drop(feed_cuu(tt, 2i64));
+    drop(test_assert_eq_i64("V02 CUU row=2", raw test_terminal_cursor_row(tt), 2i64));
+
+    // V03: CUD 3 → row 5
+    drop(feed_cud(tt, 3i64));
+    drop(test_assert_eq_i64("V03 CUD row=5", raw test_terminal_cursor_row(tt), 5i64));
+
+    // V04: CUF 5 → col 14
+    drop(feed_cuf(tt, 5i64));
+    drop(test_assert_eq_i64("V04 CUF col=14", raw test_terminal_cursor_col(tt), 14i64));
+
+    // V05: CUB 4 → col 10
+    drop(feed_cub(tt, 4i64));
+    drop(test_assert_eq_i64("V05 CUB col=10", raw test_terminal_cursor_col(tt), 10i64));
+
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:test_erase_ops = NIL() {
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+
+    // Write 'A' at (2, 5)
+    drop(feed_cup(tt, 3i64, 6i64));
+    drop(test_terminal_feed_byte(tt, 0x41i64));  // 'A'
+    drop(test_assert_eq_i64("V06-pre: 'A' written at (2,5)",
+        raw test_terminal_get_cell_cp(tt, 2i64, 5i64), 0x41i64));
+
+    // V06: ED 2 (erase entire display) → all cells become space
+    drop(feed_ed(tt, 2i64));
+    drop(test_assert_eq_i64("V06 ED2: (2,5) cleared",
+        raw test_terminal_get_cell_cp(tt, 2i64, 5i64), 0x20i64));
+    drop(test_assert_eq_i64("V06 ED2: (0,0) cleared",
+        raw test_terminal_get_cell_cp(tt, 0i64, 0i64), 0x20i64));
+
+    // Write 'B' at (3, 2) and 'C' at (3, 7)
+    drop(feed_cup(tt, 4i64, 3i64));
+    drop(test_terminal_feed_byte(tt, 0x42i64));  // 'B'
+    drop(feed_cup(tt, 4i64, 8i64));
+    drop(test_terminal_feed_byte(tt, 0x43i64));  // 'C'
+
+    // V07: EL 0 (erase to end of line) from col 4 → 'C' gone, 'B' survives
+    drop(feed_cup(tt, 4i64, 5i64));  // move to col 4
+    drop(feed_el(tt, 0i64));
+    drop(test_assert_eq_i64("V07 EL0: 'B' at (3,2) survives",
+        raw test_terminal_get_cell_cp(tt, 3i64, 2i64), 0x42i64));
+    drop(test_assert_eq_i64("V07 EL0: 'C' at (3,7) erased",
+        raw test_terminal_get_cell_cp(tt, 3i64, 7i64), 0x20i64));
+
+    // V08: EL 1 (erase to beginning of line)
+    drop(feed_cup(tt, 4i64, 5i64));  // cursor at col 4
+    drop(feed_el(tt, 1i64));
+    drop(test_assert_eq_i64("V08 EL1: (3,2) erased",
+        raw test_terminal_get_cell_cp(tt, 3i64, 2i64), 0x20i64));
+
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:test_scroll_region = NIL() {
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+
+    // V09: DECSTBM — set scroll region rows 3–7 (1-based)
+    drop(feed_decstbm(tt, 3i64, 7i64));
+    drop(test_assert_eq_i64("V09 DECSTBM scroll_top=2",
+        raw test_terminal_scroll_top(tt), 2i64));   // 0-based = row 2
+    drop(test_assert_eq_i64("V09 DECSTBM scroll_bottom=6",
+        raw test_terminal_scroll_bottom(tt), 6i64)); // 0-based = row 6
+
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:test_sgr_attributes = NIL() {
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+
+    // V10: bold on
+    drop(feed_sgr(tt, 1i64));
+    drop(test_assert_eq_i64("V10 SGR 1 bold=1", raw test_terminal_attrs_bold(tt), 1i64));
+
+    // V11: italic on
+    drop(feed_sgr(tt, 3i64));
+    drop(test_assert_eq_i64("V11 SGR 3 italic=1", raw test_terminal_attrs_italic(tt), 1i64));
+
+    // V12: underline on
+    drop(feed_sgr(tt, 4i64));
+    drop(test_assert_eq_i64("V12 SGR 4 underline=1", raw test_terminal_attrs_underline(tt), 1i64));
+
+    // V13: inverse on
+    drop(feed_sgr(tt, 7i64));
+    drop(test_assert_eq_i64("V13 SGR 7 inverse=1", raw test_terminal_attrs_inverse(tt), 1i64));
+
+    // V14: strikethrough on
+    drop(feed_sgr(tt, 9i64));
+    drop(test_assert_eq_i64("V14 SGR 9 strike=1", raw test_terminal_attrs_strike(tt), 1i64));
+
+    // V15: SGR 0 resets all
+    drop(feed_sgr(tt, 0i64));
+    drop(test_assert_eq_i64("V15 SGR 0 bold=0",   raw test_terminal_attrs_bold(tt),      0i64));
+    drop(test_assert_eq_i64("V15 SGR 0 italic=0", raw test_terminal_attrs_italic(tt),    0i64));
+    drop(test_assert_eq_i64("V15 SGR 0 under=0",  raw test_terminal_attrs_underline(tt), 0i64));
+    drop(test_assert_eq_i64("V15 SGR 0 inv=0",    raw test_terminal_attrs_inverse(tt),   0i64));
+    drop(test_assert_eq_i64("V15 SGR 0 strike=0", raw test_terminal_attrs_strike(tt),    0i64));
+
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:test_colors = NIL() {
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+
+    // V16: 16-color foreground — SGR 31 (ANSI red)
+    drop(feed_sgr(tt, 31i64));
+    int64:fg16 = raw test_terminal_attrs_fg(tt);
+    drop(test_assert_eq_i64("V16 SGR 31 fg != default",
+        is (fg16 == 0i64) : 0i64 : 1i64, 1i64));
+
+    // V17: 256-color foreground — ESC [ 38 ; 5 ; 200 m
+    drop(feed_csi(tt));
+    drop(test_terminal_feed_str(tt, "38;5;200"));
+    drop(test_terminal_feed_byte(tt, 0x6Di64));  // m
+    int64:fg256 = raw test_terminal_attrs_fg(tt);
+    // color_indexed(200) encodes as a non-default, non-RGB value
+    drop(test_assert_eq_i64("V17 256-color fg != default",
+        is (fg256 == 0i64) : 0i64 : 1i64, 1i64));
+    drop(test_assert_eq_i64("V17 256-color is indexed",
+        raw color_is_indexed(fg256), 1i64));
+
+    // V18: 24-bit RGB foreground — ESC [ 38 ; 2 ; 255 ; 128 ; 0 m
+    drop(feed_csi(tt));
+    drop(test_terminal_feed_str(tt, "38;2;255;128;0"));
+    drop(test_terminal_feed_byte(tt, 0x6Di64));  // m
+    int64:fgrgb = raw test_terminal_attrs_fg(tt);
+    drop(test_assert_eq_i64("V18 RGB fg is_rgb=1",
+        raw color_is_rgb(fgrgb), 1i64));
+    drop(test_assert_eq_i64("V18 RGB fg r=255",
+        raw color_get_r(fgrgb), 255i64));
+    drop(test_assert_eq_i64("V18 RGB fg g=128",
+        raw color_get_g(fgrgb), 128i64));
+    drop(test_assert_eq_i64("V18 RGB fg b=0",
+        raw color_get_b(fgrgb), 0i64));
+
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:test_alternate_screen = NIL() {
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+
+    // Write 'A' on primary screen at (0,0)
+    drop(test_terminal_feed_byte(tt, 0x41i64));
+    drop(test_assert_eq_i64("V19-pre primary (0,0)='A'",
+        raw test_terminal_get_cell_cp(tt, 0i64, 0i64), 0x41i64));
+
+    // V19: DECSET 1049 — enter alt screen (saves cursor, clears)
+    drop(feed_decset(tt, 1049i64));
+    drop(test_assert_eq_i64("V19 alt_screen mode=1",
+        raw test_terminal_mode_alt(tt), 1i64));
+    // Alt screen should be blank at (0,0)
+    drop(test_assert_eq_i64("V19 alt (0,0) blank",
+        raw test_terminal_get_cell_cp(tt, 0i64, 0i64), 0x20i64));
+
+    // Write 'B' on alt screen
+    drop(test_terminal_feed_byte(tt, 0x42i64));
+
+    // V20: DECRST 1049 — exit alt screen (restores cursor + primary screen)
+    drop(feed_decrst(tt, 1049i64));
+    drop(test_assert_eq_i64("V20 alt_screen mode=0",
+        raw test_terminal_mode_alt(tt), 0i64));
+    // Primary screen still has 'A'
+    drop(test_assert_eq_i64("V20 primary (0,0)='A' restored",
+        raw test_terminal_get_cell_cp(tt, 0i64, 0i64), 0x41i64));
+
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:test_auto_wrap = NIL() {
+    // V21: Auto-wrap — print past right margin in a 5-wide terminal
+    TestTerminal:tt = raw test_terminal_new(24i64, 5i64);
+
+    drop(test_terminal_feed_byte(tt, 0x41i64));  // A
+    drop(test_terminal_feed_byte(tt, 0x42i64));  // B
+    drop(test_terminal_feed_byte(tt, 0x43i64));  // C
+    drop(test_terminal_feed_byte(tt, 0x44i64));  // D
+    drop(test_terminal_feed_byte(tt, 0x45i64));  // E → col 4, pending_wrap=1
+    drop(test_assert_eq_i64("V21 pending_wrap=1 at margin",
+        raw test_terminal_pending_wrap(tt), 1i64));
+    drop(test_terminal_feed_byte(tt, 0x46i64));  // F → wraps to (1, 0)
+    drop(test_assert_eq_i64("V21 wrapped to row=1",
+        raw test_terminal_cursor_row(tt), 1i64));
+    drop(test_assert_eq_i64("V21 'F' at (1,0)",
+        raw test_terminal_get_cell_cp(tt, 1i64, 0i64), 0x46i64));
+
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:test_decawm_off = NIL() {
+    // V22: DECAWM off — print past right margin, cursor stays at col 4
+    TestTerminal:tt = raw test_terminal_new(24i64, 5i64);
+
+    drop(feed_decrst(tt, 7i64));  // DECRST 7 = DECAWM off
+
+    drop(test_terminal_feed_byte(tt, 0x41i64));  // A col 0
+    drop(test_terminal_feed_byte(tt, 0x42i64));  // B col 1
+    drop(test_terminal_feed_byte(tt, 0x43i64));  // C col 2
+    drop(test_terminal_feed_byte(tt, 0x44i64));  // D col 3
+    drop(test_terminal_feed_byte(tt, 0x45i64));  // E col 4
+    drop(test_terminal_feed_byte(tt, 0x46i64));  // F overwrites col 4
+    drop(test_assert_eq_i64("V22 DECAWM off: cursor at col=4",
+        raw test_terminal_cursor_col(tt), 4i64));
+    drop(test_assert_eq_i64("V22 DECAWM off: still row=0",
+        raw test_terminal_cursor_row(tt), 0i64));
+    drop(test_assert_eq_i64("V22 DECAWM off: 'F' overwrites (0,4)",
+        raw test_terminal_get_cell_cp(tt, 0i64, 4i64), 0x46i64));
+
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:test_dec_modes = NIL() {
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+
+    // V23: Bracketed paste (DECSET 2004)
+    drop(feed_decset(tt, 2004i64));
+    drop(test_assert_eq_i64("V23 bracketed_paste=1",
+        raw test_terminal_mode_bracketed_paste(tt), 1i64));
+    drop(feed_decrst(tt, 2004i64));
+    drop(test_assert_eq_i64("V23 bracketed_paste=0 after reset",
+        raw test_terminal_mode_bracketed_paste(tt), 0i64));
+
+    // V24: Cursor visibility (DECTCEM DECSET 25)
+    drop(feed_decrst(tt, 25i64));
+    drop(test_assert_eq_i64("V24 cursor_visible=0",
+        raw test_terminal_mode_cursor_visible(tt), 0i64));
+    drop(feed_decset(tt, 25i64));
+    drop(test_assert_eq_i64("V24 cursor_visible=1",
+        raw test_terminal_mode_cursor_visible(tt), 1i64));
+
+    // V25: Cursor shape DECSCUSR — ESC [ 6 SP q = bar
+    drop(feed_csi(tt));
+    drop(test_terminal_feed_byte(tt, 0x36i64));  // 6
+    drop(test_terminal_feed_byte(tt, 0x20i64));  // SP
+    drop(test_terminal_feed_byte(tt, 0x71i64));  // q
+    drop(test_assert_eq_i64("V25 DECSCUSR 6 = bar (shape=2)",
+        raw test_terminal_cursor_shape(tt), 2i64));
+
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:test_control_chars = NIL() {
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+
+    // V26: CR + LF
+    drop(test_terminal_feed_byte(tt, 0x41i64));  // 'A' at (0,0)
+    drop(test_terminal_feed_byte(tt, 0x0Di64));  // CR
+    drop(test_assert_eq_i64("V26 CR col=0", raw test_terminal_cursor_col(tt), 0i64));
+    drop(test_terminal_feed_byte(tt, 0x0Ai64));  // LF
+    drop(test_assert_eq_i64("V26 LF row=1", raw test_terminal_cursor_row(tt), 1i64));
+
+    // V27: Backspace
+    drop(test_terminal_feed_byte(tt, 0x41i64));  // 'A' at (1,0)
+    drop(test_terminal_feed_byte(tt, 0x42i64));  // 'B' at (1,1)
+    drop(test_terminal_feed_byte(tt, 0x08i64));  // BS
+    drop(test_assert_eq_i64("V27 BS col=1", raw test_terminal_cursor_col(tt), 1i64));
+
+    // V28: Tab
+    // Cursor at col 1 after BS, tab should advance to next tab stop (col 8)
+    drop(test_terminal_feed_byte(tt, 0x09i64));  // HT
+    int64:tc = raw test_terminal_cursor_col(tt);
+    drop(test_assert_eq_i64("V28 HT advances to tab stop (col=8)", tc, 8i64));
+
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:test_plain_text = NIL() {
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+
+    // V29: Plain ASCII text prints to grid correctly
+    drop(test_terminal_feed_byte(tt, 0x48i64));  // H
+    drop(test_terminal_feed_byte(tt, 0x65i64));  // e
+    drop(test_terminal_feed_byte(tt, 0x6Ci64));  // l
+    drop(test_terminal_feed_byte(tt, 0x6Ci64));  // l
+    drop(test_terminal_feed_byte(tt, 0x6Fi64));  // o
+    drop(test_assert_eq_i64("V29 'H' at (0,0)", raw test_terminal_get_cell_cp(tt, 0i64, 0i64), 0x48i64));
+    drop(test_assert_eq_i64("V29 'e' at (0,1)", raw test_terminal_get_cell_cp(tt, 0i64, 1i64), 0x65i64));
+    drop(test_assert_eq_i64("V29 'o' at (0,4)", raw test_terminal_get_cell_cp(tt, 0i64, 4i64), 0x6Fi64));
+    drop(test_assert_eq_i64("V29 cursor at col=5", raw test_terminal_cursor_col(tt), 5i64));
+
+    // V30: screen_contains helper
+    drop(assert_screen_contains(tt, "Hello", "V30 screen contains 'Hello'"));
+
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+func:main = int32() {
+    drop(test_begin("VT Conformance"));
+
+    drop(test_cursor_movement());
+    drop(test_erase_ops());
+    drop(test_scroll_region());
+    drop(test_sgr_attributes());
+    drop(test_colors());
+    drop(test_alternate_screen());
+    drop(test_auto_wrap());
+    drop(test_decawm_off());
+    drop(test_dec_modes());
+    drop(test_control_chars());
+    drop(test_plain_text());
+
+    int32:rc = raw test_end();
+    if (rc == 0i32) { exit 0; }
+    exit 1;
+};

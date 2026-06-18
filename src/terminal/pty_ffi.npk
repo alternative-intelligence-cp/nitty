@@ -79,4 +79,5 @@ extern "nitty_pty_shim" {
     func:nitty_pty_read_buf_len      = int64();
     func:nitty_pty_read_buf_str      = string();
     func:nitty_pty_write_byte        = int64(int64:fd, int64:byte_val);
+    func:nitty_pty_sleep_ms          = NIL(int64:ms);
 }

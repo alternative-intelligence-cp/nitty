@@ -61,3 +61,9 @@ pub func:pty_io_write_byte = int64(int64:master_fd, int64:byte_val) {
     int64:result = nitty_pty_write_byte(master_fd, byte_val);
     pass(result);
 };
+
+/// Sleep for ms milliseconds. Useful in tests to wait for shell output.
+pub func:pty_io_sleep_ms = NIL(int64:ms) {
+    nitty_pty_sleep_ms(ms);
+    pass(NIL);
+};

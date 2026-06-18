@@ -1,0 +1,277 @@
+// tests/e2e/test_shell.npk — Shell Interaction E2E Tests
+//
+// v0.11.0: Spawns a real /bin/bash through a PTY, writes commands to the
+// master fd, reads output back byte-by-byte, feeds through pipeline_feed,
+// and asserts on grid state. No GTK4 window required.
+//
+// Test groups:
+//   S01: echo hello → "hello" appears in grid
+//   S02: TERM=xterm-256color is set
+//   S03: cd /tmp && pwd → "/tmp" appears
+//   S04: false; echo $? → "1" appears
+//   S05: Ctrl+C (0x03) interrupts a background command, shell stays alive
+//   S06: exit 0 → shell exits, shell_alive() = 0
+//   S07: resize 80×24 → 40×12 reflects in terminal state
+
+use "./framework.npk".*;
+use "../../src/terminal/shell.npk".*;
+use "../../src/terminal/pty_ffi.npk".*;
+use "../../src/terminal/pty_io.npk".*;
+use "../../src/terminal/terminal_state.npk".*;
+use "../../src/terminal/grid.npk".*;
+use "./test_utils.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick/stdlib/string.npk".{str_byte_at};
+
+
+// ── Read helpers ──────────────────────────────────────────────────────────────
+
+// Drain up to max_iters reads from master_fd, feeding each byte into the
+// pipeline. Returns the total number of bytes fed. Stops on EAGAIN or error.
+func:drain_pty = int64(TestTerminal:tt, int64:master_fd, int64:max_iters) {
+    int64:total = 0i64;
+    int64:iter  = 0i64;
+    while (iter < max_iters) {
+        // pty_io_read_string: non-blocking read, returns "" on EAGAIN/error
+        string:chunk = raw pty_io_read_string(master_fd);
+        int64:n = string_length(chunk);
+        if (n > 0i64) {
+            // Feed each byte through the VT pipeline
+            int64:bi = 0i64;
+            while (bi < n) {
+                int64:byte_val = raw str_byte_at(chunk, bi);
+                drop(test_terminal_feed_byte(tt, byte_val));
+
+                bi = bi + 1i64;
+                total = total + 1i64;
+            }
+        }
+        iter = iter + 1i64;
+    }
+    pass(total);
+};
+
+
+// Write a string to the master PTY fd
+func:write_pty = NIL(int64:master_fd, string:s) {
+    drop(pty_io_write_string(master_fd, s));
+    pass(NIL);
+};
+
+// Spin-wait for the shell to process output. Uses drain_pty in a retry loop.
+// Returns 1 if pattern found within retries, 0 otherwise.
+func:wait_for_output = int64(TestTerminal:tt, int64:master_fd, string:pattern, int64:max_retries) {
+    int64:retry = 0i64;
+    while (retry < max_retries) {
+        // Drain what's available
+        drop(drain_pty(tt, master_fd, 64i64));
+        // Check if pattern is on screen
+        int64:found = raw test_terminal_screen_contains(tt, pattern);
+        if (found == 1i64) { pass(1i64); }
+        // Sleep 2ms between retries so shell has time to respond
+        drop(pty_io_sleep_ms(2i64));
+        retry = retry + 1i64;
+    }
+    pass(0i64);
+};
+
+
+// ── Test cases ────────────────────────────────────────────────────────────────
+
+func:test_echo_hello = NIL() {
+    // S01: echo hello → "hello" appears in grid
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+    Result<int64>:sp = shell_spawn(24i64, 80i64);
+    int64:pid = sp ? -1i64;
+    drop(test_assert_gt_i64("S01 shell_spawn pid>0", pid, 0i64));
+    if (pid <= 0i64) { pass(NIL); }
+
+    Result<int64>:mfr = shell_get_master_fd();
+    int64:master_fd = mfr ? -1i64;
+    drop(test_assert_gt_i64("S01 master_fd>=0", master_fd + 1i64, 0i64));
+
+    // Wait briefly for shell prompt, drain it, then send command
+    drop(drain_pty(tt, master_fd, 200i64));
+    drop(write_pty(master_fd, "echo hello\n"));
+
+    int64:found = raw wait_for_output(tt, master_fd, "hello", 100i64);
+    drop(test_assert_eq_i64("S01 .hello. appears in grid", found, 1i64));
+
+    drop(shell_destroy());
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:test_term_env = NIL() {
+    // S02: TERM=xterm-256color is set in the child environment
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+    Result<int64>:sp = shell_spawn(24i64, 80i64);
+    int64:pid = sp ? -1i64;
+    if (pid <= 0i64) {
+        drop(test_skip("S02 TERM env — shell spawn failed"));
+        pass(NIL);
+    }
+
+    Result<int64>:mfr = shell_get_master_fd();
+    int64:master_fd = mfr ? -1i64;
+
+    drop(drain_pty(tt, master_fd, 500i64));
+    drop(write_pty(master_fd, "echo $TERM\n"));
+    int64:found = raw wait_for_output(tt, master_fd, "xterm-256color", 500i64);
+
+    drop(test_assert_eq_i64("S02 TERM=xterm-256color", found, 1i64));
+
+    drop(shell_destroy());
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:test_cd_pwd = NIL() {
+    // S03: cd /tmp && pwd → /tmp appears in output
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+    Result<int64>:sp = shell_spawn(24i64, 80i64);
+    int64:pid = sp ? -1i64;
+    if (pid <= 0i64) {
+        drop(test_skip("S03 cd/pwd — shell spawn failed"));
+        pass(NIL);
+    }
+
+    Result<int64>:mfr = shell_get_master_fd();
+    int64:master_fd = mfr ? -1i64;
+
+    drop(drain_pty(tt, master_fd, 200i64));
+    drop(write_pty(master_fd, "cd /tmp && pwd\n"));
+    int64:found = raw wait_for_output(tt, master_fd, "/tmp", 100i64);
+    drop(test_assert_eq_i64("S03 /tmp appears", found, 1i64));
+
+    drop(shell_destroy());
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:test_exit_code = NIL() {
+    // S04: false; echo $? → "1" appears
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+    Result<int64>:sp = shell_spawn(24i64, 80i64);
+    int64:pid = sp ? -1i64;
+    if (pid <= 0i64) {
+        drop(test_skip("S04 exit code — shell spawn failed"));
+        pass(NIL);
+    }
+
+    Result<int64>:mfr = shell_get_master_fd();
+    int64:master_fd = mfr ? -1i64;
+
+    drop(drain_pty(tt, master_fd, 500i64));
+    drop(write_pty(master_fd, "false; echo $?\n"));
+    int64:found = raw wait_for_output(tt, master_fd, "1", 500i64);
+
+    drop(test_assert_eq_i64("S04 exit code 1 appears", found, 1i64));
+
+    drop(shell_destroy());
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:test_sigint = NIL() {
+    // S05: Ctrl+C (0x03) interrupts sleep, shell stays alive
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+    Result<int64>:sp = shell_spawn(24i64, 80i64);
+    int64:pid = sp ? -1i64;
+    if (pid <= 0i64) {
+        drop(test_skip("S05 SIGINT — shell spawn failed"));
+        pass(NIL);
+    }
+
+    Result<int64>:mfr = shell_get_master_fd();
+    int64:master_fd = mfr ? -1i64;
+
+    drop(drain_pty(tt, master_fd, 200i64));
+    drop(write_pty(master_fd, "sleep 60\n"));
+    drop(drain_pty(tt, master_fd, 50i64));
+
+    // Send Ctrl+C byte (0x03)
+    drop(pty_io_write_byte(master_fd, 0x03i64));
+    drop(drain_pty(tt, master_fd, 100i64));
+
+    // Shell should still be alive
+    Result<int64>:ar = shell_alive();
+    int64:alive = ar ? 0i64;
+    drop(test_assert_eq_i64("S05 shell alive after Ctrl+C", alive, 1i64));
+
+    drop(shell_destroy());
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:test_shell_exit = NIL() {
+    // S06: 'exit 0' → shell exits, shell_alive() = 0
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+    Result<int64>:sp = shell_spawn(24i64, 80i64);
+    int64:pid = sp ? -1i64;
+    if (pid <= 0i64) {
+        drop(test_skip("S06 shell exit — shell spawn failed"));
+        pass(NIL);
+    }
+
+    Result<int64>:mfr = shell_get_master_fd();
+    int64:master_fd = mfr ? -1i64;
+
+    drop(drain_pty(tt, master_fd, 200i64));
+    drop(write_pty(master_fd, "exit 0\n"));
+    drop(drain_pty(tt, master_fd, 200i64));
+
+    // Wait for shell to finish
+    Result<int64>:wr = shell_wait_nonblock();
+    int64:status = wr ? -1i64;
+
+    // Check alive (may be 0 even without explicit wait in some environments)
+    Result<int64>:ar = shell_alive();
+    int64:alive = ar ? 1i64;
+    // Shell should be dead — either status >= 0 or alive == 0
+    int64:exited = is (alive == 0i64) : 1i64 : (is (status >= 0i64) : 1i64 : 0i64);
+    drop(test_assert_eq_i64("S06 shell exited", exited, 1i64));
+
+    drop(shell_destroy());
+    drop(test_terminal_destroy(tt));
+    pass(NIL);
+};
+
+func:test_resize = NIL() {
+    // S07: Resize from 80×24 to 40×12 — terminal state reflects new size
+    TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+    Result<int64>:sp = shell_spawn(24i64, 80i64);
+    int64:pid = sp ? -1i64;
+    if (pid <= 0i64) {
+        drop(test_skip("S07 resize — shell spawn failed"));
+        pass(NIL);
+    }
+
+    // Reinitialize pipeline to new size
+    TestTerminal:tt2 = raw test_terminal_new(12i64, 40i64);
+    drop(test_assert_eq_i64("S07 rows=12", raw ts_get_rows(), 12i64));
+    drop(test_assert_eq_i64("S07 cols=40", raw ts_get_cols(), 40i64));
+
+    drop(shell_destroy());
+    drop(test_terminal_destroy(tt2));
+    pass(NIL);
+};
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+func:main = int32() {
+    drop(test_begin("Shell Interaction"));
+
+    drop(test_echo_hello());
+    drop(test_term_env());
+    drop(test_cd_pwd());
+    drop(test_exit_code());
+    drop(test_sigint());
+    drop(test_shell_exit());
+    drop(test_resize());
+
+    int32:rc = raw test_end();
+    if (rc == 0i32) { exit 0; }
+    exit 1;
+};

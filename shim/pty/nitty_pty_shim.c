@@ -712,3 +712,18 @@ int64_t nitty_pty_spawn_shell_cmd(int64_t master_fd, int64_t rows, int64_t cols,
 
     return (int64_t)pid;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Test helpers (v0.11.0)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+#include <time.h>
+
+void nitty_pty_sleep_ms(int64_t ms)
+{
+    if (ms <= 0) return;
+    struct timespec ts;
+    ts.tv_sec  = (time_t)(ms / 1000);
+    ts.tv_nsec = (long)((ms % 1000) * 1000000L);
+    nanosleep(&ts, NULL);
+}

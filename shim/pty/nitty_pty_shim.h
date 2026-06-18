@@ -180,6 +180,11 @@ const char *nitty_pty_read_buf_str(void);
  */
 int64_t nitty_pty_write_byte(int64_t fd, int64_t byte_val);
 
+/**
+ * Sleep for ms milliseconds. Used in tests to wait for shell output.
+ */
+void nitty_pty_sleep_ms(int64_t ms);
+
 #ifdef __cplusplus
 }
 #endif

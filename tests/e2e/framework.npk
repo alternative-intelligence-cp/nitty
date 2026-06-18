@@ -1,0 +1,293 @@
+// tests/e2e/framework.npk — Nitty v0.11.0 E2E Test Framework
+//
+// Provides a TestTerminal abstraction that wraps the headless pipeline
+// (pipeline_init + pipeline_feed) with helpers for feeding strings,
+// reading cell/line/screen content, and building assertions.
+//
+// Design:
+//   - TestTerminal is a struct holding rows, cols, and an initialized flag.
+//   - All terminal state is module-global (grid.npk, terminal_state.npk, etc.)
+//     so only ONE TestTerminal may be active at a time.
+//   - Call test_terminal_new() to reset the pipeline to a known state.
+//   - Feed bytes or strings, then assert with the helper functions.
+//
+// Public API:
+//   test_terminal_new(rows, cols) → TestTerminal
+//   test_terminal_feed_byte(tt, byte)
+//   test_terminal_feed_str(tt, s)
+//   test_terminal_get_cell_cp(tt, row, col) → int64
+//   test_terminal_get_cell_attrs(tt, row, col) → int64
+//   test_terminal_get_cell_flags(tt, row, col) → int64
+//   test_terminal_get_char_at(tt, row, col) → string  (single UTF-8 char)
+//   test_terminal_get_line(tt, row) → string
+//   test_terminal_get_screen_text(tt) → string
+//   test_terminal_screen_contains(tt, text) → int64
+//   test_terminal_cursor_row(tt) → int64
+//   test_terminal_cursor_col(tt) → int64
+//   test_terminal_pending_wrap(tt) → int64
+//   test_terminal_mode_alt_screen(tt) → int64
+//   test_terminal_cursor_shape(tt) → int64
+//   test_terminal_resize(tt, new_rows, new_cols)
+//   test_terminal_destroy(tt)
+//
+// Assert helpers (call test_begin before using these):
+//   assert_cell_cp(tt, row, col, expected, label)
+//   assert_cell_char(tt, row, col, expected_cp, label)
+//   assert_cursor_at(tt, row, col, label)
+//   assert_screen_contains(tt, text, label)
+//   assert_mode(tt, mode_val, expected, label)
+
+use "../../src/terminal/terminal_pipeline.npk".*;
+use "../../src/terminal/terminal_state.npk".*;
+use "../../src/terminal/grid.npk".*;
+use "../../src/terminal/attributes.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick/stdlib/string.npk".{str_byte_at};
+
+
+// Direct extern declarations for the nitpick-test C shim.
+// We call these directly rather than via nitpick_test.npk because the
+// wrapper functions in that module are module-private (func:, not pub func:).
+extern "nitpick_test_shim" {
+    func:nitpick_test_begin           = void(string:suite);
+    func:nitpick_test_set_verbose     = void(int32:v);
+    func:nitpick_test_end             = int32();
+    func:nitpick_test_passed_count    = int64();
+    func:nitpick_test_failed_count    = int64();
+    func:nitpick_test_skipped_count   = int64();
+    func:nitpick_test_total_count     = int64();
+    func:nitpick_test_skip            = void(string:name);
+    func:nitpick_test_assert          = void(string:name, int32:cond);
+    func:nitpick_test_assert_eq_i32   = void(string:name, int32:actual, int32:expected);
+    func:nitpick_test_assert_eq_i64   = void(string:name, int64:actual, int64:expected);
+    func:nitpick_test_assert_eq_str   = void(string:name, string:actual, string:expected);
+    func:nitpick_test_assert_near_f64 = void(string:name, flt64:actual, flt64:expected, flt64:epsilon);
+    func:nitpick_test_assert_not_empty = void(string:name, string:value);
+    func:nitpick_test_assert_gt_i32   = void(string:name, int32:actual, int32:threshold);
+    func:nitpick_test_assert_gt_i64   = void(string:name, int64:actual, int64:threshold);
+    func:nitpick_test_assert_ne_i32   = void(string:name, int32:actual, int32:unexpected);
+}
+
+// ── nitpick-test pub wrappers ─────────────────────────────────────────────────
+// These re-export the shim calls as pub func so test files can import them.
+
+pub func:test_begin = NIL(string:suite)
+    { nitpick_test_begin(suite); pass(NIL); };
+pub func:test_set_verbose = NIL(int32:v)
+    { nitpick_test_set_verbose(v); pass(NIL); };
+pub func:test_end = int32()
+    { pass(nitpick_test_end()); };
+pub func:test_passed_count = int64()
+    { pass(nitpick_test_passed_count()); };
+pub func:test_failed_count = int64()
+    { pass(nitpick_test_failed_count()); };
+pub func:test_skip = NIL(string:name)
+    { nitpick_test_skip(name); pass(NIL); };
+pub func:test_assert = NIL(string:name, int32:cond)
+    { nitpick_test_assert(name, cond); pass(NIL); };
+pub func:test_assert_eq_i32 = NIL(string:name, int32:a, int32:e)
+    { nitpick_test_assert_eq_i32(name, a, e); pass(NIL); };
+pub func:test_assert_eq_i64 = NIL(string:name, int64:a, int64:e)
+    { nitpick_test_assert_eq_i64(name, a, e); pass(NIL); };
+pub func:test_assert_eq_str = NIL(string:name, string:a, string:e)
+    { nitpick_test_assert_eq_str(name, a, e); pass(NIL); };
+pub func:test_assert_not_empty = NIL(string:name, string:v)
+    { nitpick_test_assert_not_empty(name, v); pass(NIL); };
+pub func:test_assert_gt_i32 = NIL(string:name, int32:a, int32:t)
+    { nitpick_test_assert_gt_i32(name, a, t); pass(NIL); };
+pub func:test_assert_gt_i64 = NIL(string:name, int64:a, int64:t)
+    { nitpick_test_assert_gt_i64(name, a, t); pass(NIL); };
+pub func:test_assert_ne_i32 = NIL(string:name, int32:a, int32:u)
+    { nitpick_test_assert_ne_i32(name, a, u); pass(NIL); };
+
+
+// ── TestTerminal struct ───────────────────────────────────────────────────────
+
+pub struct:TestTerminal = {
+    int64:rows;
+    int64:cols;
+    int64:initialized;  // 1 = live, 0 = destroyed
+};
+
+// ── Construction and destruction ──────────────────────────────────────────────
+
+/// Create (or reset) a headless terminal with the given dimensions.
+/// Reinitializes the full pipeline: parser + terminal state + grid.
+/// Also calls ts_reset_soft() to ensure mode flags (alt_screen, bracketed_paste,
+/// etc.) are cleared — ts_reset_hard() alone does not reset mode flags.
+pub func:test_terminal_new = TestTerminal(int64:rows, int64:cols) {
+    int64:r = rows;
+    int64:c = cols;
+    if (r < 1i64) { r = 24i64; }
+    if (c < 1i64) { c = 80i64; }
+    drop(pipeline_init(r, c));
+    drop(ts_reset_soft());
+    TestTerminal:tt;
+    tt.rows        = r;
+    tt.cols        = c;
+    tt.initialized = 1i64;
+    pass(tt);
+};
+
+
+/// Destroy a TestTerminal (marks it as uninitialized; no other cleanup needed
+/// since all state is module-global).
+pub func:test_terminal_destroy = NIL(TestTerminal:tt) {
+    pass(NIL);
+};
+
+/// Resize the terminal (re-init the pipeline with new dimensions, clearing state).
+pub func:test_terminal_resize = TestTerminal(TestTerminal:tt, int64:new_rows, int64:new_cols) {
+    pass(raw test_terminal_new(new_rows, new_cols));
+};
+
+// ── Input ─────────────────────────────────────────────────────────────────────
+
+/// Feed a single raw byte through the full VT pipeline.
+pub func:test_terminal_feed_byte = NIL(TestTerminal:tt, int64:byte) {
+    drop(pipeline_feed(byte));
+    pass(NIL);
+};
+
+/// Feed every byte of a string through the pipeline.
+/// Iterates character by character using string_substring.
+pub func:test_terminal_feed_str = NIL(TestTerminal:tt, string:s) {
+    int64:len = string_length(s);
+    int64:i = 0i64;
+    while (i < len) {
+        // Feed each byte individually. str_byte_at returns the raw byte as int64.
+        // For ASCII (0-127) this is exactly one byte.
+        // For multi-byte UTF-8 the parser handles reassembly.
+        int64:byte_val = raw str_byte_at(s, i);
+        drop(pipeline_feed(byte_val));
+        i = i + 1i64;
+    }
+    pass(NIL);
+};
+
+
+// ── Cell accessors ────────────────────────────────────────────────────────────
+
+/// Return the codepoint at (row, col). Returns 0x20 (space) for blank cells.
+pub func:test_terminal_get_cell_cp = int64(TestTerminal:tt, int64:row, int64:col) {
+    pass(raw grid_get_cp(row, col));
+};
+
+/// Return the packed fg/bg color attrs at (row, col).
+pub func:test_terminal_get_cell_attrs = int64(TestTerminal:tt, int64:row, int64:col) {
+    pass(raw grid_get_attrs(row, col));
+};
+
+/// Return the cell flags (bold/italic/underline bits) at (row, col).
+pub func:test_terminal_get_cell_flags = int64(TestTerminal:tt, int64:row, int64:col) {
+    pass(raw grid_get_flags(row, col));
+};
+
+// ── Line/screen text helpers ──────────────────────────────────────────────────
+
+/// Read one line of the grid as a string (trims trailing spaces).
+/// Builds the result by concatenating codepoints column-by-column.
+pub func:test_terminal_get_line = string(TestTerminal:tt, int64:row) {
+    string:line = "";
+    int64:col = 0i64;
+    while (col < tt.cols) {
+        int64:cp = raw grid_get_cp(row, col);
+        if (cp != 0x20i64) {
+            // Append the codepoint as a UTF-8 string fragment
+            line = string_concat(line, string_from_char(cp));
+        }
+        if (cp == 0x20i64) {
+            line = string_concat(line, " ");
+        }
+        col = col + 1i64;
+    }
+    // Trim trailing spaces
+    int64:trim_end = string_length(line);
+    while (trim_end > 0i64 && raw str_byte_at(line, trim_end - 1i64) == 0x20i64) {
+        trim_end = trim_end - 1i64;
+    }
+    pass(string_substring(line, 0i64, trim_end));
+};
+
+/// Return all rows joined by newlines.
+pub func:test_terminal_get_screen_text = string(TestTerminal:tt) {
+    string:screen = "";
+    int64:row = 0i64;
+    while (row < tt.rows) {
+        string:line = raw test_terminal_get_line(tt, row);
+        screen = string_concat(screen, line);
+        if (row < tt.rows - 1i64) {
+            screen = string_concat(screen, "\n");
+        }
+        row = row + 1i64;
+    }
+    pass(screen);
+};
+
+/// Returns 1 if the screen text contains `text`, 0 otherwise.
+pub func:test_terminal_screen_contains = int64(TestTerminal:tt, string:text) {
+    string:screen = raw test_terminal_get_screen_text(tt);
+    int64:hlen = string_length(screen);
+    int64:nlen = string_length(text);
+    if (nlen == 0i64) { pass(1i64); }
+    if (nlen > hlen)  { pass(0i64); }
+    int64:i = 0i64;
+    while (i <= hlen - nlen) {
+        string:sub = string_substring(screen, i, i + nlen);
+        if (sub == text) { pass(1i64); }
+        i = i + 1i64;
+    }
+    pass(0i64);
+};
+
+// ── Cursor/mode accessors ─────────────────────────────────────────────────────
+
+pub func:test_terminal_cursor_row    = int64(TestTerminal:tt) { pass(raw ts_get_cursor_row()); };
+pub func:test_terminal_cursor_col    = int64(TestTerminal:tt) { pass(raw ts_get_cursor_col()); };
+pub func:test_terminal_pending_wrap  = int64(TestTerminal:tt) { pass(raw ts_get_pending_wrap()); };
+pub func:test_terminal_mode_alt      = int64(TestTerminal:tt) { pass(raw ts_get_mode_alt_screen_full()); };
+pub func:test_terminal_cursor_shape  = int64(TestTerminal:tt) { pass(raw ts_get_cursor_shape()); };
+pub func:test_terminal_mode_cursor_visible = int64(TestTerminal:tt) { pass(raw ts_get_mode_cursor_visible()); };
+pub func:test_terminal_mode_bracketed_paste = int64(TestTerminal:tt) { pass(raw ts_get_mode_bracketed_paste()); };
+pub func:test_terminal_scroll_top    = int64(TestTerminal:tt) { pass(raw ts_get_scroll_top()); };
+pub func:test_terminal_scroll_bottom = int64(TestTerminal:tt) { pass(raw ts_get_scroll_bottom()); };
+
+// ── Attribute helpers ─────────────────────────────────────────────────────────
+
+pub func:test_terminal_attrs_bold      = int64(TestTerminal:tt) { pass(raw attrs_get_bold()); };
+pub func:test_terminal_attrs_italic    = int64(TestTerminal:tt) { pass(raw attrs_get_italic()); };
+pub func:test_terminal_attrs_underline = int64(TestTerminal:tt) { pass(raw attrs_get_underline()); };
+pub func:test_terminal_attrs_inverse   = int64(TestTerminal:tt) { pass(raw attrs_get_inverse()); };
+pub func:test_terminal_attrs_strike    = int64(TestTerminal:tt) { pass(raw attrs_get_strikethrough()); };
+pub func:test_terminal_attrs_fg        = int64(TestTerminal:tt) { pass(raw attrs_get_fg()); };
+pub func:test_terminal_attrs_bg        = int64(TestTerminal:tt) { pass(raw attrs_get_bg()); };
+
+// ── Assert helpers ────────────────────────────────────────────────────────────
+
+/// Assert that the codepoint at (row, col) equals expected_cp.
+pub func:assert_cell_cp = NIL(TestTerminal:tt, int64:row, int64:col, int64:expected, string:label) {
+    int64:got = raw test_terminal_get_cell_cp(tt, row, col);
+    drop(test_assert_eq_i64(label, got, expected));
+    pass(NIL);
+};
+
+/// Assert that cursor is at the given (row, col).
+pub func:assert_cursor_at = NIL(TestTerminal:tt, int64:row, int64:col, string:label) {
+    int64:r = raw test_terminal_cursor_row(tt);
+    int64:c = raw test_terminal_cursor_col(tt);
+    drop(test_assert_eq_i64(string_concat(label, " [row]"), r, row));
+    drop(test_assert_eq_i64(string_concat(label, " [col]"), c, col));
+    pass(NIL);
+};
+
+/// Assert that the screen text contains the given string.
+pub func:assert_screen_contains = NIL(TestTerminal:tt, string:text, string:label) {
+    int64:found = raw test_terminal_screen_contains(tt, text);
+    drop(test_assert_eq_i64(label, found, 1i64));
+    pass(NIL);
+};
+
+/// Assert that a mode value equals expected.
+pub func:assert_mode = NIL(TestTerminal:tt, int64:mode_val, int64:expected, string:label) {
+    drop(test_assert_eq_i64(label, mode_val, expected));
+    pass(NIL);
+};

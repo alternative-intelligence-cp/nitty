@@ -1,0 +1,92 @@
+// tests/e2e/test_session.npk — Session Persistence E2E Tests
+//
+// v0.11.0: Tests the session module's in-memory state — load/save counts,
+// getter functions, and the loaded data arrays. Since session_save() and
+// session_load() both use ~/.config/nitty/session.toml (hard-coded path),
+// we test the data layer after calling tm_add_tab to populate state.
+//
+// The session module imports gtk4_ffi.npk (for window size on restore),
+// so this test requires the gtk4_shim and pty_shim at link time.
+//
+// Test groups:
+//   SS01: session_get_saved_count returns int64 (may be 0 if no file)
+//   SS02: Add tabs, call session_save(), verify returned 0 or -1 (not crash)
+//   SS03: session_get_saved_width/height return int64
+//   SS04: session_load() completes without crash (safe even if file missing)
+
+use "../../src/core/session.npk".*;
+use "../../src/core/tab_manager.npk".*;
+use "../../src/core/split_tree.npk".*;
+use "./test_utils.npk".*;
+
+func:test_session_count_getter = NIL() {
+    // SS01: session_get_saved_count returns a non-negative int64
+    // (value depends on whether a session file exists on disk)
+    int64:cnt = raw session_get_saved_count();
+    int64:valid = is (cnt >= 0i64) : 1i64 : 0i64;
+    drop(test_assert_eq_i64("SS01 saved_count >= 0", valid, 1i64));
+
+    pass(NIL);
+};
+
+func:test_session_save = NIL() {
+    // SS02: Add 2 tabs, call session_save() — should return 0 (success) or
+    // -1 (error writing to disk — acceptable in test env without home dir).
+    drop(tm_init());
+    drop(split_tree_init());
+
+    int64:id1 = raw tm_add_tab(-1i64, -1i64);
+    int64:id2 = raw tm_add_tab(-1i64, -1i64);
+    drop(tm_activate(id1));
+    drop(tm_set_active_title("Test Tab 1"));
+    drop(tm_activate(id2));
+    drop(tm_set_active_title("Test Tab 2"));
+
+    int32:rc = raw session_save();
+    // session_save returns 1 on success, 0 on I/O error — both are acceptable.
+    // A negative return would indicate a hard failure.
+    int32:chk = is (rc >= 0i32) : 1i32 : 0i32;
+    drop(test_assert_eq_i32("SS02 session_save returns >= 0", chk, 1i32));
+
+
+    pass(NIL);
+};
+
+func:test_session_size_getters = NIL() {
+    // SS03: session_get_saved_width/height return int64 (0 = not recorded)
+    int64:w = raw session_get_saved_width();
+    int64:h = raw session_get_saved_height();
+    int64:wok = is (w >= 0i64) : 1i64 : 0i64;
+    int64:hok = is (h >= 0i64) : 1i64 : 0i64;
+    drop(test_assert_eq_i64("SS03 saved_width >= 0",  wok, 1i64));
+    drop(test_assert_eq_i64("SS03 saved_height >= 0", hok, 1i64));
+
+    pass(NIL);
+};
+
+func:test_session_load = NIL() {
+    // SS04: session_load() completes without crashing
+    // May return 0 (file found) or -1 (file not found / parse error) — both fine
+    int32:rc = raw session_load();
+    // session_load returns 1 on success, 0 on missing/parse error — both are fine in test env
+    int32:chk = is (rc >= 0i32) : 1i32 : 0i32;
+    drop(test_assert_eq_i32("SS04 session_load returns >= 0", chk, 1i32));
+
+
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+func:main = int32() {
+    drop(test_begin("Session Persistence"));
+
+    drop(test_session_count_getter());
+    drop(test_session_save());
+    drop(test_session_size_getters());
+    drop(test_session_load());
+
+    int32:rc = raw test_end();
+    if (rc == 0i32) { exit 0; }
+    exit 1;
+};

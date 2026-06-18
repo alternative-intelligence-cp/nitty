@@ -1,0 +1,58 @@
+// tests/e2e/test_utils.npk — Nitty v0.11.0 E2E Test Utilities
+//
+// Provides pub func wrappers around the nitpick-test shim extern functions.
+// Import this with use "./test_utils.npk".* to access test_begin,
+// test_assert_eq_i64, etc. as public functions.
+//
+// Background: nitpick_test.npk's wrapper functions are module-private
+// (func:, not pub func:), so they are not accessible via use "...".*.
+// This module re-declares the externs and wraps them as pub func.
+
+extern "nitpick_test_shim" {
+    func:nitpick_test_begin           = void(string:suite);
+    func:nitpick_test_set_verbose     = void(int32:v);
+    func:nitpick_test_end             = int32();
+    func:nitpick_test_passed_count    = int64();
+    func:nitpick_test_failed_count    = int64();
+    func:nitpick_test_skipped_count   = int64();
+    func:nitpick_test_total_count     = int64();
+    func:nitpick_test_skip            = void(string:name);
+    func:nitpick_test_assert          = void(string:name, int32:cond);
+    func:nitpick_test_assert_eq_i32   = void(string:name, int32:actual, int32:expected);
+    func:nitpick_test_assert_eq_i64   = void(string:name, int64:actual, int64:expected);
+    func:nitpick_test_assert_eq_str   = void(string:name, string:actual, string:expected);
+    func:nitpick_test_assert_near_f64 = void(string:name, flt64:actual, flt64:expected, flt64:epsilon);
+    func:nitpick_test_assert_not_empty = void(string:name, string:value);
+    func:nitpick_test_assert_gt_i32   = void(string:name, int32:actual, int32:threshold);
+    func:nitpick_test_assert_gt_i64   = void(string:name, int64:actual, int64:threshold);
+    func:nitpick_test_assert_ne_i32   = void(string:name, int32:actual, int32:unexpected);
+}
+
+pub func:test_begin = NIL(string:suite)
+    { nitpick_test_begin(suite); pass(NIL); };
+pub func:test_set_verbose = NIL(int32:v)
+    { nitpick_test_set_verbose(v); pass(NIL); };
+pub func:test_end = int32()
+    { pass(nitpick_test_end()); };
+pub func:test_passed_count = int64()
+    { pass(nitpick_test_passed_count()); };
+pub func:test_failed_count = int64()
+    { pass(nitpick_test_failed_count()); };
+pub func:test_skip = NIL(string:name)
+    { nitpick_test_skip(name); pass(NIL); };
+pub func:test_assert = NIL(string:name, int32:cond)
+    { nitpick_test_assert(name, cond); pass(NIL); };
+pub func:test_assert_eq_i32 = NIL(string:name, int32:a, int32:e)
+    { nitpick_test_assert_eq_i32(name, a, e); pass(NIL); };
+pub func:test_assert_eq_i64 = NIL(string:name, int64:a, int64:e)
+    { nitpick_test_assert_eq_i64(name, a, e); pass(NIL); };
+pub func:test_assert_eq_str = NIL(string:name, string:a, string:e)
+    { nitpick_test_assert_eq_str(name, a, e); pass(NIL); };
+pub func:test_assert_not_empty = NIL(string:name, string:v)
+    { nitpick_test_assert_not_empty(name, v); pass(NIL); };
+pub func:test_assert_gt_i32 = NIL(string:name, int32:a, int32:t)
+    { nitpick_test_assert_gt_i32(name, a, t); pass(NIL); };
+pub func:test_assert_gt_i64 = NIL(string:name, int64:a, int64:t)
+    { nitpick_test_assert_gt_i64(name, a, t); pass(NIL); };
+pub func:test_assert_ne_i32 = NIL(string:name, int32:a, int32:u)
+    { nitpick_test_assert_ne_i32(name, a, u); pass(NIL); };
