@@ -1,0 +1,213 @@
+// tests/stress/test_rapid_resize.npk — Nitty v0.11.2 Rapid Resize Stress Tests
+//
+// Stress-tests the terminal resize path: cursor clamping, grid dimension
+// correctness, alt-screen resize, and minimum-size edge cases.
+//
+// T01–T10: Shrink loop — resize 50× smaller, verify cursor clamped in bounds
+// T11–T20: Grow loop — resize 50× larger, verify grid expands correctly
+// T21–T30: Alt-screen resize — enter alt, resize, exit; main screen intact
+// T31–T40: Minimum-size round-trip — resize to 1×1, write, resize back
+
+use "../../tests/e2e/framework.npk".*;
+
+pub func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+pub func:main = int32() {
+    nitpick_test_begin("rapid_resize");
+
+    // ── T01–T10: Shrink loop ──────────────────────────────────────────────────
+    // Start at 80×24, write some content, then resize down 10 steps.
+    // Cursor must always be within [0, rows) × [0, cols).
+
+    TestTerminal:tt1 = raw test_terminal_new(24i64, 80i64);
+    // Position cursor at 20,70 via CSI H
+    drop(test_terminal_feed_str(tt1, "\x1b[21;71H"));
+    nitpick_test_assert_eq_i64("T01 cursor at row 20 before shrink",
+        raw test_terminal_cursor_row(tt1), 20i64);
+
+    // Shrink: 80×24 → 70×20
+    tt1 = raw test_terminal_resize(tt1, 20i64, 70i64);
+    nitpick_test_assert("T02 cursor row clamped after shrink to 20 rows",
+        (raw test_terminal_cursor_row(tt1) < 20i64) => int32);
+    nitpick_test_assert("T03 cursor col clamped after shrink to 70 cols",
+        (raw test_terminal_cursor_col(tt1) < 70i64) => int32);
+
+    // Shrink: 70×20 → 40×15
+    tt1 = raw test_terminal_resize(tt1, 15i64, 40i64);
+    nitpick_test_assert("T04 cursor row clamped after shrink to 15 rows",
+        (raw test_terminal_cursor_row(tt1) < 15i64) => int32);
+    nitpick_test_assert("T05 cursor col clamped after shrink to 40 cols",
+        (raw test_terminal_cursor_col(tt1) < 40i64) => int32);
+
+    // Shrink: 40×15 → 20×10
+    tt1 = raw test_terminal_resize(tt1, 10i64, 20i64);
+    nitpick_test_assert("T06 cursor row clamped after shrink to 10 rows",
+        (raw test_terminal_cursor_row(tt1) < 10i64) => int32);
+    nitpick_test_assert("T07 cursor col clamped after shrink to 20 cols",
+        (raw test_terminal_cursor_col(tt1) < 20i64) => int32);
+
+    // Shrink: 20×10 → 10×5
+    tt1 = raw test_terminal_resize(tt1, 5i64, 10i64);
+    nitpick_test_assert("T08 cursor row in bounds at 5 rows",
+        (raw test_terminal_cursor_row(tt1) < 5i64) => int32);
+    nitpick_test_assert("T09 cursor col in bounds at 10 cols",
+        (raw test_terminal_cursor_col(tt1) < 10i64) => int32);
+
+    // Can write after extreme shrink
+    drop(test_terminal_feed_str(tt1, "X"));
+    nitpick_test_assert("T10 write survives after extreme shrink",
+        (raw test_terminal_cursor_col(tt1) >= 0i64) => int32);
+
+    // ── T11–T20: Grow loop ────────────────────────────────────────────────────
+    // Start at 10×5, grow in steps to 300×100.
+
+    TestTerminal:tt2 = raw test_terminal_new(5i64, 10i64);
+    drop(test_terminal_feed_str(tt2, "SEED"));
+    nitpick_test_assert_eq_i64("T11 seed content written at col 4",
+        raw test_terminal_cursor_col(tt2), 4i64);
+
+    // Grow: 10×5 → 40×15
+    tt2 = raw test_terminal_resize(tt2, 15i64, 40i64);
+    nitpick_test_assert("T12 cursor col valid after grow to 40 cols",
+        (raw test_terminal_cursor_col(tt2) < 40i64) => int32);
+    nitpick_test_assert("T13 cursor row valid after grow to 15 rows",
+        (raw test_terminal_cursor_row(tt2) < 15i64) => int32);
+
+    // Grow: 40×15 → 120×40
+    tt2 = raw test_terminal_resize(tt2, 40i64, 120i64);
+    nitpick_test_assert("T14 cursor col valid after grow to 120 cols",
+        (raw test_terminal_cursor_col(tt2) < 120i64) => int32);
+    nitpick_test_assert("T15 cursor row valid after grow to 40 rows",
+        (raw test_terminal_cursor_row(tt2) < 40i64) => int32);
+
+    // Grow: 120×40 → 300×100
+    tt2 = raw test_terminal_resize(tt2, 100i64, 300i64);
+    nitpick_test_assert("T16 cursor col valid after grow to 300 cols",
+        (raw test_terminal_cursor_col(tt2) < 300i64) => int32);
+    nitpick_test_assert("T17 cursor row valid after grow to 100 rows",
+        (raw test_terminal_cursor_row(tt2) < 100i64) => int32);
+
+    // Write content at large size
+    drop(test_terminal_feed_str(tt2, "\x1b[50;150HBIG"));
+    nitpick_test_assert_eq_i64("T18 cursor positioned at row 49 in large terminal",
+        raw test_terminal_cursor_row(tt2), 49i64);
+
+    // Shrink back to 24×80 — content is intact (no crash)
+    tt2 = raw test_terminal_resize(tt2, 24i64, 80i64);
+    nitpick_test_assert("T19 cursor row in bounds after shrink back",
+        (raw test_terminal_cursor_row(tt2) < 24i64) => int32);
+    nitpick_test_assert("T20 cursor col in bounds after shrink back",
+        (raw test_terminal_cursor_col(tt2) < 80i64) => int32);
+
+    // ── T21–T30: Alt-screen resize ────────────────────────────────────────────
+    // Enter alt screen, resize, write, exit — main screen survives.
+
+    TestTerminal:tt3 = raw test_terminal_new(24i64, 80i64);
+    // Write to main screen first
+    drop(test_terminal_feed_str(tt3, "MAIN_CONTENT\n"));
+    int64:main_row_before = raw test_terminal_cursor_row(tt3);
+
+    // Enter alt screen
+    drop(test_terminal_feed_str(tt3, "\x1b[?1049h"));
+    nitpick_test_assert("T21 alt screen entered",
+        (raw test_terminal_mode_alt(tt3) != 0i64) => int32);
+
+    // Resize while in alt screen
+    tt3 = raw test_terminal_resize(tt3, 40i64, 100i64);
+    nitpick_test_assert("T22 cursor row valid in alt after resize",
+        (raw test_terminal_cursor_row(tt3) < 40i64) => int32);
+    nitpick_test_assert("T23 cursor col valid in alt after resize",
+        (raw test_terminal_cursor_col(tt3) < 100i64) => int32);
+
+    // Write to alt screen
+    drop(test_terminal_feed_str(tt3, "ALT_CONTENT"));
+    nitpick_test_assert_eq_i64("T24 alt content written at col 11",
+        raw test_terminal_cursor_col(tt3), 11i64);
+
+    // Resize again in alt screen
+    tt3 = raw test_terminal_resize(tt3, 24i64, 80i64);
+    nitpick_test_assert("T25 cursor in bounds after resize back in alt",
+        (raw test_terminal_cursor_row(tt3) < 24i64) => int32);
+
+    // Exit alt screen
+    drop(test_terminal_feed_str(tt3, "\x1b[?1049l"));
+    nitpick_test_assert("T26 alt screen exited",
+        (raw test_terminal_mode_alt(tt3) == 0i64) => int32);
+
+    // Main screen cursor should be in bounds
+    nitpick_test_assert("T27 main screen cursor row in bounds after alt exit",
+        (raw test_terminal_cursor_row(tt3) < 24i64) => int32);
+
+    // Can write to main screen after alt cycle with resize
+    drop(test_terminal_feed_str(tt3, "BACK_ON_MAIN\n"));
+    nitpick_test_assert("T28 main screen writable after alt+resize cycle",
+        (raw test_terminal_cursor_col(tt3) < 90i64) => int32);
+
+    // Resize main screen after returning from alt
+    tt3 = raw test_terminal_resize(tt3, 30i64, 90i64);
+    nitpick_test_assert("T29 resize after alt-exit: cursor row in bounds",
+        (raw test_terminal_cursor_row(tt3) < 30i64) => int32);
+    nitpick_test_assert("T30 resize after alt-exit: cursor col in bounds",
+        (raw test_terminal_cursor_col(tt3) < 90i64) => int32);
+
+    // ── T31–T40: Minimum-size round-trip ─────────────────────────────────────
+    // Resize to 1×1 — write — resize back — verify no corruption.
+
+    TestTerminal:tt4 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_str(tt4, "\x1b[12;40H"));  // cursor near center
+
+    // Resize to 1×1
+    tt4 = raw test_terminal_resize(tt4, 1i64, 1i64);
+    nitpick_test_assert_eq_i64("T31 cursor row is 0 at 1×1",
+        raw test_terminal_cursor_row(tt4), 0i64);
+    nitpick_test_assert_eq_i64("T32 cursor col is 0 at 1×1",
+        raw test_terminal_cursor_col(tt4), 0i64);
+
+    // Write at 1×1 — fills only cell [0,0]
+    drop(test_terminal_feed_str(tt4, "Z"));
+    nitpick_test_assert_eq_i64("T33 cell [0,0] is 'Z' at 1×1",
+        raw test_terminal_get_cell_cp(tt4, 0i64, 0i64), 0x5Ai64);
+
+    // Resize to 2×2
+    tt4 = raw test_terminal_resize(tt4, 2i64, 2i64);
+    nitpick_test_assert("T34 cursor in 2×2 bounds after resize from 1×1",
+        (raw test_terminal_cursor_col(tt4) < 2i64) => int32);
+
+    // Resize to 5×5
+    tt4 = raw test_terminal_resize(tt4, 5i64, 5i64);
+    drop(test_terminal_feed_str(tt4, "AB"));
+    nitpick_test_assert_eq_i64("T35 write at 5×5 after min-size: cursor at col 2",
+        raw test_terminal_cursor_col(tt4), 2i64);
+
+    // Resize back to 24×80
+    tt4 = raw test_terminal_resize(tt4, 24i64, 80i64);
+    nitpick_test_assert("T36 cursor row in 24×80 after min-size round-trip",
+        (raw test_terminal_cursor_row(tt4) < 24i64) => int32);
+    nitpick_test_assert("T37 cursor col in 24×80 after min-size round-trip",
+        (raw test_terminal_cursor_col(tt4) < 80i64) => int32);
+
+    // Can do cursor positioning in full-size terminal after min-size trip
+    drop(test_terminal_feed_str(tt4, "\x1b[10;20H"));
+    nitpick_test_assert_eq_i64("T38 positioning works after min-size round-trip",
+        raw test_terminal_cursor_row(tt4), 9i64);
+
+    // Rapid alternating resize (10 steps)
+    int64:ri = 0i64;
+    while (ri < 10i64) {
+        if (ri % 2i64 == 0i64) {
+            tt4 = raw test_terminal_resize(tt4, 10i64, 20i64);
+        } else {
+            tt4 = raw test_terminal_resize(tt4, 24i64, 80i64);
+        }
+        ri = ri + 1i64;
+    }
+    // Final state is 24×80 (10 iterations, last is odd → 24×80)
+    nitpick_test_assert("T39 cursor row valid after 10 alternating resizes",
+        (raw test_terminal_cursor_row(tt4) < 24i64) => int32);
+    nitpick_test_assert("T40 cursor col valid after 10 alternating resizes",
+        (raw test_terminal_cursor_col(tt4) < 80i64) => int32);
+
+    int32:rc = raw test_end();
+    if (rc == 0i32) { exit 0; }
+    exit 1;
+};

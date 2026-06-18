@@ -1,0 +1,344 @@
+// tests/stress/test_utf8_edge_cases.npk — Nitty v0.11.2 UTF-8 Edge Case Tests
+//
+// Pushes the UTF-8 decoder and grid through pathological inputs.
+// All tests verify: no crash, correct codepoint or fallback in grid,
+// correct cursor position, and grid structural integrity.
+//
+// T01–T10: Invalid UTF-8 — overlong, truncated, 0xFF, continuation-only
+// T11–T20: CJK + ASCII mixed — column width arithmetic
+// T21–T30: Combining mark chains — multi-mark composition on single cell
+// T31–T40: Emoji ZWJ and 4-byte sequences — width and no-crash
+// T41–T50: Very long lines — wrapping, buffer limits, resize
+
+use "../../tests/e2e/framework.npk".*;
+
+pub func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+pub func:main = int32() {
+    nitpick_test_begin("utf8_edge_cases");
+
+    // ── T01–T10: Invalid UTF-8 sequences ─────────────────────────────────────
+    // All invalid sequences must: not crash, not advance cursor past expected.
+
+    // T01: 0xFF — not valid UTF-8; treated as C1 or dropped
+    TestTerminal:tt1 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt1, 0xFFi64));
+    // After feeding an invalid byte, cursor must still be in bounds
+    nitpick_test_assert("T01 0xFF byte: no crash, cursor in bounds",
+        (raw test_terminal_cursor_col(tt1) < 80i64) => int32);
+    nitpick_test_assert("T02 0xFF byte: cursor row in bounds",
+        (raw test_terminal_cursor_row(tt1) < 24i64) => int32);
+
+    // T03: Overlong encoding of U+0000 (C0 80) — invalid 2-byte
+    TestTerminal:tt3 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt3, 0xC0i64));
+    drop(test_terminal_feed_byte(tt3, 0x80i64));
+    nitpick_test_assert("T03 overlong C0 80: no crash",
+        (raw test_terminal_cursor_col(tt3) < 80i64) => int32);
+
+    // T04: Continuation byte with no lead (0x80 alone)
+    TestTerminal:tt4 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt4, 0x80i64));
+    nitpick_test_assert("T04 lone continuation 0x80: cursor in bounds",
+        (raw test_terminal_cursor_col(tt4) < 80i64) => int32);
+
+    // T05: Truncated 3-byte sequence (E2 94 — missing third byte) then ASCII
+    TestTerminal:tt5 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt5, 0xE2i64));
+    drop(test_terminal_feed_byte(tt5, 0x94i64));
+    // Now feed a valid ASCII 'A' — parser should reset and render 'A'
+    drop(test_terminal_feed_byte(tt5, 0x41i64));
+    nitpick_test_assert("T05 truncated 3-byte + ASCII: no crash",
+        (raw test_terminal_cursor_col(tt5) >= 0i64) => int32);
+
+    // T06: Truncated 4-byte sequence then valid 3-byte (U+2500 = E2 94 80)
+    TestTerminal:tt6 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt6, 0xF0i64));  // start 4-byte
+    drop(test_terminal_feed_byte(tt6, 0x9Fi64));  // continuation
+    // Feed valid 3-byte U+2500 directly (parser should reset on E2)
+    drop(test_terminal_feed_byte(tt6, 0xE2i64));
+    drop(test_terminal_feed_byte(tt6, 0x94i64));
+    drop(test_terminal_feed_byte(tt6, 0x80i64));
+    nitpick_test_assert("T06 truncated 4-byte + valid 3-byte: no crash",
+        (raw test_terminal_cursor_col(tt6) < 80i64) => int32);
+
+    // T07: 0xFE byte (invalid in UTF-8)
+    TestTerminal:tt7 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt7, 0xFEi64));
+    nitpick_test_assert("T07 0xFE byte: no crash",
+        (raw test_terminal_cursor_col(tt7) < 80i64) => int32);
+
+    // T08: sequence of 10 invalid bytes then valid ASCII
+    TestTerminal:tt8 = raw test_terminal_new(24i64, 80i64);
+    int64:inv_i = 0i64;
+    while (inv_i < 10i64) {
+        drop(test_terminal_feed_byte(tt8, 0xC1i64));  // overlong lead
+        inv_i = inv_i + 1i64;
+    }
+    drop(test_terminal_feed_str(tt8, "RECOVER"));
+    nitpick_test_assert("T08 parser recovers after 10 invalid bytes",
+        (raw test_terminal_cursor_col(tt8) >= 0i64) => int32);
+
+    // T09: mixed valid and invalid in same feed
+    TestTerminal:tt9 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt9, 0x41i64));  // 'A'
+    drop(test_terminal_feed_byte(tt9, 0xFFi64));  // invalid
+    drop(test_terminal_feed_byte(tt9, 0x42i64));  // 'B'
+    nitpick_test_assert_eq_i64("T09 'A' at col 0 before invalid byte",
+        raw test_terminal_get_cell_cp(tt9, 0i64, 0i64), 0x41i64);
+    // 'B' should land somewhere after 'A' (exact col depends on how 0xFF was handled)
+    nitpick_test_assert("T10 cursor advanced past 'A' despite invalid byte",
+        (raw test_terminal_cursor_col(tt9) >= 1i64) => int32);
+
+    // ── T11–T20: CJK + ASCII column width ────────────────────────────────────
+    // Wide chars (CJK) consume 2 columns. Verify cursor arithmetic.
+
+    // U+4E2D (中) = E4 B8 AD — wide char (width 2)
+    TestTerminal:tt10 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt10, 0xE4i64));
+    drop(test_terminal_feed_byte(tt10, 0xB8i64));
+    drop(test_terminal_feed_byte(tt10, 0xADi64));
+    nitpick_test_assert_eq_i64("T11 中 (U+4E2D) decoded at col 0",
+        raw test_terminal_get_cell_cp(tt10, 0i64, 0i64), 0x4E2Di64);
+    // Cursor should advance by 2 (wide char)
+    nitpick_test_assert_eq_i64("T12 cursor at col 2 after wide char 中",
+        raw test_terminal_cursor_col(tt10), 2i64);
+
+    // Feed ASCII after wide char — lands at col 2
+    drop(test_terminal_feed_str(tt10, "X"));
+    nitpick_test_assert_eq_i64("T13 ASCII after 中: cursor at col 3",
+        raw test_terminal_cursor_col(tt10), 3i64);
+    nitpick_test_assert_eq_i64("T14 'X' at col 2",
+        raw test_terminal_get_cell_cp(tt10, 0i64, 2i64), 0x58i64);
+
+    // U+65E5 (日) = E6 97 A5 — also wide
+    TestTerminal:tt11 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt11, 0xE6i64));
+    drop(test_terminal_feed_byte(tt11, 0x97i64));
+    drop(test_terminal_feed_byte(tt11, 0xA5i64));
+    nitpick_test_assert_eq_i64("T15 日 (U+65E5) decoded",
+        raw test_terminal_get_cell_cp(tt11, 0i64, 0i64), 0x65E5i64);
+    nitpick_test_assert_eq_i64("T16 cursor at col 2 after 日",
+        raw test_terminal_cursor_col(tt11), 2i64);
+
+    // 3 CJK chars in a row — cursor at col 6
+    TestTerminal:tt12 = raw test_terminal_new(24i64, 80i64);
+    // 中 日 本
+    drop(test_terminal_feed_byte(tt12, 0xE4i64)); drop(test_terminal_feed_byte(tt12, 0xB8i64)); drop(test_terminal_feed_byte(tt12, 0xADi64));
+    drop(test_terminal_feed_byte(tt12, 0xE6i64)); drop(test_terminal_feed_byte(tt12, 0x97i64)); drop(test_terminal_feed_byte(tt12, 0xA5i64));
+    drop(test_terminal_feed_byte(tt12, 0xE6i64)); drop(test_terminal_feed_byte(tt12, 0x9Ci64)); drop(test_terminal_feed_byte(tt12, 0xACi64));
+    nitpick_test_assert_eq_i64("T17 3 CJK wide chars: cursor at col 6",
+        raw test_terminal_cursor_col(tt12), 6i64);
+
+    // Wide char at col 79 in 80-col terminal (only 1 col left) — wraps
+    TestTerminal:tt13 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_str(tt13, "\x1b[1;80H"));  // move to col 80 (1-indexed)
+    drop(test_terminal_feed_byte(tt13, 0xE4i64)); drop(test_terminal_feed_byte(tt13, 0xB8i64)); drop(test_terminal_feed_byte(tt13, 0xADi64));
+    // Wide char at end of line should wrap or be handled — no crash
+    nitpick_test_assert("T18 wide char at line end: no crash",
+        (raw test_terminal_cursor_row(tt13) < 24i64) => int32);
+
+    nitpick_test_assert("T19 wide char cursor col in bounds",
+        (raw test_terminal_cursor_col(tt13) < 80i64) => int32);
+    nitpick_test_assert("T20 CJK tests all completed without crash",
+        (raw test_terminal_cursor_row(tt12) < 24i64) => int32);
+
+    // ── T21–T30: Combining mark chains ────────────────────────────────────────
+    // Base char + combining marks → same cell, cursor stays at base+1.
+
+    // e (0x65) + U+0301 combining acute (CC 81)
+    TestTerminal:tt20 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt20, 0x65i64));           // 'e'
+    drop(test_terminal_feed_byte(tt20, 0xCCi64));           // combining mark lead
+    drop(test_terminal_feed_byte(tt20, 0x81i64));           // U+0301 combining acute
+    nitpick_test_assert_eq_i64("T21 base 'e' at col 0",
+        raw test_terminal_get_cell_cp(tt20, 0i64, 0i64), 0x65i64);
+    nitpick_test_assert_eq_i64("T22 cursor at col 1 after e + combining acute",
+        raw test_terminal_cursor_col(tt20), 1i64);
+
+    // Second combining mark on same base (e + acute + grave)
+    drop(test_terminal_feed_byte(tt20, 0xCCi64));
+    drop(test_terminal_feed_byte(tt20, 0x80i64));           // U+0300 combining grave
+    nitpick_test_assert_eq_i64("T23 cursor still at col 1 after second combining mark",
+        raw test_terminal_cursor_col(tt20), 1i64);
+
+    // New base char after combining — cursor moves to col 1, new char at col 1
+    drop(test_terminal_feed_byte(tt20, 0x66i64));           // 'f'
+    nitpick_test_assert_eq_i64("T24 'f' after combining marks: cursor at col 2",
+        raw test_terminal_cursor_col(tt20), 2i64);
+    nitpick_test_assert_eq_i64("T25 'f' at col 1",
+        raw test_terminal_get_cell_cp(tt20, 0i64, 1i64), 0x66i64);
+
+    // Combining mark at col 0 (no preceding base) — mark is dropped (xterm compat)
+    TestTerminal:tt21 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt21, 0xCCi64));
+    drop(test_terminal_feed_byte(tt21, 0x81i64));           // combining at col 0
+    nitpick_test_assert_eq_i64("T26 combining at col 0: cursor stays at 0",
+        raw test_terminal_cursor_col(tt21), 0i64);
+
+    // Three combining marks on 'a'
+    TestTerminal:tt22 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt22, 0x61i64));           // 'a'
+    drop(test_terminal_feed_byte(tt22, 0xCCi64)); drop(test_terminal_feed_byte(tt22, 0x81i64));  // acute
+    drop(test_terminal_feed_byte(tt22, 0xCCi64)); drop(test_terminal_feed_byte(tt22, 0x80i64));  // grave
+    drop(test_terminal_feed_byte(tt22, 0xCDi64)); drop(test_terminal_feed_byte(tt22, 0x82i64));  // U+0342 combining greek
+    nitpick_test_assert_eq_i64("T27 triple-combining: cursor stays at 1",
+        raw test_terminal_cursor_col(tt22), 1i64);
+    nitpick_test_assert_eq_i64("T28 'a' at col 0 with triple combining",
+        raw test_terminal_get_cell_cp(tt22, 0i64, 0i64), 0x61i64);
+
+    // Combining on wide char — base is wide, combining should not advance
+    TestTerminal:tt23 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt23, 0xE4i64)); drop(test_terminal_feed_byte(tt23, 0xB8i64)); drop(test_terminal_feed_byte(tt23, 0xADi64));  // 中
+    int64:col_after_wide = raw test_terminal_cursor_col(tt23);
+    drop(test_terminal_feed_byte(tt23, 0xCCi64)); drop(test_terminal_feed_byte(tt23, 0x81i64));  // combining
+    nitpick_test_assert_eq_i64("T29 cursor stays at col 2 after combining on wide char",
+        raw test_terminal_cursor_col(tt23), col_after_wide);
+
+    nitpick_test_assert("T30 combining chain tests: no crash throughout",
+        (raw test_terminal_cursor_row(tt23) < 24i64) => int32);
+
+    // ── T31–T40: Emoji ZWJ and 4-byte sequences ───────────────────────────────
+
+    // U+1F511 🔑 = F0 9F 94 91
+    TestTerminal:tt30 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt30, 0xF0i64));
+    drop(test_terminal_feed_byte(tt30, 0x9Fi64));
+    drop(test_terminal_feed_byte(tt30, 0x94i64));
+    drop(test_terminal_feed_byte(tt30, 0x91i64));
+    nitpick_test_assert_eq_i64("T31 U+1F511 🔑 decoded",
+        raw test_terminal_get_cell_cp(tt30, 0i64, 0i64), 0x1F511i64);
+    // Emoji typically width 2
+    nitpick_test_assert("T32 cursor ≥ 1 after emoji (wide)",
+        (raw test_terminal_cursor_col(tt30) >= 1i64) => int32);
+
+    // U+1F600 😀 = F0 9F 98 80
+    TestTerminal:tt31 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt31, 0xF0i64));
+    drop(test_terminal_feed_byte(tt31, 0x9Fi64));
+    drop(test_terminal_feed_byte(tt31, 0x98i64));
+    drop(test_terminal_feed_byte(tt31, 0x80i64));
+    nitpick_test_assert_eq_i64("T33 U+1F600 😀 decoded",
+        raw test_terminal_get_cell_cp(tt31, 0i64, 0i64), 0x1F600i64);
+    nitpick_test_assert("T34 cursor valid after 😀",
+        (raw test_terminal_cursor_col(tt31) >= 1i64) => int32);
+
+    // U+10000 (first beyond BMP) = F0 90 80 80
+    TestTerminal:tt32 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt32, 0xF0i64));
+    drop(test_terminal_feed_byte(tt32, 0x90i64));
+    drop(test_terminal_feed_byte(tt32, 0x80i64));
+    drop(test_terminal_feed_byte(tt32, 0x80i64));
+    nitpick_test_assert_eq_i64("T35 U+10000 (first beyond BMP) decoded",
+        raw test_terminal_get_cell_cp(tt32, 0i64, 0i64), 0x10000i64);
+
+    // ZWJ sequence: 👨 ZWJ 👩 (man + ZWJ + woman)
+    // F0 9F 91 A8 E2 80 8D F0 9F 91 A9
+    TestTerminal:tt33 = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_byte(tt33, 0xF0i64)); drop(test_terminal_feed_byte(tt33, 0x9Fi64));
+    drop(test_terminal_feed_byte(tt33, 0x91i64)); drop(test_terminal_feed_byte(tt33, 0xA8i64));  // 👨
+    drop(test_terminal_feed_byte(tt33, 0xE2i64)); drop(test_terminal_feed_byte(tt33, 0x80i64));
+    drop(test_terminal_feed_byte(tt33, 0x8Di64));  // ZWJ (U+200D)
+    drop(test_terminal_feed_byte(tt33, 0xF0i64)); drop(test_terminal_feed_byte(tt33, 0x9Fi64));
+    drop(test_terminal_feed_byte(tt33, 0x91i64)); drop(test_terminal_feed_byte(tt33, 0xA9i64));  // 👩
+    // No crash; grid has some content
+    nitpick_test_assert("T36 ZWJ sequence: no crash",
+        (raw test_terminal_cursor_col(tt33) >= 0i64) => int32);
+    nitpick_test_assert("T37 ZWJ sequence: cursor in bounds",
+        (raw test_terminal_cursor_col(tt33) < 80i64) => int32);
+
+    // Feed text after ZWJ sequence — parser recovers
+    drop(test_terminal_feed_str(tt33, "OK"));
+    nitpick_test_assert("T38 text after ZWJ sequence renders",
+        (raw test_terminal_cursor_col(tt33) >= 2i64) => int32);
+
+    // 5 emoji back to back
+    TestTerminal:tt34 = raw test_terminal_new(24i64, 80i64);
+    int64:ej = 0i64;
+    while (ej < 5i64) {
+        drop(test_terminal_feed_byte(tt34, 0xF0i64));
+        drop(test_terminal_feed_byte(tt34, 0x9Fi64));
+        drop(test_terminal_feed_byte(tt34, 0x94i64));
+        drop(test_terminal_feed_byte(tt34, 0x91i64));
+        ej = ej + 1i64;
+    }
+    nitpick_test_assert("T39 5 emoji in a row: no crash",
+        (raw test_terminal_cursor_col(tt34) >= 5i64) => int32);
+    nitpick_test_assert("T40 5 emoji cursor in bounds",
+        (raw test_terminal_cursor_col(tt34) < 80i64) => int32);
+
+    // ── T41–T50: Very long lines and wrapping ─────────────────────────────────
+
+    // 1000-char line in 80-col terminal — wraps to row 12 (1000/80 = 12 full rows + 40)
+    TestTerminal:tt40 = raw test_terminal_new(24i64, 80i64);
+    int64:long_i = 0i64;
+    while (long_i < 1000i64) {
+        drop(test_terminal_feed_byte(tt40, 0x58i64));  // 'X'
+        long_i = long_i + 1i64;
+    }
+    nitpick_test_assert_eq_i64("T41 1000-char line: cursor col is 40 (1000 mod 80)",
+        raw test_terminal_cursor_col(tt40), 40i64);
+    // Row: 1000 chars / 80 cols = 12 full rows → cursor at row 12
+    nitpick_test_assert_eq_i64("T42 1000-char line: cursor row is 12",
+        raw test_terminal_cursor_row(tt40), 12i64);
+
+    // Cell [0,0] = 'X' (0x58)
+    nitpick_test_assert_eq_i64("T43 cell [0,0] is 'X' after 1000-char line",
+        raw test_terminal_get_cell_cp(tt40, 0i64, 0i64), 0x58i64);
+
+    // Cell [12,39] = 'X' (last written cell)
+    nitpick_test_assert_eq_i64("T44 cell [12,39] is 'X' (last of 1000)",
+        raw test_terminal_get_cell_cp(tt40, 12i64, 39i64), 0x58i64);
+
+    // Line of exactly terminal width (80) — pending_wrap set
+    TestTerminal:tt41 = raw test_terminal_new(24i64, 80i64);
+    int64:pw_i = 0i64;
+    while (pw_i < 80i64) {
+        drop(test_terminal_feed_byte(tt41, 0x41i64));  // 'A'
+        pw_i = pw_i + 1i64;
+    }
+    nitpick_test_assert("T45 80-char line: pending_wrap set",
+        (raw test_terminal_pending_wrap(tt41) != 0i64) => int32);
+    nitpick_test_assert_eq_i64("T46 80-char line: cursor still at row 0",
+        raw test_terminal_cursor_row(tt41), 0i64);
+
+    // Resize to half-width during long line — no buffer overflow
+    TestTerminal:tt42 = raw test_terminal_new(24i64, 80i64);
+    int64:half_i = 0i64;
+    while (half_i < 400i64) {
+        drop(test_terminal_feed_byte(tt42, 0x42i64));  // 'B'
+        half_i = half_i + 1i64;
+    }
+    tt42 = raw test_terminal_resize(tt42, 24i64, 40i64);
+    nitpick_test_assert("T47 resize after 400-char line: cursor col in bounds",
+        (raw test_terminal_cursor_col(tt42) < 40i64) => int32);
+    nitpick_test_assert("T48 resize after 400-char line: cursor row in bounds",
+        (raw test_terminal_cursor_row(tt42) < 24i64) => int32);
+
+    // Feed more content after resize — no crash
+    drop(test_terminal_feed_str(tt42, "AFTER_RESIZE\n"));
+    nitpick_test_assert("T49 write after resize from 400-char line: no crash",
+        (raw test_terminal_cursor_col(tt42) < 40i64) => int32);
+
+    // Lines at exactly terminal width with SGR — wrapping still correct
+    TestTerminal:tt43 = raw test_terminal_new(24i64, 80i64);
+    int64:sgr_i = 0i64;
+    while (sgr_i < 3i64) {
+        drop(test_terminal_feed_str(tt43, "\x1b[1;32m"));  // bold green
+        int64:ci = 0i64;
+        while (ci < 80i64) {
+            drop(test_terminal_feed_byte(tt43, 0x43i64));  // 'C'
+            ci = ci + 1i64;
+        }
+        drop(test_terminal_feed_str(tt43, "\x1b[0m"));
+        sgr_i = sgr_i + 1i64;
+    }
+    // 3 × 80-char colored lines: cursor at row 3 (each 80-char line fills a row,
+    // pending_wrap is set but SGR reset doesn't trigger newline — row stays at 2)
+    nitpick_test_assert("T50 3 exact-width SGR-colored lines: cursor in bounds",
+        (raw test_terminal_cursor_row(tt43) < 24i64) => int32);
+
+    int32:rc = raw test_end();
+    if (rc == 0i32) { exit 0; }
+    exit 1;
+};

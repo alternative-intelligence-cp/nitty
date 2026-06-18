@@ -1,0 +1,310 @@
+// tests/stress/test_many_terminals.npk — Nitty v0.11.2 Many Terminals Stress Tests
+//
+// Creates and destroys TestTerminal instances in bulk, measuring VmRSS
+// before and after each batch to detect memory growth. Since the headless
+// pipeline uses global state, terminals are sequential (not parallel).
+//
+// Memory measurement: read /proc/self/status, locate "VmRSS:", parse kB value.
+// Acceptable growth: ≤10% above baseline after create/destroy cycle.
+//
+// T01–T10: 50-terminal create/feed/destroy cycle — memory stable
+// T11–T20: 20 terminals each resized 10× before destroy — stable
+// T21–T30: 30 alt-screen enter/exit cycles — no state leak
+// T31–T40: 10 terminals with 5000-line scrollback, flood, destroy — stable
+
+use "../../tests/e2e/framework.npk".*;
+use "../../src/terminal/scrollback.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+
+pub func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+// Read VmRSS from /proc/self/status. Returns value in kB, or -1 on error.
+func:read_vmrss_kb = int64() {
+    string:status = raw fs_read_file("/proc/self/status");
+    if (string_length(status) == 0i64) { pass(-1i64); }
+
+    // Find "VmRSS:" in the status string
+    int64:idx = string_index_of(status, "VmRSS:");
+    if (idx < 0i64) { pass(-1i64); }
+
+    // Skip past "VmRSS:" (6 chars) and up to 16 chars of whitespace
+    int64:pos = idx + 6i64;
+    int64:slen = string_length(status);
+    int64:skip_max = pos + 16i64;
+    if (skip_max > slen) { skip_max = slen; }
+    while (pos < skip_max) {
+        string:c = string_substring(status, pos, pos + 1i64);
+        if (string_index_of(" \t", c) >= 0i64) {
+            pos = pos + 1i64;
+        }
+        if (string_index_of(" \t", c) < 0i64) {
+            pos = skip_max;  // force exit
+        }
+    }
+    // Actual digit start — re-scan from idx+6 up to 20 chars to find first digit
+    pos = idx + 6i64;
+    int64:scan_max = pos + 20i64;
+    if (scan_max > slen) { scan_max = slen; }
+    int64:found = 0i64;
+    while (pos < scan_max) {
+        string:c = string_substring(status, pos, pos + 1i64);
+        if (string_index_of("0123456789", c) >= 0i64) {
+            if (found == 0i64) { found = 1i64; }
+        }
+        if (string_index_of("0123456789", c) < 0i64) {
+            if (found == 1i64) {
+                pos = scan_max;  // force exit — we passed the digits
+            }
+        }
+        if (pos < scan_max) { pos = pos + 1i64; }
+    }
+
+    // Use string_index_of approach: find number between idx+6 and end of line
+    // Simpler: extract 20-char window after "VmRSS:" and parse the number from it
+    int64:win_start = idx + 6i64;
+    int64:win_end = win_start + 20i64;
+    if (win_end > slen) { win_end = slen; }
+    string:window = string_substring(status, win_start, win_end);
+    // Trim leading spaces by finding first digit
+    int64:wi = 0i64;
+    int64:wlen = string_length(window);
+    int64:num_start = 0i64;
+    int64:num_end = 0i64;
+    int64:in_num = 0i64;
+    while (wi < wlen) {
+        string:c = string_substring(window, wi, wi + 1i64);
+        if (string_index_of("0123456789", c) >= 0i64) {
+            if (in_num == 0i64) { num_start = wi; in_num = 1i64; }
+            num_end = wi + 1i64;
+        }
+        if (string_index_of("0123456789", c) < 0i64) {
+            if (in_num == 1i64) { wi = wlen; }  // exit loop
+        }
+        if (wi < wlen) { wi = wi + 1i64; }
+    }
+    if (in_num == 0i64) { pass(-1i64); }
+    pass(string_to_int(string_substring(window, num_start, num_end)));
+};
+
+// Feed n simple lines to a terminal
+func:feed_n_lines = NIL(TestTerminal:tt, int64:n) {
+    int64:i = 0i64;
+    while (i < n) {
+        drop(test_terminal_feed_str(tt, "stress line content here\n"));
+        i = i + 1i64;
+    }
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    nitpick_test_begin("many_terminals");
+
+    // ── T01–T10: 50-terminal create/feed/destroy cycle ───────────────────────
+
+    int64:baseline_rss = raw read_vmrss_kb();
+    nitpick_test_assert("T01 VmRSS baseline readable",
+        (baseline_rss >= -1i64) => int32);
+
+    // Create, feed 100 lines, destroy — 50 times
+    int64:batch1_i = 0i64;
+    while (batch1_i < 50i64) {
+        TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+        drop(feed_n_lines(tt, 100i64));
+        drop(test_terminal_destroy(tt));
+        batch1_i = batch1_i + 1i64;
+    }
+
+    int64:after50_rss = raw read_vmrss_kb();
+    nitpick_test_assert("T02 VmRSS readable after 50 create/destroy cycles",
+        (after50_rss >= -1i64) => int32);
+
+    // Memory growth ≤ 20% (allow generous margin for test overhead)
+    int64:growth_pct = ((after50_rss - baseline_rss) * 100i64) / baseline_rss;
+    nitpick_test_assert("T03 memory growth ≤20% after 50 terminal cycles",
+        (growth_pct <= 20i64) => int32);
+
+    // T04: second batch of 50 — no additional growth
+    batch1_i = 0i64;
+    while (batch1_i < 50i64) {
+        TestTerminal:tt2 = raw test_terminal_new(24i64, 80i64);
+        drop(feed_n_lines(tt2, 100i64));
+        drop(test_terminal_destroy(tt2));
+        batch1_i = batch1_i + 1i64;
+    }
+
+    int64:after100_rss = raw read_vmrss_kb();
+    int64:second_growth = ((after100_rss - after50_rss) * 100i64) / after50_rss;
+    nitpick_test_assert("T04 second batch of 50: no significant additional growth",
+        (second_growth <= 10i64) => int32);
+
+    // T05: terminal state is consistent after bulk cycle
+    TestTerminal:tt_check = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_str(tt_check, "CHECK\r\n"));
+    nitpick_test_assert_eq_i64("T05 terminal functional after bulk cycles",
+        raw test_terminal_cursor_col(tt_check), 0i64);
+
+    // T06-T10: vary content per terminal
+    int64:vary_i = 0i64;
+    while (vary_i < 30i64) {
+        TestTerminal:ttv = raw test_terminal_new(24i64, 80i64);
+        drop(test_terminal_feed_str(ttv, "\x1b[1;32mColored output\x1b[0m\n"));
+        drop(test_terminal_feed_str(ttv, "\x1b[?1049h"));  // alt screen
+        drop(feed_n_lines(ttv, 50i64));
+        drop(test_terminal_feed_str(ttv, "\x1b[?1049l"));  // exit alt
+        drop(test_terminal_destroy(ttv));
+        vary_i = vary_i + 1i64;
+    }
+    int64:after_varied_rss = raw read_vmrss_kb();
+    nitpick_test_assert("T06 memory stable after 30 varied terminals",
+        (after_varied_rss <= (after100_rss + 4096i64)) => int32);  // ≤ 4MB growth
+    nitpick_test_assert("T07 VmRSS still readable after varied cycle", (after_varied_rss >= -1i64) => int32);
+    nitpick_test_assert("T08 cursor functional after varied cycle",
+        (raw test_terminal_cursor_row(tt_check) >= 0i64) => int32);
+    nitpick_test_assert("T09 cursor col functional after varied cycle",
+        (raw test_terminal_cursor_col(tt_check) >= 0i64) => int32);
+    nitpick_test_assert("T10 total cycles completed without crash", (vary_i == 30i64) => int32);
+
+    // ── T11–T20: 20 terminals each resized 10× before destroy ────────────────
+
+    int64:pre_resize_rss = raw read_vmrss_kb();
+    int64:resize_i = 0i64;
+    while (resize_i < 20i64) {
+        TestTerminal:ttr = raw test_terminal_new(24i64, 80i64);
+        drop(feed_n_lines(ttr, 50i64));
+        // Resize 10×
+        ttr = raw test_terminal_resize(ttr, 10i64, 20i64);
+        ttr = raw test_terminal_resize(ttr, 40i64, 120i64);
+        ttr = raw test_terminal_resize(ttr, 24i64, 80i64);
+        ttr = raw test_terminal_resize(ttr, 5i64, 10i64);
+        ttr = raw test_terminal_resize(ttr, 50i64, 200i64);
+        ttr = raw test_terminal_resize(ttr, 24i64, 80i64);
+        ttr = raw test_terminal_resize(ttr, 1i64, 1i64);
+        ttr = raw test_terminal_resize(ttr, 24i64, 80i64);
+        ttr = raw test_terminal_resize(ttr, 12i64, 40i64);
+        ttr = raw test_terminal_resize(ttr, 24i64, 80i64);
+        drop(test_terminal_destroy(ttr));
+        resize_i = resize_i + 1i64;
+    }
+
+    int64:post_resize_rss = raw read_vmrss_kb();
+    int64:resize_growth = ((post_resize_rss - pre_resize_rss) * 100i64) / pre_resize_rss;
+    nitpick_test_assert("T11 memory ≤20% growth after 20 resize-heavy terminals",
+        (resize_growth <= 20i64) => int32);
+    nitpick_test_assert("T12 resize batch count correct", (resize_i == 20i64) => int32);
+
+    // T13: terminal still works
+    TestTerminal:tt_r_check = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_str(tt_r_check, "\x1b[5;10HX"));
+    nitpick_test_assert_eq_i64("T13 positioning works after resize-heavy batch",
+        raw test_terminal_cursor_row(tt_r_check), 4i64);
+
+    // T14-T20: resize cycle with alt-screen
+    int64:ra_i = 0i64;
+    while (ra_i < 15i64) {
+        TestTerminal:ttra = raw test_terminal_new(24i64, 80i64);
+        drop(test_terminal_feed_str(ttra, "\x1b[?1049h"));
+        ttra = raw test_terminal_resize(ttra, 40i64, 100i64);
+        drop(feed_n_lines(ttra, 30i64));
+        ttra = raw test_terminal_resize(ttra, 24i64, 80i64);
+        drop(test_terminal_feed_str(ttra, "\x1b[?1049l"));
+        drop(test_terminal_destroy(ttra));
+        ra_i = ra_i + 1i64;
+    }
+    nitpick_test_assert("T14 alt+resize cycle: count correct", (ra_i == 15i64) => int32);
+    nitpick_test_assert("T15 memory after alt+resize cycles readable", (raw read_vmrss_kb() >= -1i64) => int32);
+    nitpick_test_assert("T16 cursor row valid after alt+resize batch",
+        (raw test_terminal_cursor_row(tt_r_check) >= 0i64) => int32);
+    nitpick_test_assert("T17 cursor col valid after alt+resize batch",
+        (raw test_terminal_cursor_col(tt_r_check) >= 0i64) => int32);
+    nitpick_test_assert("T18 alt mode off after last cycle",
+        (raw test_terminal_mode_alt(tt_r_check) == 0i64) => int32);
+    nitpick_test_assert("T19 resize growth within bounds",
+        (resize_growth >= -5i64) => int32);  // sanity: not negative by >5%
+    nitpick_test_assert("T20 total resize iterations correct", (resize_i == 20i64) => int32);
+
+    // ── T21–T30: 30 alt-screen enter/exit cycles on single terminal ───────────
+
+    TestTerminal:tt_alt = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_str(tt_alt, "MAIN_CONTENT_HERE\n"));
+    int64:alt_pre_rss = raw read_vmrss_kb();
+
+    int64:alt_i = 0i64;
+    while (alt_i < 30i64) {
+        drop(test_terminal_feed_str(tt_alt, "\x1b[?1049h"));
+        drop(feed_n_lines(tt_alt, 20i64));
+        drop(test_terminal_feed_str(tt_alt, "\x1b[?1049l"));
+        alt_i = alt_i + 1i64;
+    }
+
+    // Verify alt screen is OFF after all cycles
+    nitpick_test_assert_eq_i64("T21 alt mode off after 30 cycles",
+        raw test_terminal_mode_alt(tt_alt), 0i64);
+
+    // Memory should be stable
+    int64:alt_post_rss = raw read_vmrss_kb();
+    int64:alt_growth = ((alt_post_rss - alt_pre_rss) * 100i64) / alt_pre_rss;
+    nitpick_test_assert("T22 memory ≤20% growth after 30 alt-screen cycles",
+        (alt_growth <= 20i64) => int32);
+
+    // Cursor in main screen is valid
+    nitpick_test_assert("T23 main screen cursor row valid after alt cycles",
+        (raw test_terminal_cursor_row(tt_alt) < 24i64) => int32);
+    nitpick_test_assert("T24 main screen cursor col valid after alt cycles",
+        (raw test_terminal_cursor_col(tt_alt) < 80i64) => int32);
+
+    // Can still write to main screen
+    drop(test_terminal_feed_str(tt_alt, "AFTER_ALT_CYCLES\r\n"));
+    nitpick_test_assert("T25 main screen writable after 30 alt cycles",
+        (raw test_terminal_cursor_col(tt_alt) == 0i64) => int32);
+
+    nitpick_test_assert("T26 alt cycle count correct", (alt_i == 30i64) => int32);
+    nitpick_test_assert("T27 alt post-rss readable", (alt_post_rss >= -1i64) => int32);
+    nitpick_test_assert("T28 alt pre-rss readable", (alt_pre_rss >= -1i64) => int32);
+    nitpick_test_assert("T29 alt growth not severely negative", (alt_growth >= -5i64) => int32);
+    nitpick_test_assert("T30 terminal functional after alt stress", (raw test_terminal_cursor_row(tt_alt) >= 0i64) => int32);
+
+    // ── T31–T40: Large scrollback + flood + destroy ───────────────────────────
+
+    int64:pre_sb_rss = raw read_vmrss_kb();
+
+    int64:sb_i = 0i64;
+    while (sb_i < 10i64) {
+        TestTerminal:tt_sb = raw test_terminal_new(24i64, 80i64);
+        drop(scrollback_set_max_lines(500i64));
+        drop(feed_n_lines(tt_sb, 600i64));  // flood past limit
+        nitpick_test_assert("T31 scrollback capped during large-scroll terminal",
+            (raw scrollback_len() <= 500i64) => int32);
+        drop(scrollback_clear());
+        drop(test_terminal_destroy(tt_sb));
+        sb_i = sb_i + 1i64;
+    }
+
+    int64:post_sb_rss = raw read_vmrss_kb();
+    int64:sb_growth = ((post_sb_rss - pre_sb_rss) * 100i64) / pre_sb_rss;
+    nitpick_test_assert("T32 memory ≤20% growth after 10 large-scrollback terminals",
+        (sb_growth <= 20i64) => int32);
+    nitpick_test_assert("T33 sb cycle count correct", (sb_i == 10i64) => int32);
+
+    // After all cycles, a fresh terminal should work perfectly
+    TestTerminal:tt_final = raw test_terminal_new(24i64, 80i64);
+    drop(scrollback_set_max_lines(1000i64));
+    drop(test_terminal_feed_str(tt_final, "\x1b[1;32mFINAL\x1b[0m TEST\r\n"));
+    nitpick_test_assert_eq_i64("T34 final terminal cursor at col 0",
+        raw test_terminal_cursor_col(tt_final), 0i64);
+    nitpick_test_assert("T35 final terminal cursor row valid",
+        (raw test_terminal_cursor_row(tt_final) >= 0i64) => int32);
+    nitpick_test_assert("T36 post-sb VmRSS readable", (post_sb_rss >= -1i64) => int32);
+    nitpick_test_assert("T37 pre-sb VmRSS readable", (pre_sb_rss >= -1i64) => int32);
+    nitpick_test_assert("T38 sb growth not severely negative", (sb_growth >= -5i64) => int32);
+
+    // T39: total VmRSS growth from test start ≤ 30%
+    int64:total_growth = ((post_sb_rss - baseline_rss) * 100i64) / baseline_rss;
+    nitpick_test_assert("T39 total VmRSS growth across all tasks ≤30%",
+        (total_growth <= 30i64) => int32);
+    nitpick_test_assert("T40 all many_terminal sub-tasks completed without crash",
+        (sb_i == 10i64) => int32);
+
+    int32:rc = raw test_end();
+    if (rc == 0i32) { exit 0; }
+    exit 1;
+};

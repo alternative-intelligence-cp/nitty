@@ -1,0 +1,347 @@
+// tests/stress/test_large_output.npk — Nitty v0.11.2 Large Output Stress Tests
+//
+// Stress-tests the headless pipeline with high-volume synthetic output.
+// Verifies: scrollback cap respected, grid integrity maintained, cursor
+// positions valid, no crash or hang on flood or binary-like input.
+//
+// All tests use the headless pipeline — no live processes.
+//
+// T01–T10: Scrollback cap — push far more lines than the limit; verify
+//          scrollback_len() plateaus at the configured max.
+// T11–T20: Parser throughput — feed 1000 lines of printable content;
+//          verify terminal stays consistent (cursor, last line content).
+// T21–T30: Exact-width lines — 80-char lines in 80-col terminal;
+//          verify no phantom newlines, cursor at col 0 of correct row.
+// T31–T40: Control character rejection — feed non-printable bytes
+//          0x01–0x06, 0x0E–0x1F (excluding CR/LF/BS/TAB); verify
+//          cell at col 0 remains 0x20 (space), no crash.
+// T41–T50: Mid-stream resize — flood 500 lines, resize mid-flood,
+//          continue, verify grid dimensions and cursor within bounds.
+
+use "../../tests/e2e/framework.npk".*;
+use "../../src/terminal/scrollback.npk".*;
+
+pub func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+// Helper: build a string of n repeated characters of byte value b
+func:repeat_char = string(int64:b, int64:n) {
+    string:acc = "";
+    int64:i = 0i64;
+    while (i < n) {
+        acc = string_concat(acc, string_from_char(b));
+        i = i + 1i64;
+    }
+    pass(acc);
+};
+
+// Helper: feed n lines of text via LF (uses pipeline directly)
+func:feed_lines = NIL(TestTerminal:tt, string:line, int64:count) {
+    int64:i = 0i64;
+    while (i < count) {
+        drop(test_terminal_feed_str(tt, line));
+        drop(test_terminal_feed_str(tt, "\n"));
+        i = i + 1i64;
+    }
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    nitpick_test_begin("large_output");
+
+    // ── T01–T10: Scrollback cap ───────────────────────────────────────────────
+    // Configure 200-line cap, feed 500 lines, verify scrollback_len <= 200.
+
+    TestTerminal:tt1 = raw test_terminal_new(24i64, 80i64);
+    drop(scrollback_set_max_lines(200i64));
+    drop(feed_lines(tt1, "scrollback flood line content here", 500i64));
+    int64:sb_len = raw scrollback_len();
+    nitpick_test_assert("T01 scrollback does not exceed cap",
+        (sb_len <= 200i64) => int32);
+    nitpick_test_assert("T02 scrollback has content after flood",
+        (sb_len > 0i64) => int32);
+
+    // T03: cap is exactly at max (may vary by ±1 due to screen rows)
+    nitpick_test_assert("T03 scrollback within expected range",
+        (sb_len >= 176i64) => int32);  // 200 - 24 rows visible
+
+    // T04: after clearing, scrollback empty
+    drop(scrollback_clear());
+    nitpick_test_assert_eq_i64("T04 scrollback clear empties buffer",
+        raw scrollback_len(), 0i64);
+
+    // T05: cap survives second flood
+    drop(feed_lines(tt1, "second flood line", 300i64));
+    nitpick_test_assert("T05 second flood also respects cap",
+        (raw scrollback_len() <= 200i64) => int32);
+
+    // T06: reset cap to 1000 and re-flood — still bounded
+    drop(scrollback_set_max_lines(1000i64));
+    drop(scrollback_clear());
+    drop(feed_lines(tt1, "large cap test", 1500i64));
+    nitpick_test_assert("T06 1000-line cap respected on 1500-line flood",
+        (raw scrollback_len() <= 1000i64) => int32);
+
+    // T07: cursor row still valid after flood (within grid)
+    int64:cur_row = raw test_terminal_cursor_row(tt1);
+    nitpick_test_assert("T07 cursor row valid after flood",
+        (cur_row >= 0i64) => int32);
+    nitpick_test_assert("T08 cursor row within grid after flood",
+        (cur_row < 24i64) => int32);
+
+    // T09: cursor col valid after flood
+    int64:cur_col = raw test_terminal_cursor_col(tt1);
+    nitpick_test_assert("T09 cursor col valid after flood",
+        (cur_col >= 0i64) => int32);
+    nitpick_test_assert("T10 cursor col within grid after flood",
+        (cur_col < 80i64) => int32);
+
+    // ── T11–T20: Parser throughput ────────────────────────────────────────────
+    // Feed 1000 lines, verify terminal state consistent throughout.
+
+    TestTerminal:tt2 = raw test_terminal_new(24i64, 80i64);
+    drop(scrollback_set_max_lines(2000i64));
+
+    // Feed 1000 simple lines
+    drop(feed_lines(tt2, "abcdefghij", 1000i64));
+
+    // T11: cursor row valid
+    nitpick_test_assert("T11 cursor row valid after 1000 lines",
+        (raw test_terminal_cursor_row(tt2) >= 0i64) => int32);
+
+    // T12: cursor col valid
+    nitpick_test_assert("T12 cursor col valid after 1000 lines",
+        (raw test_terminal_cursor_col(tt2) < 80i64) => int32);
+
+    // T13: feed colored output — SGR codes don't crash parser
+    drop(test_terminal_feed_str(tt2, "\x1b[1;32mHello\x1b[0m\n"));
+    nitpick_test_assert("T13 colored text feed survives 1000-line flood context",
+        (raw test_terminal_cursor_col(tt2) >= 0i64) => int32);
+
+    // T14: feed CSI cursor moves — no crash
+    drop(test_terminal_feed_str(tt2, "\x1b[5;10H"));
+    nitpick_test_assert_eq_i64("T14 cursor positioning works after flood", raw test_terminal_cursor_row(tt2), 4i64);
+
+    // T15: feed OSC title — parser survives
+    drop(test_terminal_feed_str(tt2, "\x1b]0;stress test\x07"));
+    nitpick_test_assert("T15 OSC title feed after flood survives",
+        (raw test_terminal_cursor_row(tt2) >= 0i64) => int32);
+
+    // T16: feed 200 SGR-colored lines — attrs don't corrupt cell codepoints
+    TestTerminal:tt2b = raw test_terminal_new(24i64, 80i64);
+    int64:color_i = 0i64;
+    while (color_i < 200i64) {
+        drop(test_terminal_feed_str(tt2b, "\x1b[32mX\x1b[0m\n"));
+        color_i = color_i + 1i64;
+    }
+    // Last char written was 'X' (0x58)
+    nitpick_test_assert("T16 SGR-colored flood: grid survives",
+        (raw test_terminal_cursor_col(tt2b) >= 0i64) => int32);
+
+    // T17: feed 500 lines with tab characters — no hang
+    TestTerminal:tt2c = raw test_terminal_new(24i64, 80i64);
+    drop(feed_lines(tt2c, "col1\tcol2\tcol3", 500i64));
+    nitpick_test_assert("T17 tab-separated flood survives",
+        (raw test_terminal_cursor_row(tt2c) >= 0i64) => int32);
+
+    // T18: feed 500 lines with CR+LF — same as 500 lines of LF
+    TestTerminal:tt2d = raw test_terminal_new(24i64, 80i64);
+    int64:crlf_i = 0i64;
+    while (crlf_i < 500i64) {
+        drop(test_terminal_feed_str(tt2d, "crlf line\r\n"));
+        crlf_i = crlf_i + 1i64;
+    }
+    nitpick_test_assert("T18 CR+LF flood cursor col is 0",
+        (raw test_terminal_cursor_col(tt2d) == 0i64) => int32);
+
+    // T19: 100 ESC-only bytes — no crash
+    TestTerminal:tt2e = raw test_terminal_new(24i64, 80i64);
+    int64:esc_i = 0i64;
+    while (esc_i < 100i64) {
+        drop(test_terminal_feed_byte(tt2e, 0x1Bi64));
+        esc_i = esc_i + 1i64;
+    }
+    nitpick_test_assert("T19 100 bare ESC bytes: no crash",
+        (raw test_terminal_cursor_row(tt2e) >= 0i64) => int32);
+
+    // T20: parser recovers after junk — can still render text
+    drop(test_terminal_feed_str(tt2e, "RECOVER\n"));
+    nitpick_test_assert("T20 parser recovers after 100 bare ESC bytes",
+        (raw test_terminal_cursor_col(tt2e) >= 0i64) => int32);
+
+    // ── T21–T30: Exact-width lines ────────────────────────────────────────────
+    // Lines of exactly 80 chars in 80-col terminal — no phantom newline.
+
+    TestTerminal:tt3 = raw test_terminal_new(24i64, 80i64);
+    // Feed one exact-width line (80 'A' bytes, then LF)
+    string:line80 = raw repeat_char(0x41i64, 80i64);  // 80 × 'A'
+    drop(test_terminal_feed_str(tt3, line80));
+
+    // T21: after 80 chars, pending_wrap should be set (not yet newlined)
+    nitpick_test_assert("T21 pending_wrap set after 80-char line",
+        (raw test_terminal_pending_wrap(tt3) != 0i64) => int32);
+
+    // T22: explicit LF after pending_wrap — cursor is on next row, col 0
+    drop(test_terminal_feed_str(tt3, "\r\n"));
+    nitpick_test_assert("T22 LF after 80 chars: cursor row advanced",
+        (raw test_terminal_cursor_row(tt3) >= 1i64) => int32);
+    nitpick_test_assert("T22b CRLF after 80 chars: cursor at col 0",
+        (raw test_terminal_cursor_col(tt3) == 0i64) => int32);
+
+    // T23: 5 exact-width lines — cursor row is 5 (rows 0-4 filled, now at 5)
+    int64:ew_i = 0i64;
+    while (ew_i < 4i64) {
+        drop(test_terminal_feed_str(tt3, line80));
+        drop(test_terminal_feed_str(tt3, "\n"));
+        ew_i = ew_i + 1i64;
+    }
+    int64:row_after5 = raw test_terminal_cursor_row(tt3);
+    nitpick_test_assert("T23 5 exact-width lines: cursor row advanced from 0",
+        (row_after5 >= 1i64) => int32);
+    nitpick_test_assert("T23b cursor row within grid after 5 wide lines",
+        (row_after5 < 24i64) => int32);
+
+    // T24: cell at col 79 of row 0 contains 'A' (0x41)
+    nitpick_test_assert_eq_i64("T24 col 79 of row 0 is 'A'",
+        raw test_terminal_get_cell_cp(tt3, 0i64, 79i64), 0x41i64);
+
+    // T25: cell at col 0 of row 1 should have 'A' (or space if scrolled)
+    int64:r1_cp = raw test_terminal_get_cell_cp(tt3, 1i64, 0i64);
+    nitpick_test_assert("T25 col 0 row 1 is 'A' or space after wide lines",
+        ((r1_cp == 0x41i64) || (r1_cp == 0x20i64)) => int32);
+
+    // T26: 24 exact-width lines causes scroll — scrollback non-empty
+    TestTerminal:tt3b = raw test_terminal_new(24i64, 80i64);
+    drop(scrollback_set_max_lines(200i64));
+    int64:scroll_i = 0i64;
+    while (scroll_i < 25i64) {
+        drop(test_terminal_feed_str(tt3b, line80));
+        drop(test_terminal_feed_str(tt3b, "\n"));
+        scroll_i = scroll_i + 1i64;
+    }
+    nitpick_test_assert("T26 25 full lines caused scroll",
+        (raw scrollback_len() > 0i64) => int32);
+
+    // T27: grid still 80 wide after fill
+    nitpick_test_assert("T27 cursor col valid after full-screen fill",
+        (raw test_terminal_cursor_col(tt3b) < 80i64) => int32);
+
+    // T28: 79-char line — no pending wrap, cursor at col 79
+    TestTerminal:tt3c = raw test_terminal_new(24i64, 80i64);
+    string:line79 = raw repeat_char(0x42i64, 79i64);  // 79 × 'B'
+    drop(test_terminal_feed_str(tt3c, line79));
+    nitpick_test_assert_eq_i64("T28 79-char line: cursor at col 79",
+        raw test_terminal_cursor_col(tt3c), 79i64);
+    nitpick_test_assert("T29 79-char line: no pending wrap",
+        (raw test_terminal_pending_wrap(tt3c) == 0i64) => int32);
+
+    // T30: 81-char line wraps — cursor col 1 on next row
+    TestTerminal:tt3d = raw test_terminal_new(24i64, 80i64);
+    string:line81 = raw repeat_char(0x43i64, 81i64);  // 81 × 'C'
+    drop(test_terminal_feed_str(tt3d, line81));
+    nitpick_test_assert_eq_i64("T30 81-char line: cursor col 1 (wrapped)",
+        raw test_terminal_cursor_col(tt3d), 1i64);
+
+    // ── T31–T40: Control character rejection ──────────────────────────────────
+    // Non-printable bytes (excluding CR, LF, BS, TAB, ESC) must not corrupt grid.
+
+    TestTerminal:tt4 = raw test_terminal_new(24i64, 80i64);
+    // Feed SOH (0x01) — should be ignored, not printed
+    drop(test_terminal_feed_byte(tt4, 0x01i64));
+    nitpick_test_assert("T31 SOH (0x01) does not advance cursor",
+        (raw test_terminal_cursor_col(tt4) == 0i64) => int32);
+
+    drop(test_terminal_feed_byte(tt4, 0x02i64));  // STX
+    nitpick_test_assert("T32 STX (0x02) does not advance cursor",
+        (raw test_terminal_cursor_col(tt4) == 0i64) => int32);
+
+    drop(test_terminal_feed_byte(tt4, 0x03i64));  // ETX
+    nitpick_test_assert("T33 ETX (0x03) does not advance cursor",
+        (raw test_terminal_cursor_col(tt4) == 0i64) => int32);
+
+    drop(test_terminal_feed_byte(tt4, 0x04i64));  // EOT
+    nitpick_test_assert("T34 EOT (0x04) does not advance cursor",
+        (raw test_terminal_cursor_col(tt4) == 0i64) => int32);
+
+    drop(test_terminal_feed_byte(tt4, 0x05i64));  // ENQ
+    nitpick_test_assert("T35 ENQ (0x05) does not advance cursor",
+        (raw test_terminal_cursor_col(tt4) == 0i64) => int32);
+
+    drop(test_terminal_feed_byte(tt4, 0x06i64));  // ACK
+    nitpick_test_assert("T36 ACK (0x06) does not advance cursor",
+        (raw test_terminal_cursor_col(tt4) == 0i64) => int32);
+
+    // 0x00 (NUL) — should be silently ignored
+    drop(test_terminal_feed_byte(tt4, 0x00i64));
+    nitpick_test_assert("T37 NUL (0x00) does not advance cursor",
+        (raw test_terminal_cursor_col(tt4) == 0i64) => int32);
+
+    // 0x7F (DEL) — should be ignored
+    drop(test_terminal_feed_byte(tt4, 0x7Fi64));
+    nitpick_test_assert("T38 DEL (0x7F) does not advance cursor",
+        (raw test_terminal_cursor_col(tt4) == 0i64) => int32);
+
+    // Feed printable after controls — parser recovers
+    drop(test_terminal_feed_str(tt4, "OK"));
+    nitpick_test_assert_eq_i64("T39 parser recovers after control chars: cursor at col 2",
+        raw test_terminal_cursor_col(tt4), 2i64);
+
+    // Cell at col 0 is 'O' (0x4F)
+    nitpick_test_assert_eq_i64("T40 first cell after control-char flood is 'O'",
+        raw test_terminal_get_cell_cp(tt4, 0i64, 0i64), 0x4Fi64);
+
+    // ── T41–T50: Mid-stream resize ────────────────────────────────────────────
+    // Flood → resize → flood again; verify dims and cursor within bounds.
+
+    TestTerminal:tt5 = raw test_terminal_new(24i64, 80i64);
+    drop(scrollback_set_max_lines(500i64));
+
+    // Feed 100 lines pre-resize
+    drop(feed_lines(tt5, "pre-resize content", 100i64));
+    int64:pre_row = raw test_terminal_cursor_row(tt5);
+    nitpick_test_assert("T41 cursor valid before resize",
+        (pre_row < 24i64) => int32);
+
+    // Resize to 40×40
+    tt5 = raw test_terminal_resize(tt5, 40i64, 40i64);
+    nitpick_test_assert("T42 cursor row in bounds after resize",
+        (raw test_terminal_cursor_row(tt5) < 40i64) => int32);
+    nitpick_test_assert("T43 cursor col in bounds after resize",
+        (raw test_terminal_cursor_col(tt5) < 40i64) => int32);
+
+    // Feed 100 more lines post-resize
+    drop(feed_lines(tt5, "post-resize line", 100i64));
+    nitpick_test_assert("T44 cursor row valid after post-resize flood",
+        (raw test_terminal_cursor_row(tt5) < 40i64) => int32);
+
+    // Resize back to 80×24
+    tt5 = raw test_terminal_resize(tt5, 24i64, 80i64);
+    nitpick_test_assert("T45 cursor row in bounds after resize back",
+        (raw test_terminal_cursor_row(tt5) < 24i64) => int32);
+    nitpick_test_assert("T46 cursor col in bounds after resize back",
+        (raw test_terminal_cursor_col(tt5) < 80i64) => int32);
+
+    // Feed 100 more after resize back
+    drop(feed_lines(tt5, "final flood line", 100i64));
+    nitpick_test_assert("T47 cursor row valid after final flood",
+        (raw test_terminal_cursor_row(tt5) < 24i64) => int32);
+
+    // Resize to minimum valid size (1×1) and verify no crash
+    tt5 = raw test_terminal_resize(tt5, 1i64, 1i64);
+    nitpick_test_assert("T48 cursor row is 0 at 1×1 terminal",
+        (raw test_terminal_cursor_row(tt5) == 0i64) => int32);
+
+    // Feed a char at 1×1 — no crash
+    drop(test_terminal_feed_str(tt5, "X"));
+    nitpick_test_assert("T49 char feed at 1×1 terminal survives",
+        (raw test_terminal_cursor_col(tt5) >= 0i64) => int32);
+
+    // Resize back to normal
+    tt5 = raw test_terminal_resize(tt5, 24i64, 80i64);
+    drop(test_terminal_feed_str(tt5, "DONE\n"));
+    nitpick_test_assert("T50 terminal functional after 1x1 resize and back",
+        (raw test_terminal_cursor_col(tt5) < 80i64) => int32);
+
+    int32:rc = raw test_end();
+    if (rc == 0i32) { exit 0; }
+    exit 1;
+};

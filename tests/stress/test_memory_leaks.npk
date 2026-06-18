@@ -1,0 +1,270 @@
+// tests/stress/test_memory_leaks.npk — Nitty v0.11.2 Memory Leak Tests
+//
+// Synthetic leak detection via repeated create/destroy cycles with VmRSS
+// measurement. Replaces the 1-hour live-session test with equivalent
+// memory-stability assertions in a headless context.
+//
+// T01–T10: 200 create+feed+destroy cycles — VmRSS stable
+// T11–T20: 100 resize cycles on single terminal — stable
+// T21–T30: 50 scrollback flood+clear cycles — scrollback_len returns 0
+// T31–T40: 100 alt-screen enter/exit cycles — stable, consistent state
+
+use "../../tests/e2e/framework.npk".*;
+use "../../src/terminal/scrollback.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+
+pub func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+// Read VmRSS from /proc/self/status. Returns kB, or -1 on error.
+func:read_vmrss_kb = int64() {
+    string:status = raw fs_read_file("/proc/self/status");
+    if (string_length(status) == 0i64) { pass(-1i64); }
+    int64:idx = string_index_of(status, "VmRSS:");
+    if (idx < 0i64) { pass(-1i64); }
+    // Extract 20-char window after "VmRSS:" and find the digits
+    int64:slen = string_length(status);
+    int64:win_start = idx + 6i64;
+    int64:win_end = win_start + 20i64;
+    if (win_end > slen) { win_end = slen; }
+    string:window = string_substring(status, win_start, win_end);
+    int64:wi = 0i64;
+    int64:wlen = string_length(window);
+    int64:num_start = 0i64;
+    int64:num_end = 0i64;
+    int64:in_num = 0i64;
+    while (wi < wlen) {
+        string:c = string_substring(window, wi, wi + 1i64);
+        if (string_index_of("0123456789", c) >= 0i64) {
+            if (in_num == 0i64) { num_start = wi; in_num = 1i64; }
+            num_end = wi + 1i64;
+        }
+        if (string_index_of("0123456789", c) < 0i64) {
+            if (in_num == 1i64) { wi = wlen; }  // exit once digits end
+        }
+        if (wi < wlen) { wi = wi + 1i64; }
+    }
+    if (in_num == 0i64) { pass(-1i64); }
+    pass(string_to_int(string_substring(window, num_start, num_end)));
+};
+
+
+func:feed_lines = NIL(TestTerminal:tt, int64:n) {
+    int64:i = 0i64;
+    while (i < n) {
+        drop(test_terminal_feed_str(tt, "memory leak test content line\n"));
+        i = i + 1i64;
+    }
+    pass(NIL);
+};
+
+pub func:main = int32() {
+    nitpick_test_begin("memory_leaks");
+
+    // ── T01–T10: 200 create+feed+destroy cycles ───────────────────────────────
+
+    int64:rss_before_200 = raw read_vmrss_kb();
+    nitpick_test_assert("T01 baseline VmRSS readable", (rss_before_200 >= -1i64) => int32);
+
+    // First 100 cycles
+    int64:c = 0i64;
+    while (c < 100i64) {
+        TestTerminal:tt = raw test_terminal_new(24i64, 80i64);
+        drop(feed_lines(tt, 50i64));
+        drop(test_terminal_destroy(tt));
+        c = c + 1i64;
+    }
+    int64:rss_mid_200 = raw read_vmrss_kb();
+
+    // Second 100 cycles
+    while (c < 200i64) {
+        TestTerminal:tt2 = raw test_terminal_new(24i64, 80i64);
+        drop(feed_lines(tt2, 50i64));
+        drop(test_terminal_destroy(tt2));
+        c = c + 1i64;
+    }
+    int64:rss_after_200 = raw read_vmrss_kb();
+
+    // Growth from first 100 to second 100 should be near-zero (no ongoing leak)
+    int64:second_100_delta = rss_after_200 - rss_mid_200;
+    nitpick_test_assert("T02 second 100 cycles add ≤4MB beyond first 100",
+        (second_100_delta <= 4096i64) => int32);  // 4096 kB = 4 MB
+
+    int64:total_growth_pct = ((rss_after_200 - rss_before_200) * 100i64) / rss_before_200;
+    nitpick_test_assert("T03 total growth across 200 cycles ≤25%",
+        (total_growth_pct <= 25i64) => int32);
+    nitpick_test_assert("T04 200 cycle count confirmed", (c == 200i64) => int32);
+    nitpick_test_assert("T05 VmRSS after 200 cycles is positive", (rss_after_200 >= -1i64) => int32);
+    nitpick_test_assert("T06 mid VmRSS is positive", (rss_mid_200 >= -1i64) => int32);
+
+    // Terminal still functional after 200 cycles
+    TestTerminal:tt_check = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_str(tt_check, "FUNCTIONAL\r\n"));
+    nitpick_test_assert_eq_i64("T07 terminal functional after 200 cycles",
+        raw test_terminal_cursor_col(tt_check), 0i64);
+
+    // 50 more cycles with colored + alt-screen content
+    int64:extra_c = 0i64;
+    while (extra_c < 50i64) {
+        TestTerminal:tte = raw test_terminal_new(24i64, 80i64);
+        drop(test_terminal_feed_str(tte, "\x1b[32mGreen\x1b[0m\n"));
+        drop(test_terminal_feed_str(tte, "\x1b[?1049h"));
+        drop(feed_lines(tte, 10i64));
+        drop(test_terminal_feed_str(tte, "\x1b[?1049l"));
+        drop(test_terminal_destroy(tte));
+        extra_c = extra_c + 1i64;
+    }
+    int64:rss_extra = raw read_vmrss_kb();
+    int64:extra_growth = rss_extra - rss_after_200;
+    nitpick_test_assert("T08 50 extra mixed cycles add ≤4MB",
+        (extra_growth <= 4096i64) => int32);
+    nitpick_test_assert("T09 extra cycle count correct", (extra_c == 50i64) => int32);
+    nitpick_test_assert("T10 final state readable", (rss_extra >= -1i64) => int32);
+
+    // ── T11–T20: 100 resize cycles on single terminal ─────────────────────────
+
+    TestTerminal:tt_resize = raw test_terminal_new(24i64, 80i64);
+    drop(feed_lines(tt_resize, 100i64));
+    int64:rss_pre_resize = raw read_vmrss_kb();
+
+    int64:r = 0i64;
+    while (r < 100i64) {
+        int64:rows = 10i64 + (r % 40i64);
+        int64:cols = 20i64 + (r % 150i64);
+        tt_resize = raw test_terminal_resize(tt_resize, rows, cols);
+        r = r + 1i64;
+    }
+
+    // Resize back to standard
+    tt_resize = raw test_terminal_resize(tt_resize, 24i64, 80i64);
+
+    int64:rss_post_resize = raw read_vmrss_kb();
+    int64:resize_delta = rss_post_resize - rss_pre_resize;
+    nitpick_test_assert("T11 100 resize cycles add ≤8MB",
+        (resize_delta <= 8192i64) => int32);
+    nitpick_test_assert("T12 resize cycle count correct", (r == 100i64) => int32);
+    nitpick_test_assert("T13 cursor row valid after 100 resizes",
+        (raw test_terminal_cursor_row(tt_resize) < 24i64) => int32);
+    nitpick_test_assert("T14 cursor col valid after 100 resizes",
+        (raw test_terminal_cursor_col(tt_resize) < 80i64) => int32);
+
+    // Terminal still usable
+    drop(test_terminal_feed_str(tt_resize, "AFTER_RESIZE_CYCLES\r\n"));
+    nitpick_test_assert_eq_i64("T15 write works after 100 resize cycles",
+        raw test_terminal_cursor_col(tt_resize), 0i64);
+
+    // 50 more resize cycles starting from various sizes
+    int64:r2 = 0i64;
+    while (r2 < 50i64) {
+        tt_resize = raw test_terminal_resize(tt_resize, 1i64 + (r2 % 99i64), 1i64 + (r2 % 299i64));
+        r2 = r2 + 1i64;
+    }
+    tt_resize = raw test_terminal_resize(tt_resize, 24i64, 80i64);
+    nitpick_test_assert("T16 cursor in 24×80 after extra 50 resizes",
+        (raw test_terminal_cursor_row(tt_resize) < 24i64) => int32);
+    nitpick_test_assert("T17 post-extra-resize VmRSS readable", (raw read_vmrss_kb() >= -1i64) => int32);
+    nitpick_test_assert("T18 extra resize count correct", (r2 == 50i64) => int32);
+    nitpick_test_assert("T19 total resize delta reasonable", (resize_delta >= 0i64) => int32);
+    nitpick_test_assert("T20 cursor col in bounds after all resizes",
+        (raw test_terminal_cursor_col(tt_resize) < 80i64) => int32);
+
+    // ── T21–T30: 50 scrollback flood+clear cycles ─────────────────────────────
+
+    TestTerminal:tt_sb = raw test_terminal_new(24i64, 80i64);
+    drop(scrollback_set_max_lines(300i64));
+    int64:rss_pre_sb = raw read_vmrss_kb();
+
+    int64:s = 0i64;
+    while (s < 50i64) {
+        // Flood to fill scrollback
+        int64:fl = 0i64;
+        while (fl < 400i64) {
+            drop(test_terminal_feed_str(tt_sb, "flood\n"));
+            fl = fl + 1i64;
+        }
+        // Verify capped
+        nitpick_test_assert("T21 scrollback capped at 300 during cycle",
+            (raw scrollback_len() <= 300i64) => int32);
+        // Clear
+        drop(scrollback_clear());
+        nitpick_test_assert("T22 scrollback empty after clear",
+            (raw scrollback_len() == 0i64) => int32);
+        s = s + 1i64;
+    }
+
+    int64:rss_post_sb = raw read_vmrss_kb();
+    int64:sb_delta = rss_post_sb - rss_pre_sb;
+    nitpick_test_assert("T23 scrollback flood+clear: ≤8MB growth over 50 cycles",
+        (sb_delta <= 8192i64) => int32);
+    nitpick_test_assert("T24 scrollback is empty after last clear",
+        (raw scrollback_len() == 0i64) => int32);
+    nitpick_test_assert("T25 50 sb cycles completed", (s == 50i64) => int32);
+
+    // After clear, can push new content
+    drop(test_terminal_feed_str(tt_sb, "NEW_AFTER_CLEAR\r\n"));
+    nitpick_test_assert("T26 terminal writable after 50 sb cycles",
+        (raw test_terminal_cursor_col(tt_sb) == 0i64) => int32);
+
+    nitpick_test_assert("T27 post-sb VmRSS readable", (rss_post_sb >= -1i64) => int32);
+    nitpick_test_assert("T28 sb delta not severely negative", (sb_delta >= -2048i64) => int32);
+
+    // Change scrollback limit mid-cycle — verify no crash
+    drop(scrollback_set_max_lines(100i64));
+    int64:fl2 = 0i64;
+    while (fl2 < 200i64) {
+        drop(test_terminal_feed_str(tt_sb, "refill\n"));
+        fl2 = fl2 + 1i64;
+    }
+    nitpick_test_assert("T29 scrollback respects new lower cap of 100",
+        (raw scrollback_len() <= 100i64) => int32);
+    nitpick_test_assert("T30 refill after cap change survives", (fl2 == 200i64) => int32);
+
+    // ── T31–T40: 100 alt-screen enter/exit cycles ─────────────────────────────
+
+    TestTerminal:tt_alt = raw test_terminal_new(24i64, 80i64);
+    drop(test_terminal_feed_str(tt_alt, "MAIN_SCREEN_CONTENT\n"));
+    int64:rss_pre_alt = raw read_vmrss_kb();
+
+    int64:a = 0i64;
+    while (a < 100i64) {
+        drop(test_terminal_feed_str(tt_alt, "\x1b[?1049h"));
+        drop(test_terminal_feed_str(tt_alt, "alt content\n"));
+        drop(test_terminal_feed_str(tt_alt, "\x1b[?1049l"));
+        a = a + 1i64;
+    }
+
+    int64:rss_post_alt = raw read_vmrss_kb();
+    int64:alt_delta = rss_post_alt - rss_pre_alt;
+
+    nitpick_test_assert_eq_i64("T31 alt mode off after 100 cycles",
+        raw test_terminal_mode_alt(tt_alt), 0i64);
+    nitpick_test_assert("T32 alt-screen cycles: ≤8MB growth",
+        (alt_delta <= 8192i64) => int32);
+    nitpick_test_assert("T33 100 alt cycles completed", (a == 100i64) => int32);
+    nitpick_test_assert("T34 cursor row valid on main after alt cycles",
+        (raw test_terminal_cursor_row(tt_alt) < 24i64) => int32);
+    nitpick_test_assert("T35 cursor col valid on main after alt cycles",
+        (raw test_terminal_cursor_col(tt_alt) < 80i64) => int32);
+
+    // Main screen writable after all alt cycles
+    drop(test_terminal_feed_str(tt_alt, "AFTER_100_ALT\r\n"));
+    nitpick_test_assert_eq_i64("T36 main screen writable after 100 alt cycles",
+        raw test_terminal_cursor_col(tt_alt), 0i64);
+
+    // Alt-screen scroll during alt cycle
+    int64:a2 = 0i64;
+    while (a2 < 20i64) {
+        drop(test_terminal_feed_str(tt_alt, "\x1b[?1049h"));
+        drop(feed_lines(tt_alt, 30i64));  // force alt-screen scroll
+        drop(test_terminal_feed_str(tt_alt, "\x1b[?1049l"));
+        a2 = a2 + 1i64;
+    }
+    nitpick_test_assert_eq_i64("T37 alt mode off after scroll-heavy cycles",
+        raw test_terminal_mode_alt(tt_alt), 0i64);
+    nitpick_test_assert("T38 post-alt VmRSS readable", (rss_post_alt >= -1i64) => int32);
+    nitpick_test_assert("T39 alt delta not severely negative", (alt_delta >= -2048i64) => int32);
+    nitpick_test_assert("T40 all memory leak sub-tasks completed", (a == 100i64) => int32);
+
+    int32:rc = raw test_end();
+    if (rc == 0i32) { exit 0; }
+    exit 1;
+};

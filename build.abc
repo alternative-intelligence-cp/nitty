@@ -852,3 +852,50 @@ flags = []
 link_libraries = ["nitpick_test_shim", "nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z"]
 link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
 
+
+# ── v0.11.2: Stress Test Suite ───────────────────────────────────────────────
+
+# Large output — scrollback cap, parser throughput, exact-width lines, control-char rejection, mid-stream resize
+[target.test_large_output]
+type = "binary"
+sources = ["tests/stress/test_large_output.npk"]
+deps = ["gtk4_shim", "pty_shim"]
+flags = []
+link_libraries = ["nitpick_test_shim", "nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+
+# Rapid resize — shrink/grow loops, alt-screen resize, minimum 1x1 round-trips
+[target.test_rapid_resize]
+type = "binary"
+sources = ["tests/stress/test_rapid_resize.npk"]
+deps = ["gtk4_shim", "pty_shim"]
+flags = []
+link_libraries = ["nitpick_test_shim", "nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+
+# Many terminals — 50-terminal bulk cycles, resize-heavy, alt-screen, large-scrollback; VmRSS tracking
+[target.test_many_terminals]
+type = "binary"
+sources = ["tests/stress/test_many_terminals.npk"]
+deps = ["gtk4_shim", "pty_shim"]
+flags = []
+link_libraries = ["nitpick_test_shim", "nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+
+# Memory leaks — 200 create/destroy cycles, 100 resize cycles, 50 scrollback flood/clear, 100 alt cycles
+[target.test_memory_leaks]
+type = "binary"
+sources = ["tests/stress/test_memory_leaks.npk"]
+deps = ["gtk4_shim", "pty_shim"]
+flags = []
+link_libraries = ["nitpick_test_shim", "nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
+
+# UTF-8 edge cases — invalid bytes, CJK width, combining chains, emoji ZWJ, very long lines
+[target.test_utf8_edge_cases]
+type = "binary"
+sources = ["tests/stress/test_utf8_edge_cases.npk"]
+deps = ["gtk4_shim", "pty_shim"]
+flags = []
+link_libraries = ["nitpick_test_shim", "nitty_gtk4_shim", "nitty_pty_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "ssl", "crypto", "z"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-test/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]
