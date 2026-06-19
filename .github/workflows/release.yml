@@ -35,6 +35,7 @@ jobs:
       - name: Build Nitpick Compiler
         if: steps.cache-nitpick.outputs.cache-hit != 'true'
         run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
           git clone --recursive https://github.com/alternative-intelligence-cp/nitpick.git /tmp/nitpick
           cd /tmp/nitpick
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-20 -DCMAKE_CXX_COMPILER=clang++-20 -DLLVM_DIR=/usr/lib/llvm-20/lib/cmake/llvm
