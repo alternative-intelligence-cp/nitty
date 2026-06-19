@@ -1,4 +1,4 @@
-# Known Issues — Nitty v0.99.0-beta.1
+# Known Issues — Nitty v0.15.0
 
 This document lists known limitations and issues that were triaged during beta testing but deferred to a future release. Issues are categorized by priority.
 

@@ -18,7 +18,7 @@ Nitty is a modern, native terminal emulator built from scratch in the [Nitpick](
 
 Nitty is both a serious, production-grade terminal and a showcase for the Nitpick language ecosystem, demonstrating that complex desktop applications can be built entirely in Nitpick.
 
-> **Status: Beta (v0.99.0-beta.1)** — approaching v1.0. Core features are complete and stable. See [Known Issues](KNOWN_ISSUES.md).
+> **Status: Release Candidate (v0.15.0)** — All core features complete. See [Known Issues](KNOWN_ISSUES.md) and [CHANGELOG](CHANGELOG.md).
 
 ---
 
@@ -57,8 +57,9 @@ Nitty is both a serious, production-grade terminal and a showcase for the Nitpic
 
 ### Plugin System
 - Extensible via the Plugin API with defined extension points
-- Plugin Manager for discovery, installation, and configuration
-- Plugin scaffolding script for creating new plugins
+- **Plugin Manager** (`Ctrl+Shift+P`) — install plugins from a local directory, configure per-plugin settings, enable/disable, and uninstall with full directory cleanup
+- Plugin scaffolding script (`scripts/new-plugin.sh`) for creating new plugins
+- See the [Plugin Development Guide](docs/plugin-development-guide.md) to get started
 
 ---
 
@@ -81,22 +82,26 @@ Download the latest release from the [Releases page](https://github.com/alternat
 
 **Ubuntu / Debian:**
 ```bash
-sudo dpkg -i nitty_0.99.0-beta.1_amd64.deb
+# Download nitty_<version>_amd64.deb from the Releases page, then:
+sudo dpkg -i nitty_*_amd64.deb
 ```
 
 **Fedora / RHEL:**
 ```bash
-sudo rpm -i nitty-0.99.0.beta.1-1.x86_64.rpm
+# Download nitty-<version>-1.x86_64.rpm from the Releases page, then:
+sudo rpm -i nitty-*.x86_64.rpm
 ```
 
 **AppImage (any Linux distro):**
 ```bash
-chmod +x Nitty-0.99.0-beta.1-x86_64.AppImage
-./Nitty-0.99.0-beta.1-x86_64.AppImage
+# Download Nitty-<version>-x86_64.AppImage from the Releases page, then:
+chmod +x Nitty-*-x86_64.AppImage
+./Nitty-*-x86_64.AppImage
 ```
 
 **Flatpak:**
 ```bash
+# Download Nitty.flatpak from the Releases page, then:
 flatpak install --user Nitty.flatpak
 flatpak run com.nitty.Terminal
 ```
@@ -122,7 +127,9 @@ cd nitty
 # Build C shims
 make -C shim/gtk4/
 make -C shim/libssh2/
+make -C shim/pty/
 make -C shim/serial/
+make -C shim/telnet/
 
 # Build Nitty
 npkbld build

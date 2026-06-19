@@ -34,4 +34,4 @@ fi
 
 echo ""
 echo "### Installation"
-echo "Download the `.deb`, `.rpm`, `.AppImage`, or `.flatpak` package from the assets below."
+echo 'Download the `.deb`, `.rpm`, `.AppImage`, or `.flatpak` package from the assets below.'
