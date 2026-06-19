@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Name=Nitty
+Comment=Feature-rich terminal emulator written in Nitpick
+Exec=nitty %u
+Icon=nitty
+Terminal=false
+Type=Application
+Categories=System;TerminalEmulator;
+MimeType=x-scheme-handler/ssh;x-scheme-handler/telnet;
+StartupNotify=true
+Keywords=shell;prompt;command;commandline;cmd;

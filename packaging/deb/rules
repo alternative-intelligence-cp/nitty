@@ -1,0 +1,11 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	npkbld build --release
+
+override_dh_auto_test:
+	# Tests run during development, skipping during package build
+	true

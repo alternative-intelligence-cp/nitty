@@ -1,0 +1,5 @@
+nitty (0.14.0-1) unstable; urgency=medium
+
+  * Initial Debian package release.
+
+ -- Nitty Team <maintainers@nitty.example.com>  Fri, 19 Jun 2026 01:23:00 -0400

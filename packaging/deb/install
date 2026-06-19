@@ -1,0 +1,8 @@
+.nitpick_make/build/nitty usr/bin/
+packaging/nitty.desktop usr/share/applications/
+packaging/icons/nitty-*.png usr/share/icons/hicolor/
+packaging/nitty.metainfo.xml usr/share/metainfo/
+docs/nitty.1 usr/share/man/man1/
+# If we had built-in themes and plugins:
+# themes/* usr/share/nitty/themes/
+# plugins/* usr/share/nitty/plugins/

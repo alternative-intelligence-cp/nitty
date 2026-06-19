@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.nitty.Terminal</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-only</project_license>
+  <name>Nitty</name>
+  <summary>A modern, fast, and feature-rich terminal emulator</summary>
+
+  <description>
+    <p>
+      Nitty is a terminal emulator built from the ground up for power users, written in the Nitpick programming language.
+      It combines standard local shell capabilities with advanced features like integrated SSH connection management,
+      a built-in encrypted credential vault, SFTP browsing, native serial port and telnet support, and a flexible plugin system.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>First-class SSH, Serial, and Telnet connection profiles.</li>
+      <li>Drop-down "Quake Mode" accessible via global hotkey.</li>
+      <li>Built-in encrypted credential vault for SSH passwords.</li>
+      <li>Side-by-side and vertical pane splitting via BSP trees.</li>
+      <li>Extensible via the Plugin API.</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">nitty.desktop</launchable>
+  
+  <url type="homepage">https://github.com/altintel/nitty</url>
+  <url type="bugtracker">https://github.com/altintel/nitty/issues</url>
+  <url type="vcs-browser">https://github.com/altintel/nitty</url>
+
+  <provides>
+    <binary>nitty</binary>
+  </provides>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.14.0" date="2026-06-19">
+      <description>
+        <p>Introduced standard Linux packaging formats (.deb, .rpm, AppImage, Flatpak).</p>
+      </description>
+    </release>
+    <release version="0.13.2" date="2026-06-19">
+      <description>
+        <p>Comprehensive developer documentation and architecture guides.</p>
+      </description>
+    </release>
+    <release version="0.13.1" date="2026-06-18">
+      <description>
+        <p>Comprehensive user manual and quick reference cards.</p>
+      </description>
+    </release>
+  </releases>
+</component>

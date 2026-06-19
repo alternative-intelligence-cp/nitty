@@ -1,0 +1,16 @@
+Source: nitty
+Section: utils
+Priority: optional
+Maintainer: Nitty Team <maintainers@nitty.example.com>
+Build-Depends: debhelper (>= 12), libgtk-4-dev (>= 4.6), libssh2-1-dev (>= 1.10), libssl-dev
+Standards-Version: 4.5.0
+Homepage: https://github.com/altintel/nitty
+
+Package: nitty
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libgtk-4-1 (>= 4.6), libssh2-1 (>= 1.10), libc6 (>= 2.35)
+Description: Feature-rich terminal emulator written in Nitpick
+ Nitty is a terminal emulator built from the ground up for power users.
+ It combines standard local shell capabilities with advanced features like
+ integrated SSH connection management, a built-in encrypted credential vault,
+ SFTP browsing, native serial port and telnet support, and a flexible plugin system.
