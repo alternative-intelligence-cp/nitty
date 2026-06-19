@@ -17,10 +17,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Cache Nitpick Compiler & LLVM
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/bin/npkc
+            /usr/local/bin/npkbld
+            /usr/lib/llvm-20
+          key: ${{ runner.os }}-npk-llvm20
+
       - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev libssh2-1-dev libssl-dev build-essential llvm-20-dev clang-20 dpkg-dev rpm flatpak-builder
+
+      - name: Build C Shims
+        run: |
+          make -C shim/gtk4/
+          make -C shim/libssh2/
+          make -C shim/serial/
+          make -C shim/pty/ || true
+          make -C shim/bench/ || true
 
       - name: Run Full Test Suite
         run: |
