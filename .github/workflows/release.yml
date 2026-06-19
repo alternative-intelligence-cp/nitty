@@ -30,7 +30,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libssh2-1-dev libssl-dev build-essential llvm-20-dev clang-20 dpkg-dev rpm flatpak-builder cmake ninja-build
+          sudo apt-get install -y libgtk-4-dev libssh2-1-dev libssl-dev build-essential llvm-20-dev clang-20 dpkg-dev rpm flatpak-builder cmake ninja-build liburing-dev libclang-20-dev lld-20
 
       - name: Build Nitpick Compiler
         if: steps.cache-nitpick.outputs.cache-hit != 'true'
