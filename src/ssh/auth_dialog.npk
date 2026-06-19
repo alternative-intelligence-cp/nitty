@@ -7,7 +7,7 @@
 // each frame. Returns AUTH_DIALOG_DONE when done (success or failure).
 
 use "ssh_auth.npk".*;
-use "gtk4_ffi.npk".*;
+use "../gui/gtk4_ffi.npk".*;
 
 // ── Result codes ─────────────────────────────────────────────────────────────
 
