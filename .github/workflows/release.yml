@@ -55,7 +55,7 @@ jobs:
           npkbld test tests/compat/
 
       - name: Build Release Binary
-        run: npkbld build --release
+        run: npkbld build
 
       - name: Create Tarball
         run: tar -czf nitty-linux-x86_64.tar.gz -C .nitpick_make/build nitty
