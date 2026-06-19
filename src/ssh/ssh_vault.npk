@@ -216,8 +216,8 @@ pub func:vault_set_password = int64(string:profile_id, string:password) {
     }
 
     // Persist to disk
-    int64:ok = vault_save();
-    pass(ok);
+    int64:ok_val = vault_save();
+    pass(ok_val);
 };
 
 pub func:vault_delete_password = int64(string:profile_id) {
@@ -236,8 +236,8 @@ pub func:vault_delete_password = int64(string:profile_id) {
     g_vault_plaintext[g_vault_count - 1i64]  = "";
     g_vault_count = g_vault_count - 1i64;
 
-    int64:ok = vault_save();
-    pass(ok);
+    int64:ok_val = vault_save();
+    pass(ok_val);
 };
 
 pub func:vault_tick = NIL() {

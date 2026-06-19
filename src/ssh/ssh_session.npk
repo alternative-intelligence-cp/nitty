@@ -165,8 +165,18 @@ pub func:ssh_connect = int64(int64:pane_slot, string:host, int64:port, string:us
     }
 
     // ── Step 7: Host key check ───────────────────────────────────────────────
-    // TODO v0.8.2: Extract server host key from session and call ssh_kh_check.
-    // For v0.8.1 we defer TOFU UI and accept on first connect (stored in session).
+    string:kh_s = ahget(session, "_server_host_key_buf");
+    if (string_length(kh_s) > 0i64) {
+        int64:hk_buf = raw SSH_str_to_handle(kh_s);
+        string:ktype = raw nitpick_ssh_decode_string_data(hk_buf, 0i64);
+        int64:kh_handle = raw ssh_kh_load();
+        int64:kh_res = raw ssh_kh_check(kh_handle, host, ktype, hk_buf);
+        if (kh_res == KH_MISMATCH()) {
+            drop(_ssh_set_error(pane_slot, "Host key mismatch! MITM attack?"));
+            drop(SSH_disconnect(session));
+            pass(-6i64);
+        }
+    }
     // The DH reply already verified the host key signature cryptographically.
 
     // ── Step 8: Derive session keys ───────────────────────────────────────────
@@ -488,16 +498,27 @@ pub func:ssh_poll_read = string(int64:pane_slot) {
                 }
                 if (chan_type != "x11") {
                     // "forwarded-tcpip" for remote port fwd, or other types
-                    // TODO: parse bind_port from payload for multi-rule support
+                    int64:addr_off = 1i64 + 4i64 + ct_slen + 12i64;
+                    int64:addr_slen = nitpick_ssh_decode_string_len(payload, addr_off);
+                    int64:bport_off = addr_off + 4i64 + addr_slen;
+                    int32:bind_port32 = nitpick_ssh_decode_uint32(payload, bport_off);
+                    int64:bind_port = @cast_unchecked<int64>(bind_port32);
+
                     int32:r = raw SSH_dispatch(session, payload);
                     drop(raw SSH_buf_free(payload));
                     int64:new_chan = raw SSH_channel_last_id(session);
-                    drop(fwd_remote_accept(pane_slot, session, 0i64, new_chan));
+                    drop(fwd_remote_accept(pane_slot, session, bind_port, new_chan));
                 }
                 n = n + 1i64;
             }
 
             if (msg_type != 90i32 && msg_type != 91i32 && msg_type != 94i32) {
+                int64:closed_chan = -1i64;
+                if (msg_type == 96i32 || msg_type == 97i32) {
+                    int32:closed_chan32 = nitpick_ssh_decode_uint32(payload, 1i64);
+                    closed_chan = @cast_unchecked<int64>(closed_chan32);
+                }
+
                 // All other packet types: EOF, CLOSE, window adjust, disconnect, etc.
                 int32:r = raw SSH_dispatch(session, payload);
                 drop(raw SSH_buf_free(payload));
@@ -509,9 +530,7 @@ pub func:ssh_poll_read = string(int64:pane_slot) {
                 }
                 // Check if a forward channel was closed (type 96=EOF, 97=CLOSE)
                 if (msg_type == 96i32 || msg_type == 97i32) {
-                    // We don't have the channel id here after dispatch; fwd_close_channel
-                    // will be called explicitly by the dispatch handler if needed.
-                    // TODO: parse channel id from payload before dispatch for clean close
+                    drop(fwd_close_channel(pane_slot, session, closed_chan));
                 }
                 n = n + 1i64;
             }

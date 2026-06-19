@@ -49,14 +49,14 @@ pub func:pf_editor_open = int64(int64:slot) {
     }
 
     // ── Show modal dialog (blocks until OK or Cancel) ─────────────────────
-    int32:ok = nitty_gtk4_profile_editor_open_v2(
+    int32:ok_val = nitty_gtk4_profile_editor_open_v2(
         init_name, init_group, init_type,
         init_ssh_host, init_ssh_port, init_ssh_user,
         init_ssh_auth, init_ssh_key,
         init_serial_dev, init_serial_baud,
         init_telnet_host, init_telnet_port);
 
-    if (ok == 0i32) { pass(-1i64); }  // cancelled
+    if (ok_val == 0i32) { pass(-1i64); }  // cancelled
 
     // ── Read results ──────────────────────────────────────────────────────
     string:new_name        = nitty_gtk4_profile_editor_get_name();

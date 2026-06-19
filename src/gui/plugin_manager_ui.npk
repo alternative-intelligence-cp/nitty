@@ -28,7 +28,6 @@
 //
 // Scoping notes (v0.10.4):
 //   - Install from archive (.zip/.tar.gz) deferred to v0.10.5 (needs new shim)
-//   - Settings save stubbed -- config parser bug blocks writing config.yaml
 //   - Built-in plugins shown as a synthetic section (not in plugin_registry)
 //
 // Usage:
@@ -141,7 +140,7 @@ pub func:pmu_open = NIL() {
     nitty_gtk4_button_set_sensitive(g_pmu_btn_settings,  0i32);
 
     // Show via sidebar attach
-    // TODO(v0.10.5): nitty_gtk4_sidebar_set_visible(1i32) when shim is updated
+    drop(nitty_gtk4_sidebar_set_visible(1i32));
     // For now the panel is managed as an overlay notification-driven state machine
     g_pmu_open = 1i64;
 
@@ -155,7 +154,7 @@ pub func:pmu_open = NIL() {
 /// Close (hide) the plugin manager panel.
 pub func:pmu_close = NIL() {
     if (g_pmu_open == 0i64) { pass(NIL); }
-    // TODO(v0.10.5): nitty_gtk4_sidebar_set_visible(0i32) when shim is updated
+    drop(nitty_gtk4_sidebar_set_visible(0i32));
     g_pmu_open        = 0i64;
     g_pmu_sel_slot    = -1i64;
     g_pmu_sel_builtin = -1i64;
@@ -548,8 +547,8 @@ func:_pmu_do_uninstall = NIL(int64:slot) {
 
     if (mslot >= 0i64) {
         string:dir = raw manifest_get_dir(mslot);
-        int32:ok = raw fs_rmdir_recursive(dir);
-        if (ok == 1i32) {
+        int32:ok_val = raw fs_rmdir_recursive(dir);
+        if (ok_val == 1i32) {
             drop(nitty_gtk4_show_notification(string_concat(
                 "Uninstalled: ", string_concat(name, " (directory removed)"))));
         } else {

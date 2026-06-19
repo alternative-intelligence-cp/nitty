@@ -10,7 +10,7 @@
 // Polls dirty flags from the C shim each frame (non-blocking).
 
 use "gtk4_ffi.npk".{
-    nitty_serial_toolbar_create,
+     
     nitty_serial_toolbar_show,
     nitty_serial_toolbar_hide,
     nitty_serial_toolbar_update,

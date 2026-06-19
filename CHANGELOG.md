@@ -7,6 +7,19 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.15.1] — 2026-06-19
+
+### Fixed
+- **SSH — Host Key Verification** (`ssh_session.npk`): Connections are now aborted if the server's host key does not match the known-hosts database. Previously, host key verification was stubbed out, making SSH sessions vulnerable to MITM attacks.
+- **SSH — Port Forwarding Rule Iteration** (`ssh_forward.npk`, `connection_manager.npk`): `fwd_apply_profile_rules` now correctly iterates over all comma-separated forwarding rules from the connection profile. Previously only a single rule was supported (stubbed TODO). Local port listeners are now spawned for all configured forwarding rules immediately after successful authentication.
+- **SSH — Bind Port / Channel ID Parsing** (`ssh_session.npk`): The `forwarded-tcpip` payload now correctly extracts `bind_port` for multi-rule remote forwarding support. Channel EOF/CLOSE packets now correctly extract the `recipient_channel_id` before dispatching to forwarding close handlers.
+- **Plugin Manager — Sidebar Visibility** (`plugin_manager_ui.npk`): `nitty_gtk4_sidebar_set_visible` shim calls are now active, restoring sidebar show/hide functionality in the Plugin Manager.
+- **Variable shadowing fixes** (`profile_editor.npk`, `ssh_vault.npk`): Renamed `ok` → `ok_val` in two functions to resolve compiler variable-shadowing warnings.
+- **Serial toolbar import cleanup** (`serial_toolbar.npk`): Removed unused `nitty_serial_toolbar_create` import.
+- **Build system** (`build.abc`): Replaced `-Wall -Wextra` with `-w` for `gtk4_shim` target to prevent GCC deprecation-note output from filling the `npkbld` pipe buffer during parallel C compilation (caused intermittent build hangs on the large `nitty_gtk4_shim.c`).
+
+---
+
 ## [0.15.0] — 2026-06-19
 
 ### Added
