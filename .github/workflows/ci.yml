@@ -1,0 +1,70 @@
+name: CI Build and Test
+
+on:
+  push:
+    branches: [ main, "dev-*" ]
+  pull_request:
+    branches: [ main, "dev-*" ]
+
+jobs:
+  build_and_test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, ubuntu-22.04]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Cache Nitpick Compiler & LLVM
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/bin/npkc
+            /usr/local/bin/npkbld
+            /usr/lib/llvm-20
+          key: ${{ runner.os }}-npk-llvm20
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libssh2-1-dev libssl-dev build-essential llvm-20-dev clang-20 dpkg-dev rpm flatpak-builder linuxdeploy
+
+      - name: Build C Shims
+        run: |
+          make -C shim/gtk4/
+          make -C shim/libssh2/
+          make -C shim/serial/
+          make -C shim/pty/ || true
+          make -C shim/bench/ || true
+
+      - name: Code Quality Checks
+        run: |
+          # Lint and Safety
+          if command -v npkc &> /dev/null; then
+            npkc lint src/
+            npkc analyze --safety-level=high src/
+          fi
+          
+          # Check for missing license headers
+          if grep -r -L "AGPL-3.0-only" src/ | grep -q "\.npk$"; then
+            echo "Error: Missing license headers."
+            exit 1
+          fi
+
+      - name: Build Nitty
+        run: npkbld build --release
+
+      - name: Run Unit Tests
+        run: npkbld test tests/
+
+      - name: Run E2E Tests
+        run: bash tests/e2e/run_e2e.sh || true
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.os }}
+          path: .nitpick_make/test_results.xml

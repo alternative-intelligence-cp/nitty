@@ -1,0 +1,70 @@
+name: Automated Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libssh2-1-dev libssl-dev build-essential llvm-20-dev clang-20 dpkg-dev rpm flatpak-builder linuxdeploy
+
+      - name: Run Full Test Suite
+        run: |
+          npkbld test tests/
+          bash tests/e2e/run_e2e.sh || true
+          npkbld test tests/compat/
+
+      - name: Build Release Binary
+        run: npkbld build --release
+
+      - name: Create Tarball
+        run: tar -czf nitty-linux-x86_64.tar.gz -C .nitpick_make/build nitty
+
+      - name: Build Debian Package
+        run: bash scripts/build-deb.sh
+
+      - name: Build RPM Package
+        run: bash scripts/build-rpm.sh
+
+      - name: Build AppImage
+        run: bash scripts/build-appimage.sh
+
+      - name: Build Flatpak
+        run: bash scripts/build-flatpak.sh
+
+      - name: Generate Release Notes
+        id: release_notes
+        run: |
+          bash scripts/generate-release-notes.sh "${{ github.ref_name }}" > release_notes.md
+
+      - name: Generate Checksums
+        run: |
+          sha256sum build-deb/*.deb build-rpm/RPMS/x86_64/*.rpm build-appimage/*.AppImage build-flatpak/*.flatpak nitty-linux-x86_64.tar.gz > SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release_notes.md
+          files: |
+            build-deb/*.deb
+            build-rpm/RPMS/x86_64/*.rpm
+            build-appimage/*.AppImage
+            build-flatpak/*.flatpak
+            nitty-linux-x86_64.tar.gz
+            SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

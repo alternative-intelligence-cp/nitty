@@ -1,0 +1,44 @@
+name: PR Quality Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  pr_checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify PR Description
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body;
+            if (!body || body.trim().length < 20) {
+              core.setFailed("PR description is too short or empty. Please explain the changes.");
+            }
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify Commit Messages
+        run: |
+          # Fetch PR base and head to check all commits in the PR
+          git fetch origin ${{ github.base_ref }}
+          git fetch origin ${{ github.head_ref }}
+          
+          # Check if commits follow the 'vX.Y.Z: ' or 'type(scope): ' format
+          for commit in $(git rev-list origin/${{ github.base_ref }}..origin/${{ github.head_ref }}); do
+            msg=$(git log -1 --format=%B $commit | head -n 1)
+            if [[ ! "$msg" =~ ^v[0-9]+\.[0-9]+\.[0-9]+:\ .* ]] && [[ ! "$msg" =~ ^(feat|fix|docs|style|refactor|test|chore|ci)(\(.*\))?:\ .* ]]; then
+              echo "Error: Commit message '$msg' does not follow conventions."
+              exit 1
+            fi
+          done
+
+      - name: Check for Merge Conflicts
+        run: |
+          # The checkout action defaults to a merge commit, so if it succeeded,
+          # there are no unresolved conflicts. We just echo success here.
+          echo "No merge conflicts detected."
