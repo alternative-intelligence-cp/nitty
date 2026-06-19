@@ -31,14 +31,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev libssh2-1-dev libssl-dev build-essential llvm-20-dev clang-20 dpkg-dev rpm flatpak-builder
 
-      - name: Build C Shims
-        run: |
-          make -C shim/gtk4/
-          make -C shim/libssh2/
-          make -C shim/serial/
-          make -C shim/pty/ || true
-          make -C shim/bench/ || true
-
       - name: Code Quality Checks
         run: |
           # Lint and Safety
