@@ -91,7 +91,7 @@ jobs:
           sudo chmod +x /usr/local/bin/npkc /usr/local/bin/npkbld || true
 
       - name: Build Nitty
-        run: npkbld build
+        run: npkbld build nitty
 
       - name: Run Unit Tests
         run: npkbld test tests/

@@ -83,7 +83,7 @@ jobs:
           sudo chmod +x /usr/local/bin/npkc /usr/local/bin/npkbld || true
 
       - name: Build Release Binary
-        run: npkbld build
+        run: npkbld build nitty
 
       - name: Create Tarball
         run: tar -czf nitty-linux-x86_64.tar.gz -C .nitpick_make/build nitty
