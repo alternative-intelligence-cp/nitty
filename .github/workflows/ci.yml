@@ -87,6 +87,8 @@ jobs:
           cd ..
           # Substitute the hardcoded path
           sed -i "s|/home/randy/Workspace/REPOS|$PWD/REPOS|g" build.abc
+          sed -i 's|compiler = "npkc"|compiler = "/usr/local/bin/npkc"|g' build.abc
+          sudo chmod +x /usr/local/bin/npkc /usr/local/bin/npkbld || true
 
       - name: Build Nitty
         run: npkbld build
