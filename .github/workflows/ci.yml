@@ -62,8 +62,34 @@ jobs:
             exit 1
           fi
 
+      - name: Fetch Dependencies and Build Shims
+        run: |
+          mkdir -p REPOS
+          cd REPOS
+          git clone https://github.com/alternative-intelligence-cp/nitpick-packages.git
+          git clone https://github.com/alternative-intelligence-cp/nitpick-libc.git
+          
+          # Build shims for packages
+          for pkg in nitpick-packages/packages/*; do
+            if [ -d "$pkg/shim" ]; then
+              echo "Building shim in $pkg/shim"
+              if [ -f "$pkg/shim/Makefile" ]; then
+                make -C "$pkg/shim" || true
+              fi
+            fi
+          done
+          
+          # Build shim for nitpick-libc
+          if [ -d "nitpick-libc/shim" ] && [ -f "nitpick-libc/shim/Makefile" ]; then
+             make -C "nitpick-libc/shim" || true
+          fi
+          
+          cd ..
+          # Substitute the hardcoded path
+          sed -i "s|/home/randy/Workspace/REPOS|$PWD/REPOS|g" build.abc
+
       - name: Build Nitty
-        run: npkbld build --release
+        run: npkbld build
 
       - name: Run Unit Tests
         run: npkbld test tests/

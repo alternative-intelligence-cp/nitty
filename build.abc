@@ -11,7 +11,7 @@
 name = "nitty"
 version = "0.0.5"
 author = "Alternative Intelligence"
-compiler = "/home/randy/Workspace/REPOS/nitpick/build/nitpickc"
+compiler = "npkc"
 
 # ── GTK4 C FFI shim ──────────────────────────────────────────────────────────
 
