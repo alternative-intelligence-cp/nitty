@@ -766,3 +766,12 @@ deps = []
 flags = []
 link_libraries = ["nitpick_yaml_shim", "nitpick_fs_shim", "nitpick_env_shim", "nitpick_semver"]
 link_paths = ["/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-yaml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-semver/shim/.nitpick_make/lib"]
+
+# v0.15.0: Per-plugin settings persistence tests
+[target.test_config_plugin_settings]
+type = "binary"
+sources = ["tests/config/test_config_plugin_settings.npk"]
+deps = ["gtk4_shim"]
+flags = []
+link_libraries = ["nitty_gtk4_shim", "nitpick_toml_shim", "nitpick_fs_shim", "nitpick_env_shim", "gtk-4", "pangocairo-1.0", "pango-1.0", "harfbuzz", "gdk_pixbuf-2.0", "cairo-gobject", "cairo", "vulkan", "graphene-1.0", "gio-2.0", "gobject-2.0", "glib-2.0", "util", "X11", "nitty_pty_shim"]
+link_paths = [".nitpick_make/build", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-toml/shim", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs", "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env"]

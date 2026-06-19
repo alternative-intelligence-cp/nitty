@@ -1120,6 +1120,50 @@ int64_t nitty_serial_toolbar_poll_input_mode(void);
  */
 int64_t nitty_serial_toolbar_poll_output_mode(void);
 
+/* ── v0.15.0: Plugin Manager completion ──────────────────────────────────── */
+
+/**
+ * Set the text of a GtkEntry widget (pre-fill a value in a settings form).
+ * entry: opaque GtkWidget* handle. text: new content (UTF-8).
+ */
+void nitty_gtk4_entry_set_text(int64_t entry, const char *text);
+
+/**
+ * Open a blocking GTK4 file chooser dialog. Returns the chosen path, or ""
+ * if the user cancelled. The returned pointer is valid until the next call.
+ * title:       dialog window title.
+ * filter_name: human-readable filter label (e.g. "Plugin Archives").
+ * pattern:     semicolon-separated glob patterns (e.g. "*.zip;*.tar.gz").
+ */
+const char *nitty_gtk4_file_chooser_open(const char *title,
+                                          const char *filter_name,
+                                          const char *pattern);
+
+/**
+ * Open a modal plugin-settings dialog showing one GtkEntry per setting.
+ * Blocks until the user clicks Apply (returns 1) or Cancel (returns 0).
+ * plugin_name: label shown in the dialog title bar.
+ * keys_blob:   newline-separated setting key names (up to 8).
+ * values_blob: newline-separated current values (parallel to keys_blob).
+ * count:       number of settings (len of each blob line-list).
+ */
+int64_t nitty_gtk4_plugin_settings_dialog(const char *plugin_name,
+                                           const char *keys_blob,
+                                           const char *values_blob,
+                                           int64_t     count);
+
+/**
+ * Retrieve the value the user entered for setting index i after a successful
+ * nitty_gtk4_plugin_settings_dialog() call. Returns "" for out-of-range i.
+ */
+const char *nitty_gtk4_plugin_settings_get_value(int64_t i);
+
+/**
+ * Execute a shell command via system(3). Returns the exit status, or -1 on
+ * error. cmd must be a valid POSIX shell command string.
+ */
+int64_t nitty_sys_exec(const char *cmd);
+
 #ifdef __cplusplus
 }
 #endif

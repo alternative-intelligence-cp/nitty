@@ -86,8 +86,8 @@ func:test_vault = NIL() {
     drop(vault_init());
 
     // T01: unlock + set + get
-    int64:ok = raw vault_unlock("test-master-pass-123");
-    drop(assert_eq_i64("T01-vault-unlock", ok, 1i64));
+    int64:unlock_ok = raw vault_unlock("test-master-pass-123");
+    drop(assert_eq_i64("T01-vault-unlock", unlock_ok, 1i64));
 
     int64:set_ok = raw vault_set_password("profile_test", "secret123");
     drop(assert_eq_i64("T01-vault-set", set_ok, 1i64));
@@ -108,8 +108,8 @@ func:test_vault = NIL() {
     drop(assert_eq_str("T02-vault-get-locked", pw_locked, ""));
 
     // T03: delete
-    int64:ok2 = raw vault_unlock("test-master-pass-123");
-    drop(assert_eq_i64("T03-vault-unlock2", ok2, 1i64));
+    int64:unlock_ok2 = raw vault_unlock("test-master-pass-123");
+    drop(assert_eq_i64("T03-vault-unlock2", unlock_ok2, 1i64));
     int64:del_ok = raw vault_delete_password("profile_test");
     drop(assert_eq_i64("T03-vault-delete", del_ok, 1i64));
     string:pw_after_del = raw vault_get_password("profile_test");

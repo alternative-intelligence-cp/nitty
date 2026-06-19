@@ -1,0 +1,129 @@
+// tests/config/test_config_plugin_settings.npk — Unit tests for v0.15.0
+// per-plugin settings API (cfg_set_plugin_setting / cfg_get_plugin_setting /
+// cfg_plugin_settings_count / config_save_plugin_settings).
+//
+// Requires: nitpick_toml_shim, nitpick_fs_shim, nitpick_env_shim
+
+use "../../src/config/config.npk".*;
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-fs/src/nitpick_fs.npk".*;
+
+func:failsafe = int32(tbb32:_code) { exit 1i32; };
+
+int64:g_pass = 0i64;
+int64:g_fail = 0i64;
+
+func:check = NIL(string:name, int64:expected, int64:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (expected != got)")));
+    pass(NIL);
+};
+
+func:check32 = NIL(string:name, int32:expected, int32:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (i32 expected != got)")));
+    pass(NIL);
+};
+
+func:check_str = NIL(string:name, string:expected, string:got) {
+    if (expected == got) {
+        g_pass = g_pass + 1i64;
+        print(string_concat("  PASS: ", name));
+        pass(NIL);
+    }
+    g_fail = g_fail + 1i64;
+    print(string_concat("  FAIL: ", string_concat(name, " (string mismatch)")));
+    pass(NIL);
+};
+
+func:main = int32() {
+    print("=== test_config_plugin_settings ===");
+
+    // Bootstrap config so the toml/fs machinery is ready
+    drop(config_load());
+
+    // T01: initial count is 0 (fresh state)
+    int64:c0 = raw cfg_plugin_settings_count();
+    drop(check("T01_initial_count_is_zero", 0i64, c0));
+
+    // T02: get unknown key returns supplied default
+    string:d = raw cfg_get_plugin_setting("myplugin", "timeout", "30");
+    drop(check_str("T02_get_unknown_returns_default", "30", d));
+
+    // T03: set a new entry increases count to 1
+    drop(cfg_set_plugin_setting("myplugin", "timeout", "60"));
+    int64:c1 = raw cfg_plugin_settings_count();
+    drop(check("T03_count_after_first_set", 1i64, c1));
+
+    // T04: get the value we just stored
+    string:v1 = raw cfg_get_plugin_setting("myplugin", "timeout", "30");
+    drop(check_str("T04_get_stored_value", "60", v1));
+
+    // T05: set a second key on the same plugin — count goes to 2
+    drop(cfg_set_plugin_setting("myplugin", "verbose", "true"));
+    int64:c2 = raw cfg_plugin_settings_count();
+    drop(check("T05_count_after_second_set", 2i64, c2));
+
+    // T06: get the second key
+    string:v2 = raw cfg_get_plugin_setting("myplugin", "verbose", "false");
+    drop(check_str("T06_get_second_key", "true", v2));
+
+    // T07: set a key for a different plugin — count goes to 3
+    drop(cfg_set_plugin_setting("otherplugin", "host", "localhost"));
+    int64:c3 = raw cfg_plugin_settings_count();
+    drop(check("T07_count_two_plugins", 3i64, c3));
+
+    // T08: the first plugin's keys are unaffected
+    string:v3 = raw cfg_get_plugin_setting("myplugin", "timeout", "0");
+    drop(check_str("T08_first_plugin_unchanged", "60", v3));
+
+    // T09: update an existing entry — count stays at 3
+    drop(cfg_set_plugin_setting("myplugin", "timeout", "120"));
+    int64:c4 = raw cfg_plugin_settings_count();
+    drop(check("T09_update_count_stable", 3i64, c4));
+
+    // T10: updated value is reflected immediately
+    string:v4 = raw cfg_get_plugin_setting("myplugin", "timeout", "0");
+    drop(check_str("T10_updated_value_reflected", "120", v4));
+
+    // T11: a completely unknown key on a known plugin still returns default
+    string:v5 = raw cfg_get_plugin_setting("myplugin", "nosuchkey", "default_val");
+    drop(check_str("T11_unknown_key_on_known_plugin", "default_val", v5));
+
+    // T12: config_save_plugin_settings() returns 1 (success)
+    // This exercises the full Toml serialization path for the new triples.
+    int32:saved = raw config_save_plugin_settings();
+    drop(check32("T12_save_plugin_settings_success", 1i32, saved));
+
+    // T13: config file still exists on disk after save
+    string:fpath = raw config_file_path();
+    int32:exists = raw fs_exists(fpath);
+    drop(check32("T13_config_file_exists_after_save", 1i32, exists));
+
+    // T14: empty string value is storable and retrievable
+    drop(cfg_set_plugin_setting("myplugin", "notes", ""));
+    string:v6 = raw cfg_get_plugin_setting("myplugin", "notes", "SENTINEL");
+    drop(check_str("T14_empty_string_value", "", v6));
+
+    // T15: count increased to 4 after storing notes key
+    int64:c5 = raw cfg_plugin_settings_count();
+    drop(check("T15_count_after_empty_string_set", 4i64, c5));
+
+    // Summary
+    print("=== Results ===");
+    if (g_fail > 0i64) {
+        print("SOME TESTS FAILED");
+        exit 1i32;
+    }
+    print("All plugin settings tests passed.");
+    exit 0i32;
+};

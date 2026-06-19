@@ -536,6 +536,18 @@ pub func:config_save = int32() {
         hki = hki + 1i64;
     }
 
+    // v0.15.0: Serialize per-plugin settings triples
+    int64:psk = 0i64;
+    while (psk < g_cfg_plugin_settings_count) {
+        string:sn_k = string_concat("plugins.settings.", string_concat(string_from_int(psk), ".name"));
+        drop(Toml.set_string(sn_k, g_cfg_plugin_setting_plugin[psk]));
+        string:sk_k = string_concat("plugins.settings.", string_concat(string_from_int(psk), ".key"));
+        drop(Toml.set_string(sk_k, g_cfg_plugin_setting_key[psk]));
+        string:sv_k = string_concat("plugins.settings.", string_concat(string_from_int(psk), ".value"));
+        drop(Toml.set_string(sv_k, g_cfg_plugin_setting_value[psk]));
+        psk = psk + 1i64;
+    }
+
     string:text      = raw Toml.serialize();
     string:cfg_path  = raw config_file_path();
     string:tmp_path  = string_concat(cfg_path, ".tmp");
@@ -646,6 +658,17 @@ int64:g_cfg_plugins_disabled_count = 0i64;
 string[4]:g_cfg_plugins_search_dirs;
 int64:g_cfg_plugins_search_dirs_count = 0i64;
 
+// v0.15.0: Per-plugin key=value settings.
+// Stored in TOML as indexed triples:
+//   plugins.settings.0.name  = "ssh"
+//   plugins.settings.0.key   = "timeout"
+//   plugins.settings.0.value = "30"
+// Max 64 (plugin_name, key, value) triples.
+string[64]:g_cfg_plugin_setting_plugin;
+string[64]:g_cfg_plugin_setting_key;
+string[64]:g_cfg_plugin_setting_value;
+int64:g_cfg_plugin_settings_count = 0i64;
+
 // Load plugins config section — called internally by config_load()
 // Must be called after Toml.parse_file() in the main config load.
 pub func:_config_load_plugins = NIL() {
@@ -690,6 +713,24 @@ pub func:_config_load_plugins = NIL() {
             si = si + 1i64;
         }
         if (hsk == 0i32) { si = 4i64; }  // break
+    }
+
+    // v0.15.0: Read per-plugin settings triples
+    g_cfg_plugin_settings_count = 0i64;
+    int64:psi = 0i64;
+    while (psi < 64i64) {
+        string:psn_key = string_concat("plugins.settings.", string_concat(string_from_int(psi), ".name"));
+        int32:has_psn  = raw Toml.has_key(psn_key);
+        if (has_psn == 1i32) {
+            g_cfg_plugin_setting_plugin[psi] = raw Toml.get_string(psn_key);
+            string:psk_key = string_concat("plugins.settings.", string_concat(string_from_int(psi), ".key"));
+            g_cfg_plugin_setting_key[psi]    = raw Toml.get_string(psk_key);
+            string:psv_key = string_concat("plugins.settings.", string_concat(string_from_int(psi), ".value"));
+            g_cfg_plugin_setting_value[psi]  = raw Toml.get_string(psv_key);
+            g_cfg_plugin_settings_count = g_cfg_plugin_settings_count + 1i64;
+            psi = psi + 1i64;
+        }
+        if (has_psn == 0i32) { psi = 64i64; }  // break
     }
 
     pass(NIL);
@@ -737,4 +778,56 @@ pub func:cfg_plugins_is_enabled = int64(string:name) {
         eci = eci + 1i64;
     }
     pass(0i64);
+};
+
+// ── v0.15.0: Per-plugin key=value settings API ────────────────────────────────
+
+/// Return the number of stored plugin setting entries.
+pub func:cfg_plugin_settings_count = int64() { pass(g_cfg_plugin_settings_count); };
+
+/// Get the current value for a per-plugin setting.
+/// Returns default_val if the (plugin_name, key) pair is not stored.
+pub func:cfg_get_plugin_setting = string(string:plugin_name, string:key, string:default_val) {
+    int64:i = 0i64;
+    while (i < g_cfg_plugin_settings_count) {
+        if (g_cfg_plugin_setting_plugin[i] == plugin_name) {
+            if (g_cfg_plugin_setting_key[i] == key) {
+                pass(g_cfg_plugin_setting_value[i]);
+            }
+        }
+        i = i + 1i64;
+    }
+    pass(default_val);
+};
+
+/// Set or update a per-plugin setting in memory.
+/// Updates an existing (plugin_name, key) entry if found; appends a new one otherwise.
+/// Silently does nothing if the 64-entry limit is already reached.
+pub func:cfg_set_plugin_setting = NIL(string:plugin_name, string:key, string:value) {
+    // Search for an existing entry to update
+    int64:i = 0i64;
+    while (i < g_cfg_plugin_settings_count) {
+        if (g_cfg_plugin_setting_plugin[i] == plugin_name) {
+            if (g_cfg_plugin_setting_key[i] == key) {
+                g_cfg_plugin_setting_value[i] = value;
+                pass(NIL);
+            }
+        }
+        i = i + 1i64;
+    }
+    // Not found -- append new entry if space remains
+    if (g_cfg_plugin_settings_count < 64i64) {
+        g_cfg_plugin_setting_plugin[g_cfg_plugin_settings_count] = plugin_name;
+        g_cfg_plugin_setting_key[g_cfg_plugin_settings_count]    = key;
+        g_cfg_plugin_setting_value[g_cfg_plugin_settings_count]  = value;
+        g_cfg_plugin_settings_count = g_cfg_plugin_settings_count + 1i64;
+    }
+    pass(NIL);
+};
+
+/// Persist all plugin settings to disk.
+/// Delegates to config_save() which serialises everything (including the new
+/// plugins.settings.* triples) via the standard atomic .tmp-rename path.
+pub func:config_save_plugin_settings = int32() {
+    pass(raw config_save());
 };

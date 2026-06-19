@@ -764,4 +764,11 @@ extern "nitty_gtk4_shim" {
     func:nitty_serial_toolbar_poll_baud        = int64();
     func:nitty_serial_toolbar_poll_input_mode  = int64();
     func:nitty_serial_toolbar_poll_output_mode = int64();
+
+    // ── v0.15.0: Plugin Manager completion ──────────────────────────────────
+    func:nitty_gtk4_entry_set_text              = NIL(int64:entry, string:text);
+    func:nitty_gtk4_file_chooser_open           = string(string:title, string:filter_name, string:pattern);
+    func:nitty_gtk4_plugin_settings_dialog      = int64(string:plugin_name, string:keys_blob, string:values_blob, int64:count);
+    func:nitty_gtk4_plugin_settings_get_value   = string(int64:i);
+    func:nitty_sys_exec                         = int64(string:cmd);
 }

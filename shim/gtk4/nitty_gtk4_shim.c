@@ -4929,3 +4929,253 @@ int64_t nitty_serial_toolbar_poll_output_mode(void)
     g_stb_output_changed = -1;
     return (int64_t)val;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * v0.15.0: Plugin Manager completion — entry_set_text, file chooser,
+ *          plugin settings dialog, sys_exec.
+ * ───────────────────────────────────────────────────────────────────────────*/
+
+void
+nitty_gtk4_entry_set_text(int64_t entry, const char *text)
+{
+    GtkWidget *w = (GtkWidget *)(uintptr_t)entry;
+    if (!w || !text) return;
+    if (GTK_IS_EDITABLE(w))
+        gtk_editable_set_text(GTK_EDITABLE(w), text);
+}
+
+/* ── file chooser ──────────────────────────────────────────────────────────*/
+
+static char g_fco_path[4096];
+
+static void
+_fco_add_patterns(GtkFileFilter *f, const char *pattern)
+{
+    char buf[512];
+    strncpy(buf, pattern, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    char *tok = strtok(buf, ";");
+    while (tok) {
+        gtk_file_filter_add_pattern(f, tok);
+        tok = strtok(NULL, ";");
+    }
+}
+
+#if GTK_CHECK_VERSION(4, 10, 0)
+
+typedef struct { GMainLoop *loop; char *path; } NitteFcoResult;
+
+static void
+_fco_async_cb(GObject *src, GAsyncResult *res, gpointer data)
+{
+    NitteFcoResult *r = (NitteFcoResult *)data;
+    GFile *file = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(src), res, NULL);
+    if (file) {
+        r->path = g_file_get_path(file);
+        g_object_unref(file);
+    }
+    g_main_loop_quit(r->loop);
+}
+
+const char *
+nitty_gtk4_file_chooser_open(const char *title,
+                              const char *filter_name,
+                              const char *pattern)
+{
+    g_fco_path[0] = '\0';
+    GtkFileDialog *dlg = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dlg, title);
+
+    GListStore    *store  = g_list_store_new(GTK_TYPE_FILE_FILTER);
+    GtkFileFilter *filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(filter, filter_name);
+    _fco_add_patterns(filter, pattern);
+    g_list_store_append(store, filter);
+    g_object_unref(filter);
+    gtk_file_dialog_set_filters(dlg, G_LIST_MODEL(store));
+    g_object_unref(store);
+
+    GMainLoop    *loop = g_main_loop_new(NULL, FALSE);
+    NitteFcoResult res = { .loop = loop, .path = NULL };
+    gtk_file_dialog_open(dlg, NULL, NULL, _fco_async_cb, &res);
+    g_main_loop_run(loop);
+    g_main_loop_unref(loop);
+    g_object_unref(dlg);
+
+    if (res.path) {
+        strncpy(g_fco_path, res.path, sizeof(g_fco_path) - 1);
+        g_fco_path[sizeof(g_fco_path) - 1] = '\0';
+        g_free(res.path);
+    }
+    return g_fco_path;
+}
+
+#else  /* GTK < 4.10 */
+
+typedef struct { int response; } NitteFcdResult;
+
+static void
+_fcd_response_cb(GtkWidget *dlg, gint resp, gpointer data)
+{
+    ((NitteFcdResult *)data)->response = resp;
+    gtk_widget_hide(dlg);
+}
+
+const char *
+nitty_gtk4_file_chooser_open(const char *title,
+                              const char *filter_name,
+                              const char *pattern)
+{
+    g_fco_path[0] = '\0';
+    GtkWidget *dlg = gtk_file_chooser_dialog_new(
+        title, NULL,
+        GTK_FILE_CHOOSER_ACTION_OPEN,
+        "_Cancel", GTK_RESPONSE_CANCEL,
+        "_Open",   GTK_RESPONSE_ACCEPT,
+        NULL);
+    gtk_window_set_modal(GTK_WINDOW(dlg), TRUE);
+
+    GtkFileFilter *filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(filter, filter_name);
+    _fco_add_patterns(filter, pattern);
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dlg), filter);
+
+    NitteFcdResult result = { .response = GTK_RESPONSE_CANCEL };
+    g_signal_connect(dlg, "response", G_CALLBACK(_fcd_response_cb), &result);
+    gtk_widget_show(dlg);
+
+    while (gtk_widget_get_visible(dlg))
+        g_main_context_iteration(NULL, TRUE);
+
+    if (result.response == GTK_RESPONSE_ACCEPT) {
+        GFile *file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dlg));
+        if (file) {
+            char *path = g_file_get_path(file);
+            if (path) {
+                strncpy(g_fco_path, path, sizeof(g_fco_path) - 1);
+                g_fco_path[sizeof(g_fco_path) - 1] = '\0';
+                g_free(path);
+            }
+            g_object_unref(file);
+        }
+    }
+    gtk_window_destroy(GTK_WINDOW(dlg));
+    return g_fco_path;
+}
+
+#endif /* GTK_CHECK_VERSION(4, 10, 0) */
+
+/* ── plugin settings dialog ───────────────────────────────────────────────*/
+
+#define NITTY_MAX_PLUGIN_SETTINGS 8
+
+static GtkWidget *g_psd_entries[NITTY_MAX_PLUGIN_SETTINGS];
+static char       g_psd_values [NITTY_MAX_PLUGIN_SETTINGS][4096];
+static int        g_psd_count  = 0;
+static int        g_psd_result = 0;  /* 0=cancel, 1=apply */
+
+static void
+_psd_response_cb(GtkWidget *dlg, gint resp, gpointer data)
+{
+    (void)data;
+    g_psd_result = (resp == GTK_RESPONSE_ACCEPT) ? 1 : 0;
+    if (g_psd_result == 1) {
+        for (int i = 0; i < g_psd_count; i++) {
+            const char *txt = gtk_editable_get_text(GTK_EDITABLE(g_psd_entries[i]));
+            strncpy(g_psd_values[i], txt ? txt : "", 4095);
+            g_psd_values[i][4095] = '\0';
+        }
+    }
+    gtk_window_destroy(GTK_WINDOW(dlg));
+}
+
+static int
+_psd_split_lines(const char *src, char out[][4096], int max)
+{
+    int n = 0;
+    const char *p = src;
+    while (n < max && p && *p) {
+        const char *nl = strchr(p, '\n');
+        int len = nl ? (int)(nl - p) : (int)strlen(p);
+        if (len >= 4096) len = 4095;
+        memcpy(out[n], p, (size_t)len);
+        out[n][len] = '\0';
+        n++;
+        if (!nl) break;
+        p = nl + 1;
+    }
+    return n;
+}
+
+int64_t
+nitty_gtk4_plugin_settings_dialog(const char *plugin_name,
+                                   const char *keys_blob,
+                                   const char *values_blob,
+                                   int64_t     count)
+{
+    static char s_keys[NITTY_MAX_PLUGIN_SETTINGS][4096];
+    static char s_vals[NITTY_MAX_PLUGIN_SETTINGS][4096];
+
+    _psd_split_lines(keys_blob,   s_keys, NITTY_MAX_PLUGIN_SETTINGS);
+    _psd_split_lines(values_blob, s_vals, NITTY_MAX_PLUGIN_SETTINGS);
+    g_psd_count  = (int)count;
+    if (g_psd_count > NITTY_MAX_PLUGIN_SETTINGS) g_psd_count = NITTY_MAX_PLUGIN_SETTINGS;
+    g_psd_result = 0;
+    memset(g_psd_values,  0, sizeof(g_psd_values));
+    memset(g_psd_entries, 0, sizeof(g_psd_entries));
+
+    GtkWidget *dlg = gtk_dialog_new_with_buttons(
+        plugin_name,
+        NULL,
+        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+        "_Cancel", GTK_RESPONSE_CANCEL,
+        "_Apply",  GTK_RESPONSE_ACCEPT,
+        NULL);
+
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
+    gtk_box_set_spacing(GTK_BOX(content), 8);
+
+    char hdr_text[512];
+    snprintf(hdr_text, sizeof(hdr_text), "Settings \xe2\x80\x94 %s", plugin_name);
+    GtkWidget *hdr = gtk_label_new(hdr_text);
+    gtk_label_set_xalign(GTK_LABEL(hdr), 0.0f);
+    gtk_box_append(GTK_BOX(content), hdr);
+
+    for (int i = 0; i < g_psd_count; i++) {
+        char lbl_buf[256];
+        snprintf(lbl_buf, sizeof(lbl_buf), "%s:", s_keys[i]);
+        GtkWidget *lbl = gtk_label_new(lbl_buf);
+        gtk_label_set_xalign(GTK_LABEL(lbl), 0.0f);
+        gtk_box_append(GTK_BOX(content), lbl);
+
+        GtkWidget *entry = gtk_entry_new();
+        if (s_vals[i][0] != '\0')
+            gtk_editable_set_text(GTK_EDITABLE(entry), s_vals[i]);
+        gtk_box_append(GTK_BOX(content), entry);
+        g_psd_entries[i] = entry;
+    }
+
+    g_signal_connect(dlg, "response", G_CALLBACK(_psd_response_cb), NULL);
+    gtk_widget_show(dlg);
+
+    while (gtk_widget_get_visible(dlg))
+        g_main_context_iteration(NULL, TRUE);
+
+    return (int64_t)g_psd_result;
+}
+
+const char *
+nitty_gtk4_plugin_settings_get_value(int64_t i)
+{
+    if (i < 0 || (int)i >= g_psd_count) return "";
+    return g_psd_values[(int)i];
+}
+
+/* ── shell exec ────────────────────────────────────────────────────────────*/
+
+int64_t
+nitty_sys_exec(const char *cmd)
+{
+    if (!cmd || !*cmd) return -1LL;
+    return (int64_t)system(cmd);
+}
