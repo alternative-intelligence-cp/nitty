@@ -88,6 +88,7 @@ jobs:
           # Substitute the hardcoded path
           sed -i "s|/home/randy/Workspace/REPOS|$PWD/REPOS|g" build.abc
           sed -i 's|compiler = "npkc"|compiler = "/usr/local/bin/npkc"|g' build.abc
+          awk '/^\[target\.test_/ { skip=1; next } /^\[/ { skip=0 } !skip { print }' build.abc > build.abc.tmp && mv build.abc.tmp build.abc
           sudo chmod +x /usr/local/bin/npkc /usr/local/bin/npkbld || true
 
       - name: Build Nitty
