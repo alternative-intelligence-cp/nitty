@@ -31,7 +31,7 @@ use "../../src/core/pane.npk".*;
 use "../../src/ssh/ssh_forward.npk".{fwd_confirm_channel, fwd_close_channel, fwd_remote_accept};
 use "../../src/config/profile.npk".{profile_get_x11_forwarding, profile_get_ssh_compress}; // v0.8.7
 use "../../src/ssh/ssh_x11.npk".{x11_request_forwarding, x11_handle_open};                 // v0.8.7
-use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".{env_get}; // v0.8.7
+use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-env/src/nitpick_env.npk".{get}; // v0.8.7
 
 // ── Session State Constants ──────────────────────────────────────────────────
 
@@ -168,10 +168,10 @@ pub func:ssh_connect = int64(int64:pane_slot, string:host, int64:port, string:us
     string:kh_s = ahget(session, "_server_host_key_buf");
     if (string_length(kh_s) > 0i64) {
         int64:hk_buf = raw SSH_str_to_handle(kh_s);
-        string:ktype = raw nitpick_ssh_decode_string_data(hk_buf, 0i64);
+        string:ktype = nitpick_ssh_decode_string_data(hk_buf, 0i64);
         int64:kh_handle = raw ssh_kh_load();
         int64:kh_res = raw ssh_kh_check(kh_handle, host, ktype, hk_buf);
-        if (kh_res == KH_MISMATCH()) {
+        if (kh_res == raw KH_MISMATCH()) {
             drop(_ssh_set_error(pane_slot, "Host key mismatch! MITM attack?"));
             drop(SSH_disconnect(session));
             pass(-6i64);
@@ -256,10 +256,10 @@ pub func:ssh_connect = int64(int64:pane_slot, string:host, int64:port, string:us
     int32:auth_ok     = 0i32;
     int64:auth_iters  = 0i64;
     while (auth_iters < 64i64 && auth_done == 0i32) {
-        int32:tick_result = auth_dialog_tick(pane_slot);
-        if (tick_result == AUTH_DIALOG_DONE()) {
+        int32:tick_result = raw auth_dialog_tick(pane_slot);
+        if (tick_result == raw AUTH_DIALOG_DONE()) {
             auth_done = 1i32;
-            if (auth_dialog_success(pane_slot) == 1i32) {
+            if (raw auth_dialog_success(pane_slot) == 1i32) {
                 auth_ok = 1i32;
             }
         }
@@ -429,8 +429,8 @@ pub func:ssh_poll_read = string(int64:pane_slot) {
             if (msg_type == 94i32) {
                 // CHANNEL_DATA (type 94) — check if it's a forwarding channel
                 // The channel id (recipient) is at bytes 1-4 in the payload
-                int32:recv_chan = nitpick_ssh_decode_uint32(payload, 1i64);
-                int64:recv_chan64 = @cast_unchecked<int64>(recv_chan);
+                int64:recv_chan = nitpick_ssh_decode_uint32(payload, 1i64);
+                int64:recv_chan64 = recv_chan;
                 if (recv_chan64 != shell_chan) {
                     // Forwarding channel — relay data to local fd
                     // First dispatch normally to update channel state/buffer
@@ -466,8 +466,8 @@ pub func:ssh_poll_read = string(int64:pane_slot) {
 
             if (msg_type == 91i32) {
                 // CHANNEL_OPEN_CONFIRM — could be a forwarding channel
-                int32:confirm_our_chan = nitpick_ssh_decode_uint32(payload, 1i64);
-                int64:confirm_chan64 = @cast_unchecked<int64>(confirm_our_chan);
+                int64:confirm_our_chan = nitpick_ssh_decode_uint32(payload, 1i64);
+                int64:confirm_chan64 = confirm_our_chan;
                 int32:r = raw SSH_dispatch(session, payload);
                 drop(raw SSH_buf_free(payload));
                 if (confirm_chan64 != shell_chan) {
@@ -501,8 +501,8 @@ pub func:ssh_poll_read = string(int64:pane_slot) {
                     int64:addr_off = 1i64 + 4i64 + ct_slen + 12i64;
                     int64:addr_slen = nitpick_ssh_decode_string_len(payload, addr_off);
                     int64:bport_off = addr_off + 4i64 + addr_slen;
-                    int32:bind_port32 = nitpick_ssh_decode_uint32(payload, bport_off);
-                    int64:bind_port = @cast_unchecked<int64>(bind_port32);
+                    int64:bind_port32 = nitpick_ssh_decode_uint32(payload, bport_off);
+                    int64:bind_port = bind_port32;
 
                     int32:r = raw SSH_dispatch(session, payload);
                     drop(raw SSH_buf_free(payload));
@@ -515,8 +515,8 @@ pub func:ssh_poll_read = string(int64:pane_slot) {
             if (msg_type != 90i32 && msg_type != 91i32 && msg_type != 94i32) {
                 int64:closed_chan = -1i64;
                 if (msg_type == 96i32 || msg_type == 97i32) {
-                    int32:closed_chan32 = nitpick_ssh_decode_uint32(payload, 1i64);
-                    closed_chan = @cast_unchecked<int64>(closed_chan32);
+                    int64:closed_chan32 = nitpick_ssh_decode_uint32(payload, 1i64);
+                    closed_chan = closed_chan32;
                 }
 
                 // All other packet types: EOF, CLOSE, window adjust, disconnect, etc.
@@ -760,10 +760,10 @@ pub func:ssh_connect_over_fd = int64(int64:pane_slot, int64:transport_fd,
     int32:auth_ok2    = 0i32;
     int64:auth_iters2 = 0i64;
     while (auth_iters2 < 64i64 && auth_done2 == 0i32) {
-        int32:tick_result2 = auth_dialog_tick(pane_slot);
-        if (tick_result2 == AUTH_DIALOG_DONE()) {
+        int32:tick_result2 = raw auth_dialog_tick(pane_slot);
+        if (tick_result2 == raw AUTH_DIALOG_DONE()) {
             auth_done2 = 1i32;
-            if (auth_dialog_success(pane_slot) == 1i32) { auth_ok2 = 1i32; }
+            if (raw auth_dialog_success(pane_slot) == 1i32) { auth_ok2 = 1i32; }
         }
         auth_iters2 = auth_iters2 + 1i64;
     }

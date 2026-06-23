@@ -1,0 +1,18 @@
+--- src/core/app.npk
++++ src/core/app.npk
+@@ -105,7 +105,6 @@
+     drop(x11_init());
+     drop(vault_init());
+     drop(zmodem_init());
+-    drop(a11y_init());
+ 
+     int64:t_after_subsystems = nitty_gtk4_get_monotonic_ms();
+ 
+@@ -239,6 +238,8 @@
+     Result<int64>:app_r = window_app_create("com.altintel.nitty");
+     int64:app = app_r ? 0i64;
+ 
++    drop(a11y_init());
++
+     // v0.6.3: Quake mode + global hotkey initialization.
+     // Must happen AFTER window_app_run() has presented the window (so the

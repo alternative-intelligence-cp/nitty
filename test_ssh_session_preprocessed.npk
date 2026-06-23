@@ -78,9 +78,9 @@ func:main = int32() {
     drop(check_int("T03 pane_set/get_type SSH round-trip", 1i64, got_type));
 
     // ── T04: pane_get/set_ssh_session round-trip ──────────────────────────────
-    drop(pane_set_ssh_session(slot, 0xDEADBEEFi64));
+    drop(pane_set_ssh_session(slot, 3735928559i64));
     int64:got_sess = raw pane_get_ssh_session(slot);
-    drop(check_int("T04 pane_set/get_ssh_session round-trip", 0xDEADBEEFi64, got_sess));
+    drop(check_int("T04 pane_set/get_ssh_session round-trip", 3735928559i64, got_sess));
 
     // ── T05: pane_get/set_ssh_channel round-trip ──────────────────────────────
     drop(pane_set_ssh_channel(slot, 7i64));
@@ -141,4 +141,3 @@ func:main = int32() {
     if (g_fail != 0i64) { exit 1i32; }
     exit 0i32;
 };
-func:failsafe = int32(tbb32:err) { exit 1i32; };

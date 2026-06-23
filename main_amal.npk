@@ -1,0 +1,99 @@
+// src/main.npk — Nitty terminal emulator entry point
+//
+// v0.4.4: Checks --no-restore via /proc/self/cmdline before calling app_run().
+//
+// Nitpick binary entry point rules:
+//   - failsafe: func:failsafe = int32(tbb32:err) { exit N; };
+//   - main:     func:main = int32() { ... exit N; };
+//   - pub func calls (even NIL-returning) produce a Result — use drop().
+
+use "core/app.npk".*;
+
+// ── CLI arg parsing via /proc/self/cmdline ───────────────────────────────────
+//
+// /proc/self/cmdline contains argv as NUL-separated tokens.
+// We search it for the literal "--no-restore" token by scanning byte-by-byte.
+// Uses only libc fopen/fgetc/fclose — no external package needed.
+
+extern "libc" {
+    func:fopen  = int64(string:path, string:mode);
+    func:fgetc  = int32(int64:fp);
+    func:fclose = int32(int64:fp);
+}
+
+// Returns 1 if "--no-restore" appears as a separate NUL-delimited token in
+// /proc/self/cmdline, 0 otherwise.
+func:_check_no_restore = int32() {
+    int64:fp = fopen("/proc/self/cmdline", "r");
+    if (fp == 0i64) { pass(0i32); }
+
+    // "--no-restore" as individual byte values to match
+    // '-'=45, '-'=45, 'n'=110, 'o'=111, '-'=45, 'r'=114, 'e'=101
+    // 's'=115, 't'=116, 'o'=111, 'r'=114, 'e'=101  (12 chars total)
+
+    int32:found    = 0i32;
+    int32:pos      = 0i32;   // position within current matching attempt
+    int32:running  = 1i32;
+
+    while (running == 1i32) {
+        int32:c = fgetc(fp);
+
+        if (c < 0i32) {
+            // EOF — check if we were at end of "--no-restore"
+            if (pos == 12i32) { found = 1i32; }
+            running = 0i32;
+        }
+
+        if (running == 1i32) {
+            if (c == 0i32) {
+                // End of token — check complete match
+                if (pos == 12i32) { found = 1i32; running = 0i32; }
+                pos = 0i32;
+            }
+            if (running == 1i32) {
+                if (c != 0i32) {
+                    // Try to advance the match for "--no-restore"
+                    int32:expected = 0i32;
+                    if (pos == 0i32) { expected = 45i32; }   // '-'
+                    if (pos == 1i32) { expected = 45i32; }   // '-'
+                    if (pos == 2i32) { expected = 110i32; }  // 'n'
+                    if (pos == 3i32) { expected = 111i32; }  // 'o'
+                    if (pos == 4i32) { expected = 45i32; }   // '-'
+                    if (pos == 5i32) { expected = 114i32; }  // 'r'
+                    if (pos == 6i32) { expected = 101i32; }  // 'e'
+                    if (pos == 7i32) { expected = 115i32; }  // 's'
+                    if (pos == 8i32) { expected = 116i32; }  // 't'
+                    if (pos == 9i32) { expected = 111i32; }  // 'o'
+                    if (pos == 10i32) { expected = 114i32; } // 'r'
+                    if (pos == 11i32) { expected = 101i32; } // 'e'
+
+                    if (c == expected) {
+                        pos = pos + 1i32;
+                    }
+                    if (c != expected) {
+                        pos = 0i32;
+                        // Also check if this char restarts match from pos 0
+                        if (c == 45i32) { pos = 1i32; }  // '-'
+                    }
+                }
+            }
+        }
+    }
+
+    drop(fclose(fp));
+    pass(found);
+};
+
+// failsafe: called by the runtime on unrecoverable error.
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+func:main = int32() {
+    // v0.4.4: Check for --no-restore flag in argv
+    int32:no_restore = raw _check_no_restore();
+    if (no_restore == 1i32) { drop(app_set_no_restore()); }
+
+    drop(app_init());
+    drop(app_run());
+    drop(app_shutdown());
+    exit 0i32;
+};

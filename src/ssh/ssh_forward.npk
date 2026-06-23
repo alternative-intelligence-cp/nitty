@@ -22,7 +22,7 @@
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-ssh/src/nitpick_ssh.npk".*;
 use "/home/randy/Workspace/REPOS/nitpick-packages/packages/nitpick-socket/src/nitpick_socket_v2.npk".*;
 use "../../src/core/pane.npk".*;
-use "../../src/config/profile.npk".{profile_get_local_fwd};
+use "../../src/config/profile.npk".*;
 
 // ── Internal string helpers ────────────────────────────────────────────────────
 
@@ -563,18 +563,32 @@ func:_fwd_parse_hostport = NIL(string:hostport, string:out_host, int64:out_port)
     pass(NIL);
 };
 
+func:_fwd_string_find = int64(string:s, string:sub, int64:start) {
+    int64:len = string_length(s);
+    int64:sub_len = string_length(sub);
+    if (sub_len == 0i64) { pass(start); }
+    int64:i = start;
+    while (i <= len - sub_len) {
+        if (string_substring(s, i, i + sub_len) == sub) {
+            pass(i);
+        }
+        i = i + 1i64;
+    }
+    pass(-1i64);
+};
+
 /// Apply forwarding rules from a connection profile after successful SSH auth.
 pub func:fwd_apply_profile_rules = NIL(int64:pane_slot, int64:prof_slot) {
     int64:session = raw pane_get_ssh_session(pane_slot);
     if (session == 0i64) { pass(NIL); }
     
     // Apply local forward rules (CSV: "lport:host:rport,lport:host:rport,...")
-    string:local_rules = profile_get_local_fwd(prof_slot);
+    string:local_rules = raw profile_get_local_fwd(prof_slot);
     int64:start_idx = 0i64;
     int64:len = string_length(local_rules);
     
     while (start_idx < len) {
-        int64:comma_idx = string_find(local_rules, ",", start_idx);
+        int64:comma_idx = raw _fwd_string_find(local_rules, ",", start_idx);
         string:rule = "";
         if (comma_idx == -1i64) {
             rule = string_substring(local_rules, start_idx, len);
@@ -585,10 +599,10 @@ pub func:fwd_apply_profile_rules = NIL(int64:pane_slot, int64:prof_slot) {
         }
         
         if (string_length(rule) > 0i64) {
-            drop(fwd_parse_local_rule(rule));
+            drop(fwd_parse_local_rule(rule, 0i64, "", 0i64));
             if (g_fwd_parse_local_port > 0i64 && string_length(g_fwd_parse_remote_host) > 0i64) {
                 // Actually start the local listener
-                drop(fwd_local_start(pane_slot, session, g_fwd_parse_local_port, g_fwd_parse_remote_host, g_fwd_parse_remote_port));
+                drop(fwd_local_start(pane_slot, g_fwd_parse_local_port, g_fwd_parse_remote_host, g_fwd_parse_remote_port));
             }
         }
     }

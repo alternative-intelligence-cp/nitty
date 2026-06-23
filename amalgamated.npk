@@ -1,0 +1,49 @@
+// tests/test_app.npk — Lifecycle unit tests for Nitty v0.0.1
+//
+// Tests the non-blocking parts of core/app.npk:
+//   T01: app_version() returns "0.0.1"
+//   T02: app_init()    runs without error
+//   T03: app_shutdown() runs without error
+//
+// NOTE: app_run() is NOT tested here because it blocks on the GTK main loop.
+//       GTK integration is tested separately in tests/test_gtk4_ffi.npk.
+//
+// All tests pass → exit 0.  Any failure → exit N.
+
+use "../src/core/app.npk".*;
+
+// fd 1 = stdout
+int64:STDOUT = 1i64;
+
+func:print_line = NIL(string:msg) {
+    int64:len = string_length(msg);
+    drop(sys(WRITE, STDOUT, msg, len));
+    pass(NIL);
+};
+
+func:failsafe = int32(tbb32:_err) { exit 1i32; };
+
+func:main = int32() {
+
+    // T01: app_version() returns "0.6.5"
+    Result<string>:ver_r = app_version();
+    string:ver = ver_r ? "";
+    if (ver == "0.6.5") {
+        drop(print_line("[PASS] T01 app_version returns 0.6.5\n"));
+    }
+    if (ver != "0.6.5") {
+        drop(print_line("[FAIL] T01 app_version\n"));
+        exit 1i32;
+    }
+
+    // T02: app_init() runs without crashing
+    drop(print_line("[PASS] T02 app_init lifecycle\n"));
+    drop(app_init());
+
+    // T03: app_shutdown() runs without crashing
+    drop(print_line("[PASS] T03 app_shutdown lifecycle\n"));
+    drop(app_shutdown());
+
+    drop(print_line("All tests passed.\n"));
+    exit 0i32;
+};

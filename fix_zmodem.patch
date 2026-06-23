@@ -1,0 +1,20 @@
+--- src/core/app.npk
++++ src/core/app.npk
+@@ -51,7 +51,7 @@
+ use "../gui/sftp_browser.npk".{sftp_browser_init}; // v0.8.5: SFTP browser panel
+ use "../ssh/ssh_x11.npk".{x11_init};            // v0.8.6: X11 forwarding
+ use "../ssh/ssh_vault.npk".{vault_init};             // v0.8.6: encrypted vault
+-use "../ssh/ssh_zmodem.npk".{zmodem_init};           // v0.8.6: Zmodem file transfer
++use "../ssh/ssh_zmodem.npk".{zmodem_apply_config};           // v0.8.6: Zmodem file transfer
+ use "../gui/accessibility.npk".{a11y_init, a11y_configure}; // v0.13.0: AT-SPI / screen reader
+ use "../plugin/plugin_manager.npk".{plugin_manager_init, plugin_manager_shutdown}; // v0.10.0: plugin system
+ 
+@@ -101,7 +101,7 @@
+     // v0.8.6: Initialize X11 forwarding, vault, and Zmodem modules
+     drop(x11_init());
+     drop(vault_init());
+-    drop(zmodem_init());
++    drop(zmodem_apply_config(raw cfg_download_dir(), raw cfg_zmodem_auto_detect()));
+     drop(plugin_manager_init());                        // v0.10.0: plugin system
+     drop(write_stdout("Nitty v0.10.0 initializing...\n"));
+     pass(NIL);

@@ -53,6 +53,9 @@ pub func:tm_init = NIL() {
 /// Appends to the end of the tab list.
 /// Returns the new tab's unique ID.
 pub func:tm_add_tab = int64(int64:pty_fd, int64:shell_pid) {
+    if (g_tm_count >= 16i64) {
+        pass(0i64);
+    }
     int64:slot = g_tm_count;
     int64:id = g_tm_next_id;
     g_tm_next_id = g_tm_next_id + 1i64;
@@ -91,23 +94,7 @@ pub func:tm_remove_tab = int64(int64:id) {
     i = found;
     while (i < g_tm_count - 1i64) {
         int64:next = i + 1i64;
-        // Copy next slot into current slot
-        drop(tab_create(i, raw tab_get_id(next),
-                        raw tab_get_pty_fd(next), raw tab_get_pid(next)));
-        drop(tab_set_active(i, raw tab_is_active(next)));
-        drop(tab_set_title(i, raw tab_get_title(next)));
-        if (raw tab_has_activity(next) != 0i64) {
-            drop(tab_mark_activity(i));
-        }
-        if (raw tab_has_bell(next) != 0i64) {
-            drop(tab_mark_bell(i));
-        }
-        // v0.4.3: copy new fields
-        if (raw tab_has_completion(next) != 0i64) {
-            drop(tab_mark_completion(i));
-        }
-        drop(tab_set_custom_title(i, raw tab_get_custom_title(next)));
-        drop(tab_set_custom_color(i, raw tab_get_custom_color(next)));
+        drop(tab_swap(i, next));
         i = i + 1i64;
     }
 
@@ -497,6 +484,8 @@ pub func:tm_move_tab = NIL(int64:from_idx, int64:to_idx) {
         while (cur > to_idx) {
             int64:prev = cur - 1i64;
             drop(tab_swap(cur, prev));
+            if (g_tm_active_index == cur) { g_tm_active_index = prev; }
+            else if (g_tm_active_index == prev) { g_tm_active_index = cur; }
             cur = prev;
         }
     }
@@ -506,14 +495,13 @@ pub func:tm_move_tab = NIL(int64:from_idx, int64:to_idx) {
         while (cur < to_idx) {
             int64:nxt = cur + 1i64;
             drop(tab_swap(cur, nxt));
+            if (g_tm_active_index == cur) { g_tm_active_index = nxt; }
+            else if (g_tm_active_index == nxt) { g_tm_active_index = cur; }
             cur = nxt;
         }
     }
 
-    // Track active index if it was the moved tab or was displaced
-    if (g_tm_active_index == from_idx) {
-        g_tm_active_index = to_idx;
-    }
+    // Active index is now tracked incrementally within the loops.
 
     pass(NIL);
 };

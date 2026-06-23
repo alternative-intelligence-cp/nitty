@@ -16,7 +16,7 @@
 //   - exit 0i32 / exit 1i32
 
 use "../../src/config/profile.npk".*;
-use "../../src/ssh/ssh_forward.npk".*;
+use "../../src/ssh/ssh_forward.npk".{fwd_init, fwd_parse_local_rule, fwd_get_parsed_local_port, fwd_get_parsed_remote_host, fwd_get_parsed_remote_port, fwd_track_local};
 
 int64:g_pass = 0i64;
 int64:g_fail = 0i64;
@@ -205,6 +205,7 @@ func:test_t07_fwd_local_start_tracking = NIL() {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+func:failsafe = int32(tbb32:err) { exit 1i32; };
 func:main = int32() {
     println("=== test_ssh_forward: Port Forwarding & Jump Host ===");
 

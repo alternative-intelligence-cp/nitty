@@ -1,0 +1,413 @@
+[1/107] Building test_plugin_manager_ui...
+[1/107] Building test_zmodem...
+[1/107] Building test_loader...
+[1/107] Building test_csi_dispatch...
+[1/107] Building gtk4_shim...
+[1/107] Building test_connection_manager...
+[1/107] Building test_api...
+[1/107] Building test_window_state...
+[1/107] Building test_special_sequences...
+[1/107] Building test_split_view...
+[1/107] Building test_split_layout...
+[1/107] Building test_lifecycle...
+[1/107] Building test_broadcast...
+[1/107] Building test_tab...
+[1/107] Building test_e2e_config...
+[1/107] Building test_profile...
+[1/107] Building test_terminal_state_smoke...
+[1/107] Building test_charsets...
+[1/107] Building test_osc_dispatch...
+[1/107] Building test_sgr_integration...
+[1/107] Building test_sgr_dispatch...
+[1/107] Building test_manifest...
+[1/107] Building test_vt_parser...
+[1/107] Building test_utf8...
+[1/107] Building test_ssh_forward...
+[1/107] Building test_builtin_plugins...
+[1/107] Building test_sftp...
+[1/107] Building test_grid_smoke...
+[1/107] Building pty_shim...
+[1/107] Building telnet_shim...
+[1/107] Building test_auth...
+[1/107] Building test_known_hosts...
+[1/107] Building bench_shim...
+[1/107] Building test_schema...
+[1/107] Building test_paths...
+[1/107] Building test_libssh2_ffi...
+[1/107] Building test_split_maximize...
+[1/107] Building test_mode_dispatch...
+[1/107] Building test_csi_integration...
+[1/107] Building test_pane_operations...
+[1/107] Building test_dcs_dispatch...
+[1/107] Building test_pane...
+[1/107] Building test_split_tree...
+[1/107] Building serial_shim...
+[2/107] Building test_startup...
+[2/107] Building test_throughput...
+[2/107] Building test_latency...
+[2/107] Building test_memory...
+[8/107] Building test_telnet_session...
+[23/107] Building test_shell...
+[23/107] Building test_resize...
+[23/107] Building test_pty_io...
+[23/107] Building test_pty...
+[28/107] Building test_serial_e2e...
+[28/107] Building test_serial_modes...
+[28/107] Building test_serial_session...
+[28/107] Building test_serial_port...
+[58/107] Building test_global_hotkey...
+[58/107] Building test_unicode_width...
+[58/107] Building test_activity...
+[58/107] Building test_large_output...
+[58/107] Building test_hotkey...
+[58/107] Building test_window_features...
+[58/107] Building test_tab_manager...
+[58/107] Building nitty...
+[58/107] Building test_gtk4_ffi...
+[58/107] Building test_process_monitor...
+[58/107] Building test_input...
+[58/107] Building test_color_resolve...
+[58/107] Building test_font_config...
+[58/107] Building test_render_perf...
+[58/107] Building test_e2e_tabs_panes...
+[58/107] Building test_e2e_session...
+[58/107] Building test_damage_tracker...
+[58/107] Building test_output_processing...
+[58/107] Building test_glyph_atlas...
+[58/107] Building test_quake_minimal...
+[58/107] Building test_cursor...
+[58/107] Building test_app...
+[58/107] Building test_rapid_resize...
+[58/107] Building test_selection...
+[58/107] Building test_text_attributes...
+[58/107] Building test_quake...
+[58/107] Building test_vt_conformance...
+[58/107] Building test_renderer...
+[58/107] Building test_clipboard...
+[58/107] Building test_theme...
+[58/107] Building test_ssh_session...
+[58/107] Building test_bell...
+[58/107] Building test_dev_tools_compat...
+[58/107] Building test_fonts_glyphs_compat...
+[58/107] Building test_terminal_polish...
+[58/107] Building test_scrollback...
+[58/107] Building test_ssh_e2e...
+[58/107] Building test_e2e_shell...
+[58/107] Building test_color_scheme...
+[58/107] Building test_terminal_grid...
+[58/107] Building test_shell_compat...
+[58/107] Building test_tui_compat...
+[58/107] Building test_memory_leaks...
+[58/107] Building test_utf8_edge_cases...
+[58/107] Building test_many_terminals...
+[58/107] Building test_config...
+[58/107] Building test_terminal_widget...
+[58/107] Building test_search...
+
+Build failed: 4 targets failed
+  Error: Failed to build test_ssh_e2e: [1m/home/randy/Workspace/REPOS/nitty/tests/ssh/test_ssh_e2e.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'home' shadows outer declaration at line 82, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/ssh/test_ssh_e2e.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'user' shadows outer declaration at line 272, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/ssh/test_ssh_e2e.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'count' shadows outer declaration at line 329, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/ssh/test_ssh_e2e.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'user' shadows outer declaration at line 698, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/ssh/test_ssh_e2e.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 22, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/ssh/ssh_vault.npk:0:0: [0m[1;31merror[0m: [1mIR generation error: Unknown function or closure: TOML_parse[0m
+
+[1mSummary: [0m[1;31m1 error[0m, [1;33m5 warnings[0m
+
+Linker error: clang++: error: no such file or directory: '.nitpick_make/build/obj/test_ssh_e2e/test_ssh_e2e.o'
+
+  Error: Failed to build nitty: [1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mLine 610, Column 10: warning: [NITPICK-062] NITPICK-CAST-NARROW — explicit cast from 'int64' to 'int32' narrows the integer bit width and may truncate. Use @cast_unchecked<int32>(expr) to silence after auditing.[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mLine 310, Column 43: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mLine 310, Column 55: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mLine 311, Column 43: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mLine 311, Column 56: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mLine 312, Column 43: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mLine 312, Column 57: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mLine 313, Column 43: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mLine 313, Column 56: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 59, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'user' shadows outer declaration at line 272, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'count' shadows outer declaration at line 329, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'user' shadows outer declaration at line 698, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'home' shadows outer declaration at line 29, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 31, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 40, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 47, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 67, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 73, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 32, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 34, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 35, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 36, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 37, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 38, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 39, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 40, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 41, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 42, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 43, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 44, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 48, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 49, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 50, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 51, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'nitty_gtk4_show_notification' shadows outer declaration (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'home' shadows outer declaration at line 82, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 22, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'count' shadows outer declaration at line 349, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'has' shadows outer declaration at line 446, column 13 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 131, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'user' shadows outer declaration at line 118, column 21 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'count' shadows outer declaration at line 133, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'home' shadows outer declaration at line 255, column 9 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'nitty_pty_set_winsize' shadows outer declaration (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/main.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'cfg_opacity' shadows outer declaration at line 231, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/ssh/ssh_vault.npk:0:0: [0m[1;31merror[0m: [1mIR generation error: Unknown function or closure: TOML_parse[0m
+
+[1mSummary: [0m[1;31m1 error[0m, [1;33m46 warnings[0m
+
+Linker error: clang++: error: no such file or directory: '.nitpick_make/build/obj/nitty/main.o'
+
+  Error: Failed to build test_app: [1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mLine 610, Column 10: warning: [NITPICK-062] NITPICK-CAST-NARROW — explicit cast from 'int64' to 'int32' narrows the integer bit width and may truncate. Use @cast_unchecked<int32>(expr) to silence after auditing.[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mLine 310, Column 43: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mLine 310, Column 55: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mLine 311, Column 43: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mLine 311, Column 56: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mLine 312, Column 43: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mLine 312, Column 57: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mLine 313, Column 43: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mLine 313, Column 56: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 59, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'user' shadows outer declaration at line 272, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'count' shadows outer declaration at line 329, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'user' shadows outer declaration at line 698, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'home' shadows outer declaration at line 29, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 31, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 40, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 47, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 67, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 73, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 32, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 34, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 35, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 36, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 37, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 38, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 39, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 40, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 41, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 42, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 43, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 44, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 48, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 49, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 50, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 51, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'nitty_gtk4_show_notification' shadows outer declaration (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'home' shadows outer declaration at line 82, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 22, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'count' shadows outer declaration at line 349, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'has' shadows outer declaration at line 446, column 13 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 131, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'user' shadows outer declaration at line 118, column 21 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'count' shadows outer declaration at line 133, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'home' shadows outer declaration at line 255, column 9 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'nitty_pty_set_winsize' shadows outer declaration (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_app.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'cfg_opacity' shadows outer declaration at line 231, column 5 (original at line 0, column 0)[0m
+
+[1m:29:5: [0m[1;33mwarning[0m: [1m[unused-variable] variable 'ver_r' is declared but never used[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/ssh/ssh_vault.npk:0:0: [0m[1;31merror[0m: [1mIR generation error: Unknown function or closure: TOML_parse[0m
+
+[1mSummary: [0m[1;31m1 error[0m, [1;33m47 warnings[0m
+
+  Error: Failed to build test_terminal_widget: [1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mLine 610, Column 10: warning: [NITPICK-062] NITPICK-CAST-NARROW — explicit cast from 'int64' to 'int32' narrows the integer bit width and may truncate. Use @cast_unchecked<int32>(expr) to silence after auditing.[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mLine 310, Column 43: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mLine 310, Column 55: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mLine 311, Column 43: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mLine 311, Column 56: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mLine 312, Column 43: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mLine 312, Column 57: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mLine 313, Column 43: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mLine 313, Column 56: warning: Result<int64> implicitly unwrapped in argument position — error will propagate to caller[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 59, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'user' shadows outer declaration at line 272, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'count' shadows outer declaration at line 329, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'user' shadows outer declaration at line 698, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'home' shadows outer declaration at line 29, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 31, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 40, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 47, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 67, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 73, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 32, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 34, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 35, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 36, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 37, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 38, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 39, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 40, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 41, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 42, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 43, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 44, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 48, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 49, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 50, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 51, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'nitty_gtk4_show_notification' shadows outer declaration (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'home' shadows outer declaration at line 82, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 22, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'count' shadows outer declaration at line 349, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'has' shadows outer declaration at line 446, column 13 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'path' shadows outer declaration at line 131, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'user' shadows outer declaration at line 118, column 21 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'count' shadows outer declaration at line 133, column 5 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/tests/test_terminal_widget.npk:0:0: [0m[1;33mwarning[0m: [1mVariable 'home' shadows outer declaration at line 255, column 9 (original at line 0, column 0)[0m
+
+[1m/home/randy/Workspace/REPOS/nitty/src/ssh/ssh_vault.npk:0:0: [0m[1;31merror[0m: [1mIR generation error: Unknown function or closure: TOML_parse[0m
+
+[1mSummary: [0m[1;31m1 error[0m, [1;33m44 warnings[0m
+
+Linker error: clang++: error: no such file or directory: '.nitpick_make/build/obj/test_terminal_widget/test_terminal_widget.o'
+

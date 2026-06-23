@@ -517,19 +517,20 @@ pub func:session_restore = int64(int64:rows, int64:cols) {
                 int64:fd  = packed / 1000000i64;
                 int64:pid = packed - (fd * 1000000i64);
                 int64:tab_id = raw tm_add_tab(fd, pid);
+                int64:actual_idx = raw tm_count() - 1i64;
 
                 // Apply custom title if set
                 if (custom == 1i64) {
-                    drop(tm_set_title_at(i, title));
+                    drop(tm_set_title_at(actual_idx, title));
                 }
 
                 // Apply custom color if set
                 if (color != 0i64) {
-                    drop(tm_set_color_at(i, color));
+                    drop(tm_set_color_at(actual_idx, color));
                 }
 
                 // Register PID for completion polling
-                nitty_gtk4_register_tab_pid(i, pid);
+                nitty_gtk4_register_tab_pid(actual_idx, pid);
 
                 drop(tab_id);
             }

@@ -1,0 +1,19 @@
+--- src/core/app.npk
++++ src/core/app.npk
+@@ -52,6 +52,7 @@
+ use "../plugin/plugin_manager.npk".*;
+ use "../ssh/ssh_x11.npk".*;
+ use "../ssh/ssh_vault.npk".*;
++use "../gui/accessibility.npk".{a11y_init, a11y_configure}; // v0.13.0: AT-SPI / screen reader
+ 
+ // v0.10.0: global list for plugin references
+ // global List<PluginState>:g_plugins = ...
+@@ -239,6 +240,9 @@
+     Result<int64>:app_r = window_app_create("com.altintel.nitty");
+     int64:app = app_r ? 0i64;
+ 
++    drop(a11y_init());
++    drop(a11y_configure(1i64, 1i64, 1i64, 1i64, 1i64)); // Add default configure params or what was there
++
+     // v0.6.3: Quake mode + global hotkey initialization.
+     // Must happen AFTER window_app_run() has presented the window (so the
